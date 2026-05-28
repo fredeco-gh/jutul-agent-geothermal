@@ -60,20 +60,34 @@ def resolve_workspace_path(raw: str | Path) -> Path:
     ``/workspace/experiments/...``) that match the deepagents virtual
     filesystem rather than the host filesystem. This helper accepts both
     virtual and real paths and returns a real path under the workspace.
+
+    Cross-platform note: on POSIX a leading-slash string is host-absolute
+    and ``Path.is_absolute()`` catches it; on Windows the same string is
+    *not* absolute (no drive letter) and joining it onto the workspace
+    silently collapses to a drive root (``ws / "/foo" -> C:\\foo``). We
+    therefore route any leading-slash, non-absolute string through the
+    virtual-path branch explicitly.
     """
+
     ws = workspace_root()
     text = str(raw)
     p = Path(text)
+
+    def _under_workspace(rel: str) -> Path:
+        if rel.startswith("workspace/"):
+            rel = rel[len("workspace/") :]
+        return ws / rel
+
+    if text.startswith("/") and not p.is_absolute():
+        return _under_workspace(text.lstrip("/"))
+
     if p.is_absolute():
         try:
             p.resolve().relative_to(ws.resolve())
             return p
         except ValueError:
-            pass
-        rel = text.lstrip("/")
-        if rel.startswith("workspace/"):
-            rel = rel[len("workspace/") :]
-        return ws / rel
+            return _under_workspace(text.lstrip("/"))
+
     return ws / text
 
 

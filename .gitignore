@@ -15,6 +15,7 @@ uv.lock
 # Secrets and local editor config
 .env
 .env.*
+!.env.example
 .mcp.json
 
 # Project state

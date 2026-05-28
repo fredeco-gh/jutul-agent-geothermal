@@ -81,14 +81,3 @@ exactly three things:
 Add a simulator by creating that folder and one entry in
 `simulators/registry.py`. Custom subagent factories, when they land, go on
 the adapter's `subagent_factories` tuple.
-
-## Architecture and authoring docs
-
-- [docs/overview.md](docs/overview.md) — high-level architecture and the
-  three-root model.
-- [docs/design/agent-architecture.md](docs/design/agent-architecture.md) — the
-  four-layer model (upstream simulator / skills / tools / subagents),
-  decision matrix, and per-simulator contribution checklist.
-- [docs/design/skill-authoring.md](docs/design/skill-authoring.md) — what
-  earns a place in `skills/`, the four-question test, lifecycle (retire /
-  merge / promote upstream).

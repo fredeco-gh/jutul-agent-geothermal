@@ -110,6 +110,18 @@ def load_workspace_config(workspace: Path | None = None) -> WorkspaceConfig:
     )
 
 
+def _toml_basic_string(value: str) -> str:
+    """Quote ``value`` as a TOML basic string with escapes applied.
+
+    Required so Windows paths like ``C:\\Users\\...`` round-trip through
+    ``config.toml`` — an unescaped backslash followed by ``U`` is parsed
+    as a unicode escape and raises ``TOMLDecodeError`` on load.
+    """
+
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def write_workspace_config(
     config: WorkspaceConfig,
     *,
@@ -136,7 +148,7 @@ def write_workspace_config(
         if lines:
             lines.append("")
         lines.append(f"[simulator.{name}]")
-        lines.append(f'source_path = "{sim.source_path}"')
+        lines.append(f"source_path = {_toml_basic_string(str(sim.source_path))}")
 
     body = "\n".join(lines)
     path.write_text(body + "\n" if body else "", encoding="utf-8")
@@ -312,9 +324,7 @@ def bootstrap_julia_env(
         return target
 
     if not template_path.exists():
-        raise WorkspaceBootstrapError(
-            f"no Julia env template at {template_path}"
-        )
+        raise WorkspaceBootstrapError(f"no Julia env template at {template_path}")
 
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():

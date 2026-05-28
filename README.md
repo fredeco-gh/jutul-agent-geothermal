@@ -10,20 +10,61 @@ your workspace, and keeps a per-session trace.
 
 ## Install
 
-Requirements: Python 3.12+, Julia 1.10+.
+Works on Linux, macOS, and Windows. You need three things on PATH:
+
+- **Python 3.12+**
+- **Julia 1.12+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
+- **uv** — Astral's Python project manager (handles the venv and entry points)
+
+### 1. Install `uv`
+
+If `uv` is not already on your PATH, use Astral's standalone installer
+(recommended — handles PATH, shell completions, and doesn't need a
+pre-existing Python):
+
+- macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+
+Package-manager alternatives if you prefer:
+
+- Windows (WinGet): `winget install --id=astral-sh.uv -e`
+- macOS (Homebrew): `brew install uv`
+- Any platform via [pipx](https://pipx.pypa.io/): `pipx install uv`
+
+Open a new terminal afterwards so the updated PATH is picked up. Full
+instructions and other install methods:
+[docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
+
+### 2. Make sure Julia 1.12+ is the default
+
+If `juliaup` gave you an older channel, switch:
 
 ```sh
-git clone <this-repo> && cd jutul-agent
+juliaup add 1.12 && juliaup default 1.12
+```
+
+Check with `julia --version`.
+
+### 3. Clone and sync
+
+```sh
+git clone <this-repo>
+cd jutul-agent
 uv sync
 ```
 
-Put a provider key in a project-local `.env`:
+`uv sync` creates `.venv/` and installs all Python deps from `pyproject.toml`
++ `uv.lock`. Re-run it whenever those files change.
 
+### 4. Add a provider API key
+
+```sh
+cp .env.example .env            # PowerShell: Copy-Item .env.example .env
 ```
-OPENAI_API_KEY=sk-...
-# or
-ANTHROPIC_API_KEY=sk-ant-...
-```
+
+Then edit `.env` — set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`. The
+default model is `openai:gpt-5.4-mini`; override with `JUTUL_AGENT_MODEL`
+if needed.
 
 ## Use it in any folder
 
@@ -31,7 +72,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 your *workspace*. Initialise once:
 
 ```sh
-cd ~/my-reservoir-study
+mkdir my-reservoir-study && cd my-reservoir-study
 uv run jutul-agent init --sim jutuldarcy
 ```
 
@@ -49,6 +90,41 @@ simulator from a `Project.toml` in the workspace when it can.
 `setup` is an alias for `init`. Use `--precompile` (or `--instantiate`) to run
 `Pkg.instantiate` and warm up plotting; use `--force` to replace an existing
 `.jutul-agent/julia-env/` after upgrading jutul-agent.
+
+### Supported simulators
+
+| `--sim`      | Package                                                      | Domain                                         |
+|--------------|--------------------------------------------------------------|------------------------------------------------|
+| `jutuldarcy` | [JutulDarcy.jl](https://github.com/sintefmath/JutulDarcy.jl) | Reservoir / multi-phase flow                   |
+| `battmo`     | [BattMo.jl](https://github.com/BattMoTeam/BattMo.jl)         | Lithium-ion (and other) battery cells          |
+| `fimbul`     | [Fimbul.jl](https://github.com/sintefmath/Fimbul.jl)         | Geothermal (ATES, BTES, doublet, EGS, …)       |
+| `mocca`      | [Mocca.jl](https://github.com/sintefmath/Mocca.jl)           | Adsorption-based CO₂ capture (PSA / VSA / TSA) |
+| `vocsim`     | VOCSim.jl *(unreleased — placeholder slot)*                  | VOC / methane emissions from hydrocarbon storage |
+
+## Example: BattMo
+
+Start from an empty folder, bootstrap, and ask for a discharge run:
+
+```sh
+mkdir my-battery-run && cd my-battery-run
+uv run jutul-agent init --sim battmo --precompile
+```
+
+`--precompile` runs `Pkg.instantiate` and warms up CairoMakie. The very
+first time can take ~15 min (Julia compiles BattMo + plotting); subsequent
+starts are seconds.
+
+Then either launch the TUI:
+
+```sh
+uv run jutul-agent
+```
+
+…or run a one-shot headless turn:
+
+```sh
+uv run jutul-agent "Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve."
+```
 
 ## TUI
 
@@ -77,11 +153,8 @@ Keyboard:
 | `Shift+Tab`  | Cycle approval mode.                                  |
 | `Ctrl+P`/`↑` | Previous history entry.                               |
 
-For a one-shot answer without entering the TUI:
-
-```sh
-uv run jutul-agent --sim battmo "Set up a constant-current discharge run."
-```
+For one-shot, non-interactive use, pass the prompt as a positional argument
+(see the BattMo example above).
 
 ## Transcripts
 
@@ -106,11 +179,16 @@ Any `provider:model` supported by LangChain's `init_chat_model`:
 
 ```sh
 uv run jutul-agent --sim jutuldarcy --model anthropic:claude-sonnet-4-6
-# or persistently:
-export JUTUL_AGENT_MODEL=anthropic:claude-sonnet-4-6
 ```
 
-Default: `openai:gpt-5.4-mini`.
+Persist via environment variable:
+
+```sh
+export JUTUL_AGENT_MODEL=anthropic:claude-sonnet-4-6        # bash / zsh
+$Env:JUTUL_AGENT_MODEL = "anthropic:claude-sonnet-4-6"      # PowerShell
+```
+
+…or set `JUTUL_AGENT_MODEL` in your `.env`. Default: `openai:gpt-5.4-mini`.
 
 ## Layout
 
@@ -127,12 +205,8 @@ src/jutul_agent/
   trace/           append-only SQLite event log + recorder middleware
   transcript/      renderers (HTML, markdown, investigation report)
   interfaces/      CLI + Textual TUI (TUI owns the approval card renderer)
-docs/              overview, design notes, spec
 tests/             pytest suite
 ```
-
-See [`docs/overview.md`](docs/overview.md) for the design overview and the
-three-root model (install / workspace / state home).
 
 ## Development
 
