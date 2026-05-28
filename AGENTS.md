@@ -26,9 +26,17 @@ work on the Jutul ecosystem.
 - Live LLM (humans only, needs API key): `uv run pytest tests/live/`
 - Update transcript / report snapshots after renderer changes:
   `uv run pytest --snapshot-update tests/test_transcript_html.py tests/test_transcript.py tests/test_report_renderer.py`
-- Lint: `uv run ruff check src tests`
+- Python style (matches CI): `uv run ruff check .` then `uv run ruff format .`
+- After editing Python, run `uv run ruff format` on touched paths (or rely on
+  format-on-save / pre-commit if installed).
 
 See [docs/testing.md](docs/testing.md) for the full testing guide.
+
+## Local git hooks
+
+One-time per clone: `uv run pre-commit install`. Commits then run Ruff format
+and check on staged `.py` files. To verify the whole tree like CI:
+`uv run pre-commit run --all-files`.
 
 ## Important paths
 

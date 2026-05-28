@@ -137,8 +137,13 @@ three-root model (install / workspace / state home).
 ## Development
 
 ```sh
-uv run ruff check src tests     # lint
-uv run ruff format src tests    # format
+uv sync
+uv run pre-commit install       # once per clone: format + lint on each commit
+
+uv run ruff check .             # lint (same paths as CI)
+uv run ruff format .            # format before push if hooks are not installed
+uv run pre-commit run --all-files   # optional: full pre-push check
+
 uv run pytest                   # tests (skips integration + live by default)
 uv run pytest -m integration    # add the Julia-requiring tests
 uv run pytest tests/live/       # live LLM tests (need provider key)
