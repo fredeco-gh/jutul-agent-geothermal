@@ -158,8 +158,7 @@ def make_julia_plot_tool(session: Session):
         safe_slot = _sanitize_slot(slot) if slot else None
         if slot and safe_slot is None:
             return (
-                "ERROR: invalid slot name (use letters, digits, '.', '_', '-'; "
-                "max 64 characters)."
+                "ERROR: invalid slot name (use letters, digits, '.', '_', '-'; max 64 characters)."
             )
 
         if safe_slot:
@@ -174,7 +173,11 @@ def make_julia_plot_tool(session: Session):
 
         result = await session.julia.eval(
             _build_save_call(
-                user_code=code, abs_path=abs_path, format=format, size=size, dpi=dpi,
+                user_code=code,
+                abs_path=abs_path,
+                format=format,
+                size=size,
+                dpi=dpi,
             )
         )
         if result.error:

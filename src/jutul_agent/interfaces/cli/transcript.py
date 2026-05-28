@@ -52,8 +52,7 @@ def run(args: argparse.Namespace) -> int:
     session_id = args.session_id or read_last_session()
     if session_id is None:
         print(
-            f"error: no session id given and no last-session marker under "
-            f"{workspace_state_dir()}.",
+            f"error: no session id given and no last-session marker under {workspace_state_dir()}.",
             file=sys.stderr,
         )
         return 2

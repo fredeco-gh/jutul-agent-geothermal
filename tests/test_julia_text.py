@@ -46,12 +46,7 @@ def test_render_terminal_output_handles_cursor_up_and_erase_line() -> None:
 
 
 def test_render_terminal_output_preserves_static_tables_before_progress() -> None:
-    raw = (
-        "│ Newton │ 2.32 │\n"
-        "│ Total  │ 14.18 │\n"
-        "\n"
-        "\rProgress  50%|####|\rProgress 100%|########|"
-    )
+    raw = "│ Newton │ 2.32 │\n│ Total  │ 14.18 │\n\n\rProgress  50%|####|\rProgress 100%|########|"
     out = render_terminal_output(raw)
     assert "│ Newton │ 2.32 │" in out
     assert "│ Total  │ 14.18 │" in out
@@ -78,5 +73,3 @@ def test_strip_julia_repl_echo_drops_leading_julia_block() -> None:
 def test_strip_julia_repl_echo_leaves_non_echo_text_alone() -> None:
     text = "just some output\n"
     assert strip_julia_repl_echo(text) == text
-
-

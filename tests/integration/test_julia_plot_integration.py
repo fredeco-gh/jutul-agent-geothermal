@@ -46,7 +46,7 @@ async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
         code = (
             "using CairoMakie\n"
             "fig = Figure(size = (400, 300))\n"
-            "ax = Axis(fig[1, 1], title = \"Integration test\")\n"
+            'ax = Axis(fig[1, 1], title = "Integration test")\n'
             "lines!(ax, 1:5, (1:5) .^ 2)\n"
             "fig"
         )
@@ -94,7 +94,7 @@ async def test_julia_plot_battmo_inline_makie(tmp_path: Path) -> None:
         code = (
             "using CairoMakie\n"
             "fig = Figure(size = (400, 300))\n"
-            "ax = Axis(fig[1, 1], title = \"BattMo integration test\")\n"
+            'ax = Axis(fig[1, 1], title = "BattMo integration test")\n'
             "lines!(ax, 1:5, (1:5) .^ 2)\n"
             "fig"
         )

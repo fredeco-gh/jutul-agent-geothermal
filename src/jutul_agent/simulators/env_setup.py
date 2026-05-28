@@ -66,9 +66,7 @@ def bootstrap_workspace(
     """
 
     try:
-        bootstrap_julia_env(
-            adapter.julia_env_template_path, workspace=workspace, force=force
-        )
+        bootstrap_julia_env(adapter.julia_env_template_path, workspace=workspace, force=force)
     except WorkspaceBootstrapError as exc:
         raise EnvSetupError(str(exc)) from exc
 
@@ -130,6 +128,4 @@ def _run_pkg(project: Path, cmds: list[str]) -> None:
     print(f"$ {' '.join(argv)}")
     result = subprocess.run(argv, check=False)
     if result.returncode != 0:
-        raise EnvSetupError(
-            f"Julia exited with code {result.returncode}; see output above"
-        )
+        raise EnvSetupError(f"Julia exited with code {result.returncode}; see output above")

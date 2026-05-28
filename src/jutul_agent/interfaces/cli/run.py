@@ -148,9 +148,7 @@ async def _run_session(
         # since this env was last bootstrapped (e.g. CSV/Interpolations added
         # to an investigation template) and install them so they're available.
         try:
-            added = sync_julia_env_with_template(
-                adapter.julia_env_template_path, workspace=ws
-            )
+            added = sync_julia_env_with_template(adapter.julia_env_template_path, workspace=ws)
         except Exception as exc:
             added = []
             print(f"warning: env sync failed: {exc}", file=sys.stderr)
@@ -187,9 +185,7 @@ async def _run_session(
             ckpt_path = session.state_dir / "checkpoints.sqlite"
             async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as checkpointer:
                 model_label = resolve_model(args.model)
-                approval_mode = parse_approval_mode(
-                    args.approval_mode or config.approval_mode
-                )
+                approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
                 agent = build_agent(
                     session,
                     model=model_label,

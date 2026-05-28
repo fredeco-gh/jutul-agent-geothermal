@@ -27,8 +27,7 @@ pytestmark = [
     pytest.mark.skipif(
         not _julia_available(),
         reason=(
-            "Julia and the AgentREPL.jl env under "
-            "src/jutul_agent/julia/agentrepl_env are required"
+            "Julia and the AgentREPL.jl env under src/jutul_agent/julia/agentrepl_env are required"
         ),
     ),
 ]

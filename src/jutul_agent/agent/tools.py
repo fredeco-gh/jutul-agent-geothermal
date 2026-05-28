@@ -104,8 +104,7 @@ def make_record_attempt_tool(session: Session):
         )
 
         metric_str = (
-            ", ".join(f"{k}={_fmt_metric(v)}" for k, v in (metrics or {}).items())
-            or "no metrics"
+            ", ".join(f"{k}={_fmt_metric(v)}" for k, v in (metrics or {}).items()) or "no metrics"
         )
         parent_str = f" (parent #{parent_index})" if parent_index else ""
         return f"attempt #{index}{parent_str} · {metric_str} · id={attempt_id}"

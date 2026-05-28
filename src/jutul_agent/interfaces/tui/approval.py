@@ -191,9 +191,7 @@ def _write_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> 
     if existing_text is None:
         sections.append("#### Content Preview")
         sections.append("")
-        sections.append(
-            fenced_block(truncate_preview(content), language=_guess_language(path_str))
-        )
+        sections.append(fenced_block(truncate_preview(content), language=_guess_language(path_str)))
         return sections
 
     diff = compute_unified_diff(existing_text, content, path_str or physical_path.name)

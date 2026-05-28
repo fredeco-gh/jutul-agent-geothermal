@@ -98,7 +98,7 @@ def _template_with_extra_deps(tmp_path: Path) -> Path:
     template = tmp_path / "template"
     template.mkdir()
     (template / "Project.toml").write_text(
-        '[deps]\n'
+        "[deps]\n"
         'AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
         'CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"\n'
         'Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"\n',
@@ -127,15 +127,13 @@ def test_sync_adds_missing_deps_from_template(
     assert 'Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"' in text
 
 
-def test_sync_is_noop_when_already_in_sync(
-    tmp_path: Path, _template_with_extra_deps: Path
-) -> None:
+def test_sync_is_noop_when_already_in_sync(tmp_path: Path, _template_with_extra_deps: Path) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
     env = workspace_julia_env(ws)
     env.mkdir(parents=True)
     (env / "Project.toml").write_text(
-        '[deps]\n'
+        "[deps]\n"
         'AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
         'CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"\n'
         'Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"\n',

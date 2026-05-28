@@ -440,7 +440,7 @@ def _artifact_source_html(artifact: ArtifactPayload) -> str:
     if not artifact.source_code:
         return ""
     return (
-        "<details class=\"artifact-source\">"
+        '<details class="artifact-source">'
         "<summary>Source code</summary>"
         f"{highlight_code(artifact.source_code.rstrip(), 'julia')}"
         "</details>"
@@ -501,7 +501,7 @@ def _event_header(kind: str, label: str, ts: str, css_kind: str) -> str:
     return (
         f'<div class="event-header">'
         f'<span class="event-kind {css_kind}">{_esc(label)}</span>'
-        f"<time datetime=\"{_esc_attr(ts)}\">{_esc(ts)}</time>"
+        f'<time datetime="{_esc_attr(ts)}">{_esc(ts)}</time>'
         f"</div>"
     )
 
@@ -510,12 +510,7 @@ def _tool_result_block(content: str, *, tool_name: str | None = None) -> str:
     lines = content.splitlines()
     rendered = _render_tool_content(content, tool_name=tool_name)
     if len(lines) > 20:
-        return (
-            f"<details>"
-            f"<summary>Result ({len(lines)} lines)</summary>"
-            f"{rendered}"
-            f"</details>"
-        )
+        return f"<details><summary>Result ({len(lines)} lines)</summary>{rendered}</details>"
     return rendered
 
 
@@ -599,8 +594,8 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         if kind == "message_user":
             parts.append(
                 f'<article class="event" {_event_attrs(kind)}>'
-                f'{_event_header(kind, "User", ts, "user")}'
-                f'{_render_prose(str(payload.get("content", "")))}'
+                f"{_event_header(kind, 'User', ts, 'user')}"
+                f"{_render_prose(str(payload.get('content', '')))}"
                 f"</article>"
             )
             continue
@@ -611,10 +606,10 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                 continue
             parts.append(
                 f'<article class="event" {_event_attrs(kind)}>'
-                f'{_event_header(kind, "Reasoning", ts, "reasoning")}'
+                f"{_event_header(kind, 'Reasoning', ts, 'reasoning')}"
                 f"<details>"
                 f"<summary>Reasoning</summary>"
-                f'{_render_prose(content)}'
+                f"{_render_prose(content)}"
                 f"</details>"
                 f"</article>"
             )
@@ -626,8 +621,8 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                 continue
             parts.append(
                 f'<article class="event" {_event_attrs(kind)}>'
-                f'{_event_header(kind, "Assistant", ts, "assistant")}'
-                f'{_render_prose(content)}'
+                f"{_event_header(kind, 'Assistant', ts, 'assistant')}"
+                f"{_render_prose(content)}"
                 f"</article>"
             )
             continue
@@ -643,7 +638,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
 
             block = (
                 f'<article class="event" {_event_attrs(kind)}>'
-                f'{_event_header(kind, f"Tool · {name}", ts, "tool")}'
+                f"{_event_header(kind, f'Tool · {name}', ts, 'tool')}"
                 f"<h3>{_esc(name)}</h3>"
                 f"{_fmt_args(payload.get('args'))}"
             )
@@ -666,7 +661,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             content = str(payload.get("content", ""))
             parts.append(
                 f'<article class="event" {_event_attrs(kind)}>'
-                f'{_event_header(kind, f"Tool result · {name}", ts, "tool")}'
+                f"{_event_header(kind, f'Tool result · {name}', ts, 'tool')}"
                 f"<h3>{_esc(name)}</h3>"
                 f"{_tool_result_block(content, tool_name=name)}"
                 f"</article>"
@@ -676,7 +671,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         if kind == "hitl_request":
             parts.append(
                 f'<article class="event approval" {_event_attrs(kind)}>'
-                f'{_event_header(kind, "Approval request", ts, "approval")}'
+                f"{_event_header(kind, 'Approval request', ts, 'approval')}"
                 f'<div class="approval">{_fmt_hitl_request(payload)}</div>'
                 f"</article>"
             )
@@ -685,7 +680,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         if kind == "hitl_response":
             parts.append(
                 f'<article class="event approval" {_event_attrs(kind)}>'
-                f'{_event_header(kind, "Approval response", ts, "approval")}'
+                f"{_event_header(kind, 'Approval response', ts, 'approval')}"
                 f'<div class="approval">{_fmt_hitl_response(payload)}</div>'
                 f"</article>"
             )
@@ -698,7 +693,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             if artifact.is_image:
                 parts.append(
                     f'<article class="event" {_event_attrs(kind)}>'
-                    f'{_event_header(kind, "Artifact", ts, "artifact")}'
+                    f"{_event_header(kind, 'Artifact', ts, 'artifact')}"
                     f"{meta_html}"
                     f"<figure>"
                     f'<img src="{_esc_attr(artifact.path)}" alt="{_esc_attr(artifact.caption)}">'
@@ -710,8 +705,8 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             else:
                 parts.append(
                     f'<article class="event" {_event_attrs(kind)}>'
-                    f'{_event_header(kind, "Artifact", ts, "artifact")}'
-                    f"<p><a href=\"{_esc_attr(artifact.path)}\">"
+                    f"{_event_header(kind, 'Artifact', ts, 'artifact')}"
+                    f'<p><a href="{_esc_attr(artifact.path)}">'
                     f"{_esc(artifact.caption or artifact.path)}</a></p>"
                     f"</article>"
                 )
@@ -719,7 +714,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
 
         parts.append(
             f'<article class="event" {_event_attrs(kind)}>'
-            f'{_event_header(kind, f"Event · {kind}", ts, "unknown")}'
+            f"{_event_header(kind, f'Event · {kind}', ts, 'unknown')}"
             f"<details>"
             f"<summary>Raw payload</summary>"
             f"<pre>{_esc(repr(payload))}</pre>"
@@ -729,9 +724,9 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
 
     header_meta = ""
     if session_id:
-        header_meta += f"<p class=\"meta\">Session <code>{_esc(session_id)}</code></p>"
+        header_meta += f'<p class="meta">Session <code>{_esc(session_id)}</code></p>'
     if simulator:
-        header_meta += f"<p class=\"meta\">Simulator: {_esc(simulator)}</p>"
+        header_meta += f'<p class="meta">Simulator: {_esc(simulator)}</p>'
     if started:
         header_meta += (
             f'<p class="meta">Started: '
@@ -739,8 +734,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         )
     if ended:
         header_meta += (
-            f'<p class="meta">Ended: '
-            f'<time datetime="{_esc_attr(ended)}">{_esc(ended)}</time></p>'
+            f'<p class="meta">Ended: <time datetime="{_esc_attr(ended)}">{_esc(ended)}</time></p>'
         )
 
     group_counts: dict[str, int] = {}
@@ -754,11 +748,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         group_counts[label] = group_counts.get(label, 0) + count
 
     filter_groups = sorted(
-        {
-            _FILTER_GROUPS.get(k, k)
-            for k in kind_counts
-            if k not in {"session_start", "session_end"}
-        }
+        {_FILTER_GROUPS.get(k, k) for k in kind_counts if k not in {"session_start", "session_end"}}
     )
     filter_controls = "".join(
         f'<label><input type="checkbox" class="kind-filter" '

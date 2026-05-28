@@ -9,10 +9,17 @@ Common event kinds include ``session_start``, ``session_end``,
 ``tool_call``, ``tool_result``, ``hitl_request``, ``hitl_response``,
 and ``artifact``. An ``artifact`` payload looks like::
 
-    {"path": "artifacts/plot-<id>.png", "mime": "image/png",
-     "caption": "optional label", "tool_call_id": "<id or null>",
-     "format": "png", "size_px": [800, 500], "dpi": null,
-     "slot": null, "source_code": "<julia snippet>"}
+    {
+        "path": "artifacts/plot-<id>.png",
+        "mime": "image/png",
+        "caption": "optional label",
+        "tool_call_id": "<id or null>",
+        "format": "png",
+        "size_px": [800, 500],
+        "dpi": null,
+        "slot": null,
+        "source_code": "<julia snippet>",
+    }
 """
 
 from __future__ import annotations

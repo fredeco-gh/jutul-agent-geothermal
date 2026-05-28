@@ -28,7 +28,7 @@ async def test_multi_tool_turn_renders_full_block_sequence(
             ),
             scripted_tool_call(
                 tool_name="julia_eval",
-                args={"code": 'print(pkgdir(FakePkg))'},
+                args={"code": "print(pkgdir(FakePkg))"},
                 tool_call_id="call_eval_2",
             ),
             scripted_final("Result is 4 and FakePkg lives at the printed path."),

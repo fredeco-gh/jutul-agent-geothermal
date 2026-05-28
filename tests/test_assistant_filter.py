@@ -38,14 +38,8 @@ def test_truncates_runaway_prose() -> None:
 
 
 def test_filters_skill_dump_with_frontmatter() -> None:
-    text = (
-        "---\n"
-        "name: investigation-loop\n"
-        "description: stuff\n"
-        "---\n"
-        "\n"
-        "# Investigation loop\n"
-        + ("filler line\n" * 30)
+    text = "---\nname: investigation-loop\ndescription: stuff\n---\n\n# Investigation loop\n" + (
+        "filler line\n" * 30
     )
     assert filter_assistant_text(text) is None
 
@@ -73,8 +67,7 @@ def test_filters_skill_dump_with_uncommon_sections() -> None:
         "Five layers.\n\n"
         "## Decision rule\n\n"
         "Pick the smallest system.\n\n"
-        "## Result inspection\n\n"
-        + ("Read with `wd[:Producer][:bhp]`.\n" * 20)
+        "## Result inspection\n\n" + ("Read with `wd[:Producer][:bhp]`.\n" * 20)
     )
     assert filter_assistant_text(text) is None
 

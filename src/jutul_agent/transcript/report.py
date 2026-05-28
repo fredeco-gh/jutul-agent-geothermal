@@ -355,9 +355,7 @@ def render_report(
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html.escape(heading)}</title>"
         f"<style>{_STYLES}</style>"
-        "</head><body>"
-        + "".join(part for part in sections if part)
-        + "</body></html>"
+        "</head><body>" + "".join(part for part in sections if part) + "</body></html>"
     )
 
     out = Path(out_path)
@@ -440,10 +438,7 @@ def _fmt(value: float) -> str:
 
 def _render_header(heading: str, simulator: str, session_id: str, flat: list[Attempt]) -> str:
     side = _render_summary_side(simulator, session_id, flat)
-    return (
-        f'<header><div class="hero-wrap"><h1>{html.escape(heading)}</h1></div>'
-        f"{side}</header>"
-    )
+    return f'<header><div class="hero-wrap"><h1>{html.escape(heading)}</h1></div>{side}</header>'
 
 
 def _render_results(flat: list[Attempt]) -> str:
@@ -475,12 +470,10 @@ def _render_results(flat: list[Attempt]) -> str:
         pct = (value - baseline) / abs(baseline) * 100
         cls = "neg" if value > baseline else "pos"
         sign = "+" if pct > 0 else ""
-        parts.append(
-            f'<span class="stat-delta {cls}">{sign}{pct:.1f}% vs baseline</span>'
-        )
+        parts.append(f'<span class="stat-delta {cls}">{sign}{pct:.1f}% vs baseline</span>')
     return (
         '<section class="results">'
-        '<h2>Results</h2>'
+        "<h2>Results</h2>"
         f'<div class="hero">{"".join(parts)}</div>'
         "</section>"
     )
@@ -502,9 +495,7 @@ def _render_summary_side(simulator: str, session_id: str, flat: list[Attempt]) -
     if pills:
         parts.append(f'<div class="tally">{"".join(pills)}</div>')
     if session_id:
-        parts.append(
-            f'<div class="sid">Session <code>{html.escape(session_id)}</code></div>'
-        )
+        parts.append(f'<div class="sid">Session <code>{html.escape(session_id)}</code></div>')
     return f'<div class="summary-side">{"".join(parts)}</div>'
 
 
@@ -693,7 +684,7 @@ def _render_tree(
             mid = (py_bottom + cy) / 2
             edges.append(
                 f'<path class="edge" d="M{px:.1f},{py_bottom:.1f} '
-                f"C{px:.1f},{mid:.1f} {cx:.1f},{mid:.1f} {cx:.1f},{cy:.1f}\"/>"
+                f'C{px:.1f},{mid:.1f} {cx:.1f},{mid:.1f} {cx:.1f},{cy:.1f}"/>'
             )
 
     boxes: list[str] = []
@@ -707,7 +698,7 @@ def _render_tree(
         metric = _primary_metric_text(node)
         boxes.append(
             f'<a href="#attempt-{index[node.id]}">'
-            f'<title>{html.escape(title)}</title>'
+            f"<title>{html.escape(title)}</title>"
             f'<rect class="{cls}" x="{x - box_w / 2:.1f}" y="{y:.1f}" '
             f'width="{box_w}" height="{box_h}" rx="8" ry="8"/>'
             f'<text class="title" x="{x:.1f}" y="{y + 21:.0f}" text-anchor="middle">'
@@ -757,14 +748,9 @@ def _render_attempt_details(flat: list[Attempt], artifact_dirs: Sequence[Path]) 
     best = _best_attempt(flat)
     best_id = best.id if best else None
     items = "".join(
-        _render_attempt(node, index, artifact_dirs, is_best=node.id == best_id)
-        for node in flat
+        _render_attempt(node, index, artifact_dirs, is_best=node.id == best_id) for node in flat
     )
-    return (
-        '<section class="attempt-details"><h2>Attempt details</h2>'
-        f"{items}"
-        "</section>"
-    )
+    return f'<section class="attempt-details"><h2>Attempt details</h2>{items}</section>'
 
 
 def _render_attempt(
@@ -802,17 +788,13 @@ def _render_attempt(
 
     body: list[str] = []
     id_chip = f'<span class="id-chip">{html.escape(node.id[:8])}</span>'
-    body.append(
-        f"<p>{id_chip}<strong>Attempt id:</strong> <code>{html.escape(node.id)}</code></p>"
-    )
+    body.append(f"<p>{id_chip}<strong>Attempt id:</strong> <code>{html.escape(node.id)}</code></p>")
     if node.rationale and node.rationale.strip() != title:
         body.append(f"<p>{html.escape(node.rationale)}</p>")
     if node.parameters_changed:
         # Drop rows where old == new so the table only shows real edits.
         changed = [
-            (k, v)
-            for k, v in sorted(node.parameters_changed.items())
-            if not _is_param_noop(v)
+            (k, v) for k, v in sorted(node.parameters_changed.items()) if not _is_param_noop(v)
         ]
         if changed:
             rows = "".join(
@@ -836,7 +818,7 @@ def _render_attempt(
     cls = "best" if is_best else ""
     return (
         f'<details id="{anchor}" class="{cls}"><summary>{summary}</summary>'
-        f'{"".join(body)}</details>'
+        f"{''.join(body)}</details>"
     )
 
 
@@ -867,7 +849,7 @@ def _is_param_noop(value) -> bool:
 def _embed_plot(path: str, artifact_dirs: Sequence[Path]) -> str:
     resolved = _resolve_plot(path, artifact_dirs)
     if resolved is None:
-        return f'<p><em>Plot not found: <code>{html.escape(path)}</code></em></p>'
+        return f"<p><em>Plot not found: <code>{html.escape(path)}</code></em></p>"
     mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
     data = base64.standard_b64encode(resolved.read_bytes()).decode("ascii")
     return f'<img src="data:{mime};base64,{data}" alt="Attempt plot">'

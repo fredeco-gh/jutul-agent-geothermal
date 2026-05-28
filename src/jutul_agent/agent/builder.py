@@ -126,9 +126,7 @@ def build_backend(
         route, backend = memory_backend_route(memory_dir)
         routes[route] = backend
     if session_dir is not None:
-        routes[_SESSION_ROUTE] = FilesystemBackend(
-            root_dir=session_dir, virtual_mode=True
-        )
+        routes[_SESSION_ROUTE] = FilesystemBackend(root_dir=session_dir, virtual_mode=True)
 
     return CompositeBackend(
         default=LocalShellBackend(

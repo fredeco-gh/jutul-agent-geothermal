@@ -164,9 +164,7 @@ async def test_turn_runner_parses_server_tool_call() -> None:
 
     await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
 
-    requested = [
-        m for m in seen if isinstance(m, TurnToolEvent) and m.event == "requested"
-    ]
+    requested = [m for m in seen if isinstance(m, TurnToolEvent) and m.event == "requested"]
     assert len(requested) == 1
     assert requested[0].tool_name == "search"
     assert requested[0].args == {"value": "query=jutul"}

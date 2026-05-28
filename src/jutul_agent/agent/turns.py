@@ -161,9 +161,7 @@ async def _drain_reasoning(message_stream: Any, on_message: MessageCallback | No
             await _emit(on_message, TurnReasoningDelta(text=delta))
 
 
-async def _drain_tool_call_chunks(
-    message_stream: Any, on_message: MessageCallback | None
-) -> None:
+async def _drain_tool_call_chunks(message_stream: Any, on_message: MessageCallback | None) -> None:
     """Surface a ``requested`` TurnToolEvent once each tool call finalizes.
 
     The tool-call projection is both async-iterable (partial chunks) and

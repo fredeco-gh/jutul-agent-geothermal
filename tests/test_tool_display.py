@@ -145,7 +145,7 @@ def test_julia_eval_preview_fits_jutul_timing_summary() -> None:
     )
     body = display_tool_body(
         "julia_eval",
-        {"code": "include(\"candidate.jl\"); run_candidate()"},
+        {"code": 'include("candidate.jl"); run_candidate()'},
         output=output,
         expanded=False,
         is_error=False,

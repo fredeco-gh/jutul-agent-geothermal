@@ -433,13 +433,9 @@ class TUIApp(App[None]):
         self._log.scroll_end(animate=False)
         self._set_status("thinking…")
 
-        self._turn_worker = self.run_worker(
-            self._run_turn(text), exclusive=True, name="turn"
-        )
+        self._turn_worker = self.run_worker(self._run_turn(text), exclusive=True, name="turn")
 
-    def on_prompt_text_area_history_previous(
-        self, event: PromptTextArea.HistoryPrevious
-    ) -> None:
+    def on_prompt_text_area_history_previous(self, event: PromptTextArea.HistoryPrevious) -> None:
         if self._prompt.disabled:
             return
         new_value = self._history.up(event.current_text)
@@ -614,8 +610,7 @@ class TUIApp(App[None]):
 
     def _has_running_julia_tool(self) -> bool:
         return any(
-            block.status == "running"
-            and block.tool_name in {"julia_eval", "julia_plot"}
+            block.status == "running" and block.tool_name in {"julia_eval", "julia_plot"}
             for block in self._tool_blocks
         )
 

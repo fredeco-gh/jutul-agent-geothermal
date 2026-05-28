@@ -469,13 +469,12 @@ async def test_tui_multiline_submit_shows_user_message_immediately(session: Sess
         await pilot.pause()
 
         assert prompt.value == ""
-        user_blocks = [
-            block for block in app.query(MessageBlock) if block.border_title == "You"
-        ]
+        user_blocks = [block for block in app.query(MessageBlock) if block.border_title == "You"]
         assert len(user_blocks) == 1
         assert "line one" in user_blocks[0]._content
 
         await wait_until_ready(app)
+
 
 async def test_message_block_streams_before_mount_completes() -> None:
     from textual.app import App

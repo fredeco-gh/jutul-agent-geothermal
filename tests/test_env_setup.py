@@ -28,7 +28,7 @@ def _make_template(tmp_path: Path) -> Path:
     module_dir = tmp_path / "sim"
     template = module_dir / "julia_env"
     template.mkdir(parents=True)
-    (template / "Project.toml").write_text("[deps]\nFoo = \"uuid\"\n", encoding="utf-8")
+    (template / "Project.toml").write_text('[deps]\nFoo = "uuid"\n', encoding="utf-8")
     (template / "Manifest.toml").write_text("# manifest\n", encoding="utf-8")
     return module_dir
 
@@ -163,14 +163,10 @@ def test_bootstrap_raises_when_julia_missing(
 
     monkeypatch.setattr(env_setup.shutil, "which", lambda _: None)
     with pytest.raises(env_setup.EnvSetupError, match="julia"):
-        env_setup.bootstrap_workspace(
-            _adapter(module_dir), workspace=workspace, source_path=source
-        )
+        env_setup.bootstrap_workspace(_adapter(module_dir), workspace=workspace, source_path=source)
 
 
-def test_bootstrap_raises_on_nonzero_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_bootstrap_raises_on_nonzero_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module_dir = _make_template(tmp_path)
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -183,9 +179,7 @@ def test_bootstrap_raises_on_nonzero_exit(
     monkeypatch.setattr(env_setup.shutil, "which", lambda _: "/usr/bin/julia")
     monkeypatch.setattr(env_setup.subprocess, "run", lambda *a, **kw: _Result())
     with pytest.raises(env_setup.EnvSetupError, match="code 17"):
-        env_setup.bootstrap_workspace(
-            _adapter(module_dir), workspace=workspace, source_path=source
-        )
+        env_setup.bootstrap_workspace(_adapter(module_dir), workspace=workspace, source_path=source)
 
 
 def test_bootstrap_skips_dev_when_workspace_is_source(
@@ -194,9 +188,7 @@ def test_bootstrap_skips_dev_when_workspace_is_source(
     module_dir = _make_template(tmp_path)
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    (workspace / "Project.toml").write_text(
-        'name = "Foo"\n[deps]\n', encoding="utf-8"
-    )
+    (workspace / "Project.toml").write_text('name = "Foo"\n[deps]\n', encoding="utf-8")
 
     called = False
 

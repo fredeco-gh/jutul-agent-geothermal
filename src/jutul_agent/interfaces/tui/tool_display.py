@@ -396,5 +396,3 @@ def _quote_block(text: str) -> str:
 
 def _prefer_fenced_preview(tool_name: str) -> bool:
     return tool_name in {"julia_eval", "read_file"}
-
-
