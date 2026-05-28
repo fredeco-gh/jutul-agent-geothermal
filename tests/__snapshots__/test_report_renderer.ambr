@@ -1,0 +1,303 @@
+# serializer version: 1
+# name: test_render_report_writes_file
+  '''
+  <!doctype html>
+  <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>BattMo investigation report</title><style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-soft: #f8fafc;
+    --bg-card: #ffffff;
+    --bd: #e2e8f0;
+    --bd-soft: #edf2f7;
+    --mu: #64748b;
+    --fg: #0f172a;
+    --ac: #2563eb;
+    --ac-soft: rgba(37, 99, 235, 0.08);
+    --tone-baseline: #c7d2fe;
+    --tone-improved: #a7f3d0;
+    --tone-regressed: #fecaca;
+    --tone-neutral: #e2e8f0;
+    --pos: #059669;
+    --neg: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419;
+      --bg-soft: #1a2332;
+      --bg-card: #131a25;
+      --bd: #334155;
+      --bd-soft: #1e293b;
+      --mu: #94a3b8;
+      --fg: #e2e8f0;
+      --ac-soft: rgba(37, 99, 235, 0.18);
+      --tone-baseline: #4338ca;
+      --tone-improved: #047857;
+      --tone-regressed: #b91c1c;
+      --tone-neutral: #334155;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 960px;
+    margin: 2.5rem auto;
+    padding: 0 1.25rem 3rem;
+    line-height: 1.55;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--bd);
+  }
+  header h1 { margin: 0 0 0.4rem; font-size: 1.55rem; letter-spacing: -0.01em; }
+  .hero { display: flex; flex-direction: column; min-width: 0; flex: 1 1 18rem; }
+  .hero .stat-label {
+    font-size: 0.72rem;
+    color: var(--mu);
+    font-weight: 600;
+  }
+  .hero .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--ac);
+    line-height: 1.1;
+    margin: 0.1rem 0;
+  }
+  .hero .stat-baseline { font-size: 0.85rem; color: var(--mu); }
+  .hero .stat-delta { font-size: 0.9rem; font-weight: 600; margin-top: 0.1rem; }
+  .hero .stat-delta.pos { color: var(--pos); }
+  .hero .stat-delta.neg { color: var(--neg); }
+  .summary-side {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-end;
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--mu);
+  }
+  .summary-side .sim { color: var(--fg); font-weight: 600; }
+  .tally {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+  .tally span {
+    background: var(--bg-soft);
+    border: 1px solid var(--bd);
+    border-radius: 999px;
+    padding: 0.15rem 0.7rem;
+    font-size: 0.78rem;
+    color: var(--fg);
+  }
+  .summary-side .sid code {
+    background: var(--bg-soft);
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+  }
+  .results .hero {
+    background: var(--ac-soft);
+    border: 1px solid var(--bd);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    flex: 0 0 auto;
+  }
+  .results .hero .stat-value { font-size: 1.6rem; }
+  section { margin: 2rem 0; }
+  section > h2 {
+    font-size: 1.05rem;
+    margin: 0 0 0.7rem;
+    letter-spacing: -0.005em;
+    color: var(--fg);
+  }
+  section > h2.section-sub { font-size: 0.95rem; margin-top: 1.5rem; color: var(--mu); }
+  .narrative h1, .narrative h2, .narrative h3 { margin-top: 1.2rem; }
+  .narrative h1 { font-size: 1.3rem; }
+  .narrative h2 { font-size: 1.1rem; }
+  .narrative h3 { font-size: 1rem; }
+  .narrative p { margin: 0.55rem 0; }
+  .narrative pre {
+    background: var(--bg-soft);
+    border: 1px solid var(--bd-soft);
+    border-radius: 6px;
+    padding: 0.7rem 0.9rem;
+    overflow-x: auto;
+  }
+  .metric-chart { margin: 0 0 1rem; }
+  .metric-chart h3 {
+    margin: 0 0 0.35rem;
+    font-size: 0.82rem;
+    color: var(--mu);
+    font-weight: 600;
+  }
+  .spark {
+    display: block;
+    width: 100%;
+    max-width: 720px;
+    height: 96px;
+    border: 1px solid var(--bd-soft);
+    border-radius: 8px;
+    background: var(--bg-soft);
+  }
+  .spark .area { fill: var(--ac-soft); }
+  .spark .line { stroke: var(--ac); stroke-width: 1.6; fill: none; }
+  .spark .dot { fill: var(--ac); }
+  .spark .dot.best { fill: var(--ac); stroke: var(--bg-card); stroke-width: 2.2; }
+  .spark text { font-size: 10px; fill: var(--mu); }
+  .spark .baseline-line {
+    stroke: var(--mu); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.55;
+  }
+  .tree-wrap {
+    border: 1px solid var(--bd-soft);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    margin: 0 0 1rem;
+    overflow: hidden;
+  }
+  .tree {
+    display: block;
+    width: 100%;
+    height: auto;
+    padding: 0.5rem 0.25rem 0.25rem;
+  }
+  .tree .edge { fill: none; stroke: var(--mu); stroke-width: 1.2; opacity: 0.5; }
+  .tree .box { stroke: var(--bd); stroke-width: 1.2; }
+  .tree .box.baseline { fill: var(--tone-baseline); }
+  .tree .box.improved { fill: var(--tone-improved); }
+  .tree .box.regressed { fill: var(--tone-regressed); }
+  .tree .box.neutral { fill: var(--tone-neutral); }
+  .tree .box.best { stroke: var(--ac); stroke-width: 2.2; }
+  .tree a:hover .box { stroke: var(--ac); }
+  .tree text { font-size: 11px; fill: #0f172a; }
+  .tree text.title { font-weight: 700; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.78rem;
+    color: var(--mu);
+    border-top: 1px solid var(--bd-soft);
+    background: var(--bg);
+  }
+  .legend .swatch { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .legend .swatch::before {
+    content: "";
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 999px;
+    background: var(--swatch, var(--ac));
+    border: 1px solid rgba(15, 23, 42, 0.15);
+  }
+  .legend .swatch.baseline { --swatch: var(--tone-baseline); }
+  .legend .swatch.improved { --swatch: var(--tone-improved); }
+  .legend .swatch.regressed { --swatch: var(--tone-regressed); }
+  .legend .swatch.neutral { --swatch: var(--tone-neutral); }
+  .legend .swatch.best { --swatch: var(--ac); }
+  details {
+    border: 1px solid var(--bd);
+    border-left: 3px solid var(--bd);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+    margin: 0.55rem 0;
+    background: var(--bg-card);
+    transition: background 0.15s;
+  }
+  details.best {
+    border-left-color: var(--ac);
+    background: var(--ac-soft);
+  }
+  details[open] { background: var(--bg-soft); }
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--fg);
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .idx { display: inline-block; font-weight: 700; color: var(--ac); margin-right: 0.4rem; }
+  summary .parent { color: var(--mu); font-weight: 500; margin-right: 0.4rem; }
+  summary .metrics { color: var(--mu); font-weight: 400; margin-left: 0.5rem; font-size: 0.92em; }
+  summary .badge {
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    background: var(--ac);
+    color: #fff;
+    vertical-align: 0.05em;
+  }
+  details .id-chip {
+    display: inline-block;
+    background: var(--ac-soft);
+    color: var(--ac);
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.75em;
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  details h4 {
+    margin: 0.9rem 0 0.3rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mu);
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.25rem 0; }
+  th, td {
+    border-bottom: 1px solid var(--bd-soft);
+    padding: 0.35rem 0.55rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    color: var(--mu);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  img {
+    max-width: 100%;
+    border: 1px solid var(--bd-soft);
+    border-radius: 6px;
+    margin-top: 0.5rem;
+    background: var(--bg);
+  }
+  code {
+    font-family: ui-monospace, monospace;
+    font-size: 0.85em;
+    background: var(--bg-soft);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+  }
+  footer {
+    color: var(--mu);
+    font-size: 0.85rem;
+    margin-top: 2.5rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--bd-soft);
+  }
+  footer a { color: var(--ac); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  </style></head><body><header><div class="hero-wrap"><h1>BattMo investigation report</h1></div><div class="summary-side"><div class="sim">BattMo</div><div class="tally"><span>3 attempts</span><span>1 branch</span><span>2 leaves</span></div><div class="sid">Session <code>abc</code></div></div></header><section class="narrative"><h2>Summary</h2>
+  <p>Converged after two branches.</p>
+  </section><section class="results"><h2>Results</h2><div class="hero"><span class="stat-label">rmse (best)</span><span class="stat-value">0.02</span><span class="stat-baseline">baseline 0.05</span><span class="stat-delta pos">-60.0% vs baseline</span></div></section><section class="exploration"><h2>Exploration map</h2><div class="metric-chart"><h3>rmse by attempt</h3><svg class="spark" viewBox="0 0 720 96" preserveAspectRatio="xMidYMid meet" role="img" aria-label="rmse per attempt"><path class="area" d="M40.0,12.0 L365.0,74.0 L690.0,53.3 L690.0,74.0 L40.0,74.0 Z"/><path class="line" d="M40.0,12.0 L365.0,74.0 L690.0,53.3"/><line class="baseline-line" x1="40.0" x2="690.0" y1="12.0" y2="12.0"/><text x="686.0" y="8.0" text-anchor="end">baseline</text><circle class="dot " cx="40.0" cy="12.0" r="2.6"><title>#1 · 0.05</title></circle><circle class="dot best" cx="365.0" cy="74.0" r="3.4"><title>#2 · 0.02</title></circle><circle class="dot " cx="690.0" cy="53.3" r="2.6"><title>#3 · 0.03</title></circle><text x="36.0" y="15.0" text-anchor="end">0.05</text><text x="36.0" y="77.0" text-anchor="end">0.02</text><text x="40.0" y="90.0" text-anchor="middle">#1</text><text x="365.0" y="90.0" text-anchor="middle">#2</text><text x="690.0" y="90.0" text-anchor="middle">#3</text></svg></div><div class="tree-wrap"><svg class="tree" viewBox="0 0 620 192" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Attempt tree"><path class="edge" d="M310.0,76.0 C310.0,96.0 206.7,96.0 206.7,116.0"/><path class="edge" d="M310.0,76.0 C310.0,96.0 413.3,96.0 413.3,116.0"/><a href="#attempt-1"><title>baseline</title><rect class="box baseline" x="226.0" y="20.0" width="168" height="56" rx="8" ry="8"/><text class="title" x="310.0" y="41" text-anchor="middle">#1 baseline</text><text x="310.0" y="59" text-anchor="middle">rmse=0.05</text></a><a href="#attempt-2"><title>increase surface area</title><rect class="box improved best" x="122.7" y="116.0" width="168" height="56" rx="8" ry="8"/><text class="title" x="206.7" y="137" text-anchor="middle">#2 increase surface area</text><text x="206.7" y="155" text-anchor="middle">rmse=0.02</text></a><a href="#attempt-3"><title>try mass fraction</title><rect class="box improved" x="329.3" y="116.0" width="168" height="56" rx="8" ry="8"/><text class="title" x="413.3" y="137" text-anchor="middle">#3 try mass fraction</text><text x="413.3" y="155" text-anchor="middle">rmse=0.03</text></a></svg><div class="legend"><span class="swatch baseline">Baseline</span><span class="swatch improved">Improved vs parent</span><span class="swatch regressed">Regressed vs parent</span><span class="swatch neutral">No change</span><span class="swatch best">Best</span></div></div></section><section class="attempt-details"><h2>Attempt details</h2><details id="attempt-1" class=""><summary><span class="idx">#1</span>baseline<span class="metrics">rmse=0.05</span></summary><p><span class="id-chip">a1</span><strong>Attempt id:</strong> <code>a1</code></p><h4>Parameter changes</h4><table><tr><td><code>param.a</code></td><td>1.0 → 1.1</td></tr></table><h4>Metrics</h4><table><tr><td><code>rmse</code></td><td>0.05</td></tr></table></details><details id="attempt-2" class="best"><summary><span class="idx">#2</span><span class="parent">from #1</span>increase surface area<span class="metrics">rmse=0.02</span><span class="badge">best</span></summary><p><span class="id-chip">a2</span><strong>Attempt id:</strong> <code>a2</code></p><h4>Parameter changes</h4><table><tr><td><code>param.a</code></td><td>1.0 → 1.1</td></tr></table><h4>Metrics</h4><table><tr><td><code>rmse</code></td><td>0.02</td></tr></table><p><em>Plot not found: <code>artifacts/plot-1.png</code></em></p></details><details id="attempt-3" class=""><summary><span class="idx">#3</span><span class="parent">from #1</span>try mass fraction<span class="metrics">rmse=0.03</span></summary><p><span class="id-chip">a3</span><strong>Attempt id:</strong> <code>a3</code></p><h4>Parameter changes</h4><table><tr><td><code>param.a</code></td><td>1.0 → 1.1</td></tr></table><h4>Metrics</h4><table><tr><td><code>rmse</code></td><td>0.03</td></tr></table></details></section><footer>Also see the <a href="../transcript.html">session transcript</a> and raw <a href="../trace.sqlite">trace.sqlite</a>.</footer></body></html>
+  '''
+# ---

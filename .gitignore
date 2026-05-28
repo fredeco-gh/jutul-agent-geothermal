@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# uv
+uv.lock
+
+# Secrets and local editor config
+.env
+.env.*
+.mcp.json
+
+# Project state
+.jutul-agent/
+
+# IDE
+.vscode/
+.claude/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

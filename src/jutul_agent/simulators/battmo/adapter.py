@@ -1,0 +1,25 @@
+"""BattMo adapter."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from jutul_agent.simulators.base import SimulatorAdapter
+
+BATTMO = SimulatorAdapter(
+    name="battmo",
+    display_name="BattMo",
+    module_dir=Path(__file__).resolve().parent,
+    package_imports=("Jutul", "BattMo"),
+    primary_package="BattMo",
+    warmup_code="using BattMo, CSV, DataFrames, Statistics, Interpolations",
+    domain_hints=(
+        "BattMo is a Jutul-framework battery simulator (lithium-ion and other "
+        "chemistries, coupled electrochemistry / transport / optionally thermal). "
+        "Workflow: `load_cell_parameters(; from_default_set=...)` → "
+        "`load_cycling_protocol(; from_default_set=...)` → `LithiumIonBattery()` "
+        "→ `Simulation(model, cell_parameters, cycling_protocol)` → `solve(sim)`. "
+        "Beginner walkthroughs live in `examples/beginner_tutorials/` "
+        "(numbered 1-11)."
+    ),
+)

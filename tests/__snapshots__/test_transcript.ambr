@@ -1,0 +1,75 @@
+# serializer version: 1
+# name: test_render_artifact
+  '''
+  ### Artifact · `2026-05-19T10:00:01+00:00`
+  
+  ![pressure](artifacts/plot-abc.png)
+  
+  '''
+# ---
+# name: test_render_artifact_with_provenance
+  '''
+  ### Artifact · `2026-05-19T10:00:01+00:00`
+  
+  *(slot `comparison`, png, 900x500)*
+  ![Well rates](artifacts/comparison.png)
+  
+  ```julia
+  well_rates_figure(wd)
+  ```
+  
+  '''
+# ---
+# name: test_render_full_turn
+  '''
+  # Session `abc`
+  
+  - Started: `2026-05-19T10:00:01+00:00`
+  - Simulator: `(none)`
+  
+  ## User · `2026-05-19T10:00:02+00:00`
+  
+  what is 2+2?
+  
+  ### Tool call · `julia_eval` · `2026-05-19T10:00:03+00:00`
+  
+  - `code` = '2+2'
+  
+  ### Tool result · `julia_eval` · `2026-05-19T10:00:04+00:00`
+  
+  ```
+  4
+  ```
+  
+  ## Assistant · `2026-05-19T10:00:05+00:00`
+  
+  The answer is 4.
+  
+  ---
+  _Session ended: `2026-05-19T10:00:06+00:00`_
+  
+  '''
+# ---
+# name: test_render_hitl_events
+  '''
+  ### Approval request · `2026-05-19T10:00:01+00:00`
+  
+  - `interrupt_id` = 'abc'
+  - `actions`:
+    - `execute` {'command': 'ls -la'}
+  
+  ### Approval response · `2026-05-19T10:00:02+00:00`
+  
+  - `interrupt_id` = 'abc'
+  - `payload` = {'decisions': [{'type': 'approve'}]}
+  
+  '''
+# ---
+# name: test_render_skips_empty_assistant
+  '''
+  ## Assistant · `2026-05-19T10:00:02+00:00`
+  
+  hello
+  
+  '''
+# ---

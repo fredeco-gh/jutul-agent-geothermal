@@ -1,0 +1,12 @@
+# Placeholder env: VOCSim.jl is not yet released. Ships AgentREPL, Jutul,
+# CairoMakie and the common calibration helpers so the agent can scaffold
+# workspaces and exercise the generic Jutul tooling. Update this Project.toml
+# once the upstream VOCSim package is published.
+
+[deps]
+AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"

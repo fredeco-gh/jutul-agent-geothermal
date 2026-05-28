@@ -1,0 +1,210 @@
+"""End-to-end agent loop test against a scripted LLM and stub Julia."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from langgraph.checkpoint.memory import MemorySaver
+
+from fakes import (
+    FakeJulia,
+    make_fake_adapter,
+    make_scripted_model,
+    scripted_final,
+    scripted_tool_call,
+)
+from jutul_agent.agent.builder import build_agent
+from jutul_agent.agent.turns import TurnRunner
+from jutul_agent.session import Session
+from jutul_agent.trace import TraceLog
+
+
+async def _run_turn(agent, session: Session, prompt: str):
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+    return await runner.run_prompt(prompt)
+
+
+async def test_agent_loop_drives_julia_eval(tmp_path: Path) -> None:
+    julia = FakeJulia(answers={"2 + 2": "4"})
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="julia_eval",
+                args={"code": "2 + 2"},
+                tool_call_id="call_eval_1",
+            ),
+            scripted_final("The answer is 4."),
+        ]
+    )
+
+    agent = build_agent(session, model=model)
+    result = await _run_turn(agent, session, "Compute 2 + 2 in Julia.")
+
+    final_messages = result.messages
+    last = final_messages[-1]
+    assert "4" in str(getattr(last, "content", last))
+    assert "2 + 2" in julia.calls
+
+    session.finalize()
+    kinds = _trace_kinds(session)
+    assert "session_start" in kinds
+    assert "message_user" in kinds
+    assert kinds.count("tool_call") == 1
+    assert kinds.count("tool_result") == 1
+    assert "message_assistant" in kinds
+    assert kinds[-1] == "session_end"
+
+
+async def test_execute_tool_requires_approval(tmp_path: Path) -> None:
+    julia = FakeJulia()
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="execute",
+                args={"command": "pwd"},
+                tool_call_id="call_exec_1",
+            )
+        ]
+    )
+
+    agent = build_agent(
+        session,
+        model=model,
+        checkpointer=MemorySaver(),
+    )
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+
+    try:
+        result = await runner.run_prompt("Show the workspace directory.")
+
+        assert len(result.interrupts) == 1
+        interrupt = result.interrupts[0].value
+        assert interrupt["action_requests"] == [
+            {
+                "name": "execute",
+                "args": {"command": "pwd"},
+                "description": "Run a shell command in the workspace.",
+            }
+        ]
+        assert interrupt["review_configs"] == [
+            {
+                "action_name": "execute",
+                "allowed_decisions": ["approve", "reject"],
+            }
+        ]
+    finally:
+        session.finalize()
+
+    kinds = _trace_kinds(session)
+    assert "hitl_request" in kinds
+
+
+async def test_write_file_requires_approval(tmp_path: Path) -> None:
+    julia = FakeJulia()
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="write_file",
+                args={"file_path": "/notes.txt", "content": "hello\n"},
+                tool_call_id="call_write_1",
+            )
+        ]
+    )
+
+    agent = build_agent(
+        session,
+        model=model,
+        checkpointer=MemorySaver(),
+    )
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+
+    try:
+        result = await runner.run_prompt("Create a note file.")
+
+        assert len(result.interrupts) == 1
+        interrupt = result.interrupts[0].value
+        assert interrupt["action_requests"] == [
+            {
+                "name": "write_file",
+                "args": {"file_path": "/notes.txt", "content": "hello\n"},
+                "description": "Write a file in the workspace.",
+            }
+        ]
+        assert interrupt["review_configs"] == [
+            {
+                "action_name": "write_file",
+                "allowed_decisions": ["approve", "reject"],
+            }
+        ]
+    finally:
+        session.finalize()
+
+
+async def test_edit_file_requires_approval(tmp_path: Path) -> None:
+    julia = FakeJulia()
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="edit_file",
+                args={
+                    "file_path": "/notes.txt",
+                    "old_string": "hello",
+                    "new_string": "goodbye",
+                },
+                tool_call_id="call_edit_1",
+            )
+        ]
+    )
+
+    agent = build_agent(
+        session,
+        model=model,
+        checkpointer=MemorySaver(),
+    )
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+
+    try:
+        result = await runner.run_prompt("Update the note file.")
+
+        assert len(result.interrupts) == 1
+        interrupt = result.interrupts[0].value
+        assert interrupt["action_requests"] == [
+            {
+                "name": "edit_file",
+                "args": {
+                    "file_path": "/notes.txt",
+                    "old_string": "hello",
+                    "new_string": "goodbye",
+                },
+                "description": "Edit a file in the workspace.",
+            }
+        ]
+        assert interrupt["review_configs"] == [
+            {
+                "action_name": "edit_file",
+                "allowed_decisions": ["approve", "reject"],
+            }
+        ]
+    finally:
+        session.finalize()
+
+
+def _trace_kinds(session: Session) -> list[str]:
+    db = session.state_dir / "trace.sqlite"
+    log = TraceLog(db)
+    try:
+        return [e.kind for e in log.iter_events()]
+    finally:
+        log.close()

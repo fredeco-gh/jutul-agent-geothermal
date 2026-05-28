@@ -1,0 +1,247 @@
+"""Tests for the turn runner and HITL trace recording."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+
+from fakes import (
+    ScriptedV3Agent,
+    interrupt_agent,
+    v3_message_event,
+    v3_tool_event,
+    v3_values_event,
+)
+from jutul_agent.agent.turns import TurnReasoningDelta, TurnRunner, TurnToolEvent
+from jutul_agent.trace import TraceLog
+
+
+def _message_agent() -> ScriptedV3Agent:
+    human = HumanMessage(content="hi")
+    assistant = AIMessage(content="hello")
+    return ScriptedV3Agent(
+        [
+            v3_message_event(human),
+            v3_message_event(assistant),
+            v3_values_event([human, assistant]),
+        ]
+    )
+
+
+def _chunk_message_agent() -> ScriptedV3Agent:
+    human = HumanMessage(content="hi")
+    assistant = AIMessage(content="hello")
+    return ScriptedV3Agent(
+        [
+            v3_message_event(AIMessageChunk(content="hel")),
+            v3_message_event(AIMessageChunk(content="lo", chunk_position="last")),
+            v3_values_event([human, assistant]),
+        ]
+    )
+
+
+def _v3_reasoning_and_tool_agent() -> ScriptedV3Agent:
+    human = HumanMessage(content="hi")
+    assistant = AIMessage(content="hello")
+    return ScriptedV3Agent(
+        [
+            v3_values_event([human]),
+            v3_message_event(
+                {
+                    "event": "content-block-delta",
+                    "delta": {"type": "reasoning-delta", "reasoning": "checking context"},
+                }
+            ),
+            v3_message_event(
+                {
+                    "event": "content-block-delta",
+                    "delta": {"type": "text-delta", "text": "hello"},
+                }
+            ),
+            v3_message_event(
+                {
+                    "event": "content-block-finish",
+                    "content": {
+                        "type": "tool_call",
+                        "id": "tool-1",
+                        "name": "execute",
+                        "args": {"path": "/"},
+                    },
+                }
+            ),
+            v3_tool_event(
+                {
+                    "event": "tool-started",
+                    "tool_call_id": "tool-1",
+                    "tool_name": "execute",
+                    "input": {"path": "/"},
+                }
+            ),
+            v3_tool_event(
+                {
+                    "event": "tool-finished",
+                    "tool_call_id": "tool-1",
+                    "output": ["a", "b"],
+                }
+            ),
+            v3_message_event({"event": "message-finish"}),
+            v3_values_event([human, assistant]),
+        ]
+    )
+
+
+async def test_turn_runner_emits_text_as_chunks() -> None:
+    """Typed projection streams deliver text as AIMessageChunk deltas only;
+    full assembled messages live in ``result.messages``."""
+
+    runner = TurnRunner(_message_agent(), thread_id="thread-1")
+    seen: list[object] = []
+
+    result = await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
+
+    chunks = [m for m in seen if isinstance(m, AIMessageChunk)]
+    assert "".join(str(c.content) for c in chunks) == "hello"
+    assert chunks[-1].chunk_position == "last"
+    assert result.messages[-1].content == "hello"
+    assert result.interrupts == []
+
+
+async def test_turn_runner_streams_message_chunks() -> None:
+    runner = TurnRunner(_chunk_message_agent(), thread_id="thread-1")
+    seen: list[object] = []
+
+    result = await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
+
+    chunks = [m for m in seen if isinstance(m, AIMessageChunk)]
+    assert "".join(str(c.content) for c in chunks) == "hello"
+    assert result.messages[-1].content == "hello"
+    assert result.interrupts == []
+
+
+async def test_turn_runner_streams_v3_reasoning_and_tool_events() -> None:
+    runner = TurnRunner(_v3_reasoning_and_tool_agent(), thread_id="thread-1")
+    seen: list[object] = []
+
+    result = await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
+
+    reasoning = [m for m in seen if isinstance(m, TurnReasoningDelta)]
+    assert any(r.text == "checking context" for r in reasoning)
+
+    text_chunks = [m for m in seen if isinstance(m, AIMessageChunk) and m.content]
+    assert "".join(str(c.content) for c in text_chunks) == "hello"
+
+    tool_events = [m for m in seen if isinstance(m, TurnToolEvent)]
+    events_by_kind = {e.event for e in tool_events}
+    assert "requested" in events_by_kind
+    assert "started" in events_by_kind
+    assert "finished" in events_by_kind
+    finished = next(e for e in tool_events if e.event == "finished")
+    assert finished.content == '["a", "b"]'
+
+    assert result.messages[-1].content == "hello"
+
+
+async def test_turn_runner_parses_server_tool_call() -> None:
+    agent = ScriptedV3Agent(
+        [
+            v3_message_event(
+                {
+                    "event": "content-block-finish",
+                    "content": {
+                        "type": "server_tool_call",
+                        "id": "tool-2",
+                        "name": "search",
+                        "args": "query=jutul",
+                    },
+                }
+            ),
+            v3_values_event([]),
+        ]
+    )
+    runner = TurnRunner(agent, thread_id="thread-1")
+    seen: list[object] = []
+
+    await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
+
+    requested = [
+        m for m in seen if isinstance(m, TurnToolEvent) and m.event == "requested"
+    ]
+    assert len(requested) == 1
+    assert requested[0].tool_name == "search"
+    assert requested[0].args == {"value": "query=jutul"}
+
+
+async def test_turn_runner_streams_tool_output_deltas() -> None:
+    human = HumanMessage(content="hi")
+    assistant = AIMessage(content="done")
+    agent = ScriptedV3Agent(
+        [
+            v3_tool_event(
+                {
+                    "event": "tool-started",
+                    "tool_call_id": "tool-julia",
+                    "tool_name": "julia_eval",
+                    "input": {"code": "run()"},
+                }
+            ),
+            v3_tool_event(
+                {
+                    "event": "tool-output-delta",
+                    "tool_call_id": "tool-julia",
+                    "delta": "progress\n",
+                }
+            ),
+            v3_tool_event(
+                {
+                    "event": "tool-output-delta",
+                    "tool_call_id": "tool-julia",
+                    "delta": "→ 42\n",
+                }
+            ),
+            v3_tool_event(
+                {
+                    "event": "tool-finished",
+                    "tool_call_id": "tool-julia",
+                    "output": "progress\n→ 42\n",
+                }
+            ),
+            v3_values_event([human, assistant]),
+        ]
+    )
+    runner = TurnRunner(agent, thread_id="thread-1")
+    seen: list[object] = []
+
+    result = await runner.run_prompt("hi", on_message=lambda msg: seen.append(msg))
+
+    tool_events = [m for m in seen if isinstance(m, TurnToolEvent)]
+    deltas = [e for e in tool_events if e.event == "delta"]
+    assert [d.content for d in deltas] == ["progress\n", "→ 42\n"]
+    finished = next(e for e in tool_events if e.event == "finished")
+    assert finished.content == "progress\n→ 42\n"
+    assert result.messages[-1].content == "done"
+
+
+async def test_turn_runner_records_user_message_and_hitl_round_trip(
+    tmp_path: Path,
+) -> None:
+    agent = interrupt_agent()
+    log = TraceLog(tmp_path / "trace.sqlite")
+    runner = TurnRunner(agent, thread_id="thread-1", trace=log)
+
+    try:
+        first = await runner.run_prompt("need approval")
+        assert len(first.interrupts) == 1
+        assert first.interrupts[0].interrupt_id == "interrupt-1"
+
+        second = await runner.resume(
+            {"interrupt-1": {"decisions": [{"type": "approve"}]}},
+        )
+
+        assert hasattr(agent.inputs[1], "resume")
+        assert second.messages[-1].content == "approval handled"
+
+        kinds = [event.kind for event in log.iter_events()]
+        assert kinds == ["message_user", "hitl_request", "hitl_response"]
+    finally:
+        log.close()

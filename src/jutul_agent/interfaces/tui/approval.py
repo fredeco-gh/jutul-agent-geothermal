@@ -1,0 +1,365 @@
+"""Helpers for rendering human-in-the-loop approval requests in the TUI."""
+
+from __future__ import annotations
+
+import difflib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from jutul_agent.interfaces.tui._rendering import fenced_block, truncate_preview
+
+__all__ = [
+    "SUPPORTED_APPROVAL_DECISIONS",
+    "ApprovalCard",
+    "allowed_decisions_for_interrupt",
+    "approval_command_hints",
+    "approval_ui_hints",
+    "compute_unified_diff",
+    "fenced_block",
+    "render_interrupt_cards",
+    "resolve_workspace_path",
+    "truncate_preview",
+]
+
+SUPPORTED_APPROVAL_DECISIONS = frozenset({"approve", "reject", "respond"})
+
+# Decision name → user-facing slash command (with optional argument hint).
+_APPROVAL_COMMAND_HINTS: dict[str, str] = {
+    "approve": "/approve",
+    "reject": "/reject [reason]",
+    "respond": "/respond <message>",
+}
+
+
+def approval_command_hints(allowed_decisions: frozenset[str]) -> list[str]:
+    """Slash-command hints (`/approve`, `/reject [reason]`, …) for the given decisions.
+
+    Returned in canonical order. The caller decides whether to render them as a
+    status hint, a help message, or autocomplete entries.
+    """
+
+    supported = allowed_decisions & SUPPORTED_APPROVAL_DECISIONS
+    return [hint for decision, hint in _APPROVAL_COMMAND_HINTS.items() if decision in supported]
+
+
+def approval_ui_hints(allowed_decisions: frozenset[str]) -> str:
+    """Keyboard and slash hints for a pending approval card."""
+
+    parts: list[str] = []
+    supported = allowed_decisions & SUPPORTED_APPROVAL_DECISIONS
+    if "approve" in supported:
+        parts.append("y approve")
+    if "reject" in supported:
+        parts.append("n reject")
+    parts.extend(approval_command_hints(allowed_decisions))
+    return " · ".join(parts)
+
+
+def allowed_decisions_for_interrupt(value: Any) -> frozenset[str]:
+    """Return the intersection of decisions allowed across an interrupt's actions.
+
+    An interrupt payload may bundle multiple ``action_requests``; each can
+    declare its own ``allowed_decisions`` in a sibling ``review_configs``
+    block. The TUI can only resume an interrupt with a decision every action
+    accepts, so we intersect. Empty / malformed payloads fall back to all
+    supported decisions, matching deepagents' default.
+    """
+
+    if not isinstance(value, dict):
+        return SUPPORTED_APPROVAL_DECISIONS
+
+    config_map = _review_config_map(value.get("review_configs"))
+    action_requests = value.get("action_requests")
+    if not isinstance(action_requests, list):
+        return SUPPORTED_APPROVAL_DECISIONS
+
+    shared: frozenset[str] | None = None
+    for action in action_requests:
+        if not isinstance(action, dict):
+            continue
+        action_name = str(action.get("name") or "")
+        allowed = config_map.get(action_name, SUPPORTED_APPROVAL_DECISIONS)
+        shared = allowed if shared is None else shared & allowed
+    return shared if shared is not None else SUPPORTED_APPROVAL_DECISIONS
+
+
+@dataclass(frozen=True)
+class ApprovalCard:
+    """Structured approval content ready for chat rendering."""
+
+    title: str
+    body: str
+    tool_name: str
+    allowed_decisions: frozenset[str]
+
+
+def render_interrupt_cards(
+    interrupt_id: str,
+    value: dict[str, Any],
+    *,
+    workspace_root: Path,
+) -> list[ApprovalCard]:
+    """Render one approval card per action in a LangGraph interrupt payload.
+
+    Assumes deepagents' interrupt contract: ``value`` is a dict with an
+    ``action_requests`` list (each item carrying ``name`` and ``args``) and
+    a parallel ``review_configs`` list of allowed-decision policies.
+    """
+
+    config_map = _review_config_map(value.get("review_configs"))
+    cards: list[ApprovalCard] = []
+    for action in value["action_requests"]:
+        tool_name = str(action.get("name") or "tool")
+        tool_args = action.get("args") if isinstance(action.get("args"), dict) else {}
+        description = action.get("description")
+        cards.append(
+            ApprovalCard(
+                title=f"Approval · {tool_name}",
+                body=_render_card_body(
+                    interrupt_id=interrupt_id,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    description=str(description) if description else None,
+                    workspace_root=workspace_root,
+                ),
+                tool_name=tool_name,
+                allowed_decisions=config_map.get(tool_name, SUPPORTED_APPROVAL_DECISIONS),
+            )
+        )
+    return cards
+
+
+def _render_card_body(
+    *,
+    interrupt_id: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    description: str | None,
+    workspace_root: Path,
+) -> str:
+    lines: list[str] = []
+
+    if description:
+        lines.append(description)
+        lines.append("")
+
+    target = _tool_target(tool_name, tool_args)
+    lines.append(f"- Interrupt: {_inline_code(interrupt_id)}")
+    lines.append(f"- Tool: {_inline_code(tool_name)}")
+    if target is not None:
+        lines.append(f"- Target: {_inline_code(target)}")
+
+    tool_sections = _tool_sections(tool_name, tool_args, workspace_root=workspace_root)
+    if tool_sections:
+        lines.append("")
+        lines.extend(tool_sections)
+
+    return "\n".join(lines)
+
+
+def _tool_sections(tool_name: str, tool_args: dict[str, Any], *, workspace_root: Path) -> list[str]:
+    if tool_name == "execute":
+        command = str(tool_args.get("command") or "").strip()
+        if not command:
+            return []
+        return ["#### Command", "", fenced_block(truncate_preview(command), language="sh")]
+
+    if tool_name == "write_file":
+        return _write_file_sections(tool_args, workspace_root=workspace_root)
+
+    if tool_name == "edit_file":
+        return _edit_file_sections(tool_args, workspace_root=workspace_root)
+
+    if not tool_args:
+        return []
+
+    rendered_args = "\n".join(
+        f"- {_inline_code(str(key))}: {_inline_code(repr(value))}"
+        for key, value in tool_args.items()
+    )
+    return ["#### Arguments", "", rendered_args]
+
+
+def _write_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> list[str]:
+    sections: list[str] = []
+    path_str = str(tool_args.get("file_path") or tool_args.get("path") or "")
+    content = str(tool_args.get("content") or "")
+    physical_path = resolve_workspace_path(path_str, workspace_root=workspace_root)
+    existing_text = _safe_read(physical_path) if physical_path and physical_path.exists() else None
+
+    if existing_text is None:
+        sections.append("#### Content Preview")
+        sections.append("")
+        sections.append(
+            fenced_block(truncate_preview(content), language=_guess_language(path_str))
+        )
+        return sections
+
+    diff = compute_unified_diff(existing_text, content, path_str or physical_path.name)
+    sections.append("#### Diff")
+    sections.append("")
+    if diff is None:
+        sections.append("No content changes detected.")
+    else:
+        sections.append(fenced_block(truncate_preview(diff), language="diff"))
+    return sections
+
+
+def _edit_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> list[str]:
+    path_str = str(tool_args.get("file_path") or tool_args.get("path") or "")
+    physical_path = resolve_workspace_path(path_str, workspace_root=workspace_root)
+    if physical_path is None:
+        return ["> Preview unavailable: unable to resolve the target path inside the workspace."]
+    if not physical_path.exists():
+        return ["> Preview unavailable: the target file does not exist in the workspace."]
+
+    existing_text = _safe_read(physical_path)
+    if existing_text is None:
+        return ["> Preview unavailable: unable to read the current file contents."]
+
+    old_string = str(tool_args.get("old_string") or "")
+    new_string = str(tool_args.get("new_string") or "")
+    replace_all = bool(tool_args.get("replace_all"))
+    updated_text, occurrences, error = _apply_edit_preview(
+        existing_text,
+        old_string,
+        new_string,
+        replace_all=replace_all,
+    )
+    if error is not None or updated_text is None:
+        return [f"> Preview unavailable: {error or 'unknown edit preview failure.'}"]
+
+    details = [
+        "#### Edit Summary",
+        "",
+        f"- Matches: {occurrences}",
+        f"- Replace all: {'yes' if replace_all else 'no'}",
+        "",
+        "#### Diff",
+        "",
+    ]
+
+    diff = compute_unified_diff(existing_text, updated_text, path_str or physical_path.name)
+    if diff is None:
+        details.append("No content changes detected.")
+    else:
+        details.append(fenced_block(truncate_preview(diff), language="diff"))
+    return details
+
+
+def _apply_edit_preview(
+    existing_text: str,
+    old_string: str,
+    new_string: str,
+    *,
+    replace_all: bool,
+) -> tuple[str | None, int, str | None]:
+    if not old_string:
+        return None, 0, "the edit request did not include old_string."
+
+    occurrences = existing_text.count(old_string)
+    if occurrences == 0:
+        return None, 0, "old_string was not found in the current file contents."
+    if not replace_all and occurrences > 1:
+        return (
+            None,
+            occurrences,
+            "old_string matches multiple regions; preview is ambiguous until the edit is narrowed.",
+        )
+
+    updated = (
+        existing_text.replace(old_string, new_string)
+        if replace_all
+        else existing_text.replace(old_string, new_string, 1)
+    )
+    return updated, occurrences, None
+
+
+def resolve_workspace_path(path_str: str | None, *, workspace_root: Path) -> Path | None:
+    """Resolve a workspace-virtual or relative path to a physical path.
+
+    deepagents' filesystem tools speak workspace-virtual absolute paths
+    (e.g. ``/notes.txt``) that are anchored at ``workspace_root``. We treat
+    a leading ``/`` as that virtual anchor; anything else must be a
+    relative path. Any resolved path that lands outside the workspace is
+    rejected so a preview can't accidentally read the user's home dir.
+    """
+
+    if not path_str:
+        return None
+
+    root = workspace_root.resolve()
+    relative = path_str.lstrip("/") if path_str.startswith("/") else path_str
+    resolved = (root / relative).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved
+
+
+def compute_unified_diff(before: str, after: str, display_path: str) -> str | None:
+    """Compute a unified diff for approval previews."""
+
+    diff_lines = list(
+        difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=f"{display_path} (before)",
+            tofile=f"{display_path} (after)",
+            lineterm="",
+            n=3,
+        )
+    )
+    if not diff_lines:
+        return None
+    return "\n".join(diff_lines)
+
+
+def _review_config_map(review_configs: Any) -> dict[str, frozenset[str]]:
+    config_map: dict[str, frozenset[str]] = {}
+    if not isinstance(review_configs, list):
+        return config_map
+
+    for review in review_configs:
+        if not isinstance(review, dict):
+            continue
+        action_name = review.get("action_name")
+        allowed = review.get("allowed_decisions")
+        if isinstance(action_name, str) and isinstance(allowed, list):
+            config_map[action_name] = frozenset(str(item) for item in allowed)
+    return config_map
+
+
+def _tool_target(tool_name: str, tool_args: dict[str, Any]) -> str | None:
+    if tool_name in {"write_file", "edit_file", "read_file"}:
+        value = tool_args.get("file_path") or tool_args.get("path")
+        return str(value) if value else None
+    return None
+
+
+def _guess_language(path_str: str) -> str:
+    suffix = Path(path_str).suffix.lower()
+    if suffix == ".py":
+        return "python"
+    if suffix == ".jl":
+        return "julia"
+    if suffix in {".md", ".markdown"}:
+        return "markdown"
+    if suffix in {".json", ".toml", ".yaml", ".yml", ".txt"}:
+        return suffix.lstrip(".") or "text"
+    return "text"
+
+
+def _inline_code(text: str) -> str:
+    return f"`{text.replace('`', '\\`')}`"
+
+
+def _safe_read(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
