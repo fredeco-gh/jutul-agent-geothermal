@@ -16,6 +16,7 @@ from jutul_agent.interfaces.tui._rendering import (
     truncate_preview,
 )
 from jutul_agent.julia.backends.agentrepl import strip_julia_repl_echo
+from jutul_agent.paths import workspace_root
 
 _COMPACT_TOOLS = frozenset(
     {
@@ -266,23 +267,29 @@ def _record_attempt_summary(output: str) -> str:
 
 
 def _render_report_summary(args: dict[str, Any], output: str) -> str:
-    path = str(args.get("output_path") or args.get("path") or "experiments/report.html")
-    if output.strip():
-        return f"Rendered `{display_path(path)}` · {shorten_single_line(output, 48)}"
-    return f"Rendered `{display_path(path)}`"
+    raw = output.strip() or str(args.get("output_path") or args.get("path") or "report.html")
+    path = Path(raw)
+    if path.is_absolute():
+        try:
+            rel = path.relative_to(workspace_root()).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        return f"Rendered `{display_path(rel)}`"
+    return f"Rendered `{display_path(raw)}`"
 
 
 def _julia_plot_summary(args: dict[str, Any], output: str) -> str:
-    slot = args.get("slot")
-    caption = args.get("caption")
     cleaned = output.strip()
     if cleaned.startswith("ERROR"):
         return "plot · failed"
+    slot = args.get("slot")
+    caption = args.get("caption")
     head = f"plot `{shorten(str(slot), 28)}`" if slot else "plot"
+    m = re.match(r"saved plot to (\S+) \(", cleaned)
+    if m:
+        return f"{head} · `{display_path(m.group(1))}`"
     if caption:
-        return f"{head} · {shorten_single_line(str(caption), 56)}"
-    if cleaned:
-        return f"{head} · {shorten_single_line(cleaned, 56)}"
+        return f"{head} · {shorten_single_line(str(caption), 48)}"
     return head
 
 

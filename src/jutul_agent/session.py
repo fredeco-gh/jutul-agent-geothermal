@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jutul_agent.agent.memory import create_ephemeral_memory_dir, remove_ephemeral_memory_dir
 from jutul_agent.julia.session import JuliaSession
-from jutul_agent.paths import workspace_state_dir
+from jutul_agent.paths import session_output_dir, workspace_state_dir
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import TraceLog
 
@@ -47,6 +47,20 @@ def write_last_session(session_id: str, *, state_root: Path | None = None) -> No
     p.write_text(session_id, encoding="utf-8")
 
 
+def _ensure_jutul_agent_gitignore(output_dir: Path) -> None:
+    """Drop a ``.gitignore`` at the root of ``<workspace>/jutul-agent/`` so
+    generated sessions, transcripts, and reports stay out of the user's repo.
+
+    ``output_dir`` is ``<workspace>/jutul-agent/sessions/<date>-<sid>/``; the
+    gitignore goes two levels up at ``<workspace>/jutul-agent/.gitignore``.
+    """
+    root = output_dir.parent.parent
+    gitignore = root / ".gitignore"
+    if gitignore.exists():
+        return
+    gitignore.write_text("*\n", encoding="utf-8")
+
+
 @dataclass
 class Session:
     """A live jutul-agent session. Construct via ``Session.create``.
@@ -59,6 +73,7 @@ class Session:
 
     julia: JuliaSession
     state_dir: Path
+    output_dir: Path
     trace: TraceLog
     simulator: SimulatorAdapter
     session_id: str
@@ -78,7 +93,14 @@ class Session:
         sid = session_id or str(uuid.uuid4())
         dir_ = session_dir(sid, state_root=state_root)
         dir_.mkdir(parents=True, exist_ok=True)
-        (dir_ / "artifacts").mkdir(exist_ok=True)
+
+        out_dir = session_output_dir(sid)
+        try:
+            (out_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+            _ensure_jutul_agent_gitignore(out_dir)
+        except OSError:
+            out_dir = dir_  # fall back to state_dir if workspace is not writable
+
         trace = TraceLog(dir_ / "trace.sqlite")
         trace.append(
             "session_start",
@@ -88,6 +110,7 @@ class Session:
         return cls(
             julia=julia,
             state_dir=dir_,
+            output_dir=out_dir,
             trace=trace,
             simulator=simulator,
             session_id=sid,

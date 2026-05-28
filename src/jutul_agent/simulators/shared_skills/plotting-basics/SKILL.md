@@ -14,8 +14,8 @@ or when a plot would make simulation results easier to understand.
 
 - Use `julia_plot` — not `julia_eval` — to produce plots that appear in the transcript.
 - Code must evaluate to a **Makie `Figure`**. The last expression should be `fig`.
-- Do **not** call `display(fig)`, `plot_well_results`, or `plot_dashboard` unless the
-  user explicitly wants an interactive window.
+- Do **not** call `display(fig)` or any plotter that opens an interactive
+  window unless the user explicitly asks for one.
 - Prefer **CairoMakie** (loaded automatically by `julia_plot`). Do not `using GLMakie`
   in routine agent plots.
 
@@ -47,39 +47,40 @@ Use workspace-relative paths in Julia (no leading slash):
 
 ```julia
 using CSV, DataFrames
-obs = CSV.read("experiments/observations/cc_discharge_1C.csv", DataFrame)
+obs = CSV.read("experiments/observations/data.csv", DataFrame)
 ```
 
-`CSV` and `DataFrames` are in the BattMo Julia env. Prefer them over
-shelling out to read files.
+Prefer `CSV` + `DataFrames` (when available in the simulator's Julia env)
+over shelling out to read files.
 
 ## Decision rule
 
 Prefer in order:
 
-1. A **native simulator plotter** that returns a `Figure` (e.g. BattMo
-   `plot_dashboard(output; new_window=false)`, Mocca `plot_outlet(case, states, timesteps)`,
-   JutulDarcy `plot_co2_inventory(t, inventory)`).
-2. **Inline Makie** built against the live result object — probe with `keys(...)` /
+1. **Inline Makie** built against the live result object — probe with `keys(...)` /
    `propertynames(...)`, then draw with `Figure` / `Axis` / `lines!` / `heatmap!`.
-3. **Thin helpers** from `plots.jl` when present (JutulDarcy/Fimbul only):
-   `well_rates_figure(wd)`, `cell_field_heatmap(g, field)`.
+   Guaranteed to work headlessly under CairoMakie.
+2. A **native simulator plotter** that returns a populated `Figure` and is
+   documented as CairoMakie-compatible. Verify it isn't a GLMakie-only plotter
+   (see the empty-figure trap below).
+3. **Thin helpers** from `plots.jl` when the simulator provides them.
 
-Native plotter > inline Makie > pre-canned helper.
+See each simulator's `<sim>-overview` skill for the native plotter names.
 
-See each simulator's `<sim>-overview` skill for the native plotter name on that stack.
+## The empty-figure trap
+
+Some simulator plotters are wired to GLMakie and silently return an empty
+`Figure()` under CairoMakie (Julia log shows a warning like
+`Warning: Independent figure creation not implemented for backend CairoMakie`).
+`julia_plot` detects this and errors with "Figure has no content". When you
+see that error, **do not retry the same call** — switch to inline Makie.
 
 ## Interactive opt-in
 
-Only when the user asks for an interactive viewer:
-
-```julia
-using GLMakie
-plot_well_results(wd, resolution = (800, 500))  # opens a window; not in transcript
-```
-
-Interactive plots are not captured as artifacts unless the user also requests a static
-`julia_plot`.
+Only when the user explicitly asks for an interactive viewer, load `GLMakie`
+and call the simulator's interactive plotter. Interactive plots open a window
+but are not captured as artifacts — pair them with a static `julia_plot` if
+the user also wants something in the transcript.
 
 ## Performance
 

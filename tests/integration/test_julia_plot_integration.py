@@ -59,7 +59,8 @@ async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
             }
         )
         result = str(getattr(msg, "content", msg))
-        assert "saved plot to artifacts/plot-" in result
+        assert "saved plot to" in result
+        assert "/artifacts/plot-" in result
         assert "format=png" in result
 
         log = TraceLog(session.state_dir / "trace.sqlite")
@@ -68,7 +69,7 @@ async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
             rel_path = artifact.payload["path"]
             assert artifact.payload["format"] == "png"
             assert artifact.payload["source_code"] == code
-            png_path = session.state_dir / rel_path
+            png_path = session.output_dir / rel_path
             assert png_path.exists()
             header = png_path.read_bytes()[:8]
             assert header.startswith(b"\x89PNG\r\n\x1a\n")
@@ -107,9 +108,9 @@ async def test_julia_plot_battmo_inline_makie(tmp_path: Path) -> None:
             }
         )
         result = str(getattr(msg, "content", msg))
-        assert "saved plot to artifacts/battmo_smoke.png" in result
+        assert "/artifacts/battmo_smoke.png" in result
 
-        png_path = session.state_dir / "artifacts" / "battmo_smoke.png"
+        png_path = session.output_dir / "artifacts" / "battmo_smoke.png"
         assert png_path.exists()
         assert png_path.read_bytes()[:8].startswith(b"\x89PNG\r\n\x1a\n")
         session.finalize()

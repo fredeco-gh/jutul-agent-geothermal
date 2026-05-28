@@ -72,7 +72,8 @@ async def test_julia_plot_records_artifact_and_writes_file(
         tool_call_id="call_plot_default",
     )
 
-    assert "saved plot to artifacts/plot-" in result
+    assert "saved plot to" in result
+    assert "/artifacts/plot-" in result
     assert "format=png" in result
     assert written
     assert Path(written[0]).exists()
@@ -102,8 +103,9 @@ async def test_julia_plot_svg_format(tmp_path: Path) -> None:
         tool_call_id="call_plot_svg",
     )
 
-    assert result.startswith("saved plot to artifacts/plot-")
-    assert result.endswith("format=svg)")
+    assert result.startswith("saved plot to")
+    assert "/artifacts/plot-" in result
+    assert "format=svg" in result
     assert written[0].endswith(".svg")
 
     log = TraceLog(plot_session.state_dir / "trace.sqlite")
@@ -128,7 +130,7 @@ async def test_julia_plot_slot_overwrites_path(tmp_path: Path) -> None:
         tool_call_id="call_plot_slot",
     )
 
-    assert "artifacts/comparison.png" in result
+    assert "/artifacts/comparison.png" in result
     assert "slot=comparison" in result
 
     log = TraceLog(plot_session.state_dir / "trace.sqlite")

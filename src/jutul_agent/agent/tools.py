@@ -125,9 +125,9 @@ def make_write_report_tool(session: Session):
     async def write_report(
         narrative: str,
         title: str | None = None,
-        output_path: str = "experiments/report.html",
+        output_path: str | None = None,
     ) -> str:
-        """Write an HTML report for the session.
+        """Write an HTML report for the session and open it in the browser.
 
         Use this when the user asks for a written summary of an investigation
         run. The HTML embeds the supplied narrative, plus any attempts you
@@ -139,15 +139,25 @@ def make_write_report_tool(session: Session):
             narrative: Markdown prose. You write this yourself, summarising
                 what was tried, what worked, and what to do next.
             title: Optional page title (defaults to the simulator name).
-            output_path: Where to write the HTML report.
+            output_path: Where to write the HTML report. Defaults to the
+                session output directory (``jutul-agent/sessions/<id>/report.html``).
         """
+        from jutul_agent.open_file import open_path
         from jutul_agent.transcript.report import render_report
 
-        out = resolve_workspace_path(output_path)
+        if output_path is None:
+            out = session.output_dir / "report.html"
+        else:
+            out = resolve_workspace_path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
 
         ws = workspace_root()
-        artifact_dirs = [ws, ws / "artifacts", session.state_dir / "artifacts"]
+        artifact_dirs = [
+            ws,
+            ws / "artifacts",
+            session.output_dir / "artifacts",
+            session.state_dir / "artifacts",
+        ]
 
         render_report(
             session.trace.iter_events(),
@@ -158,6 +168,7 @@ def make_write_report_tool(session: Session):
             simulator=session.simulator.display_name,
             artifact_dirs=artifact_dirs,
         )
+        open_path(out)
         return str(out)
 
     return write_report

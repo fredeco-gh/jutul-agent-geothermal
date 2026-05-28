@@ -22,10 +22,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import urllib.parse
+import urllib.request
 from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from langchain_core.messages import (
@@ -38,7 +41,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Static
+from textual.widgets import Markdown, Static
 
 from jutul_agent.agent.approval import (
     ApprovalMode,
@@ -79,6 +82,7 @@ from jutul_agent.interfaces.tui.widgets import (
     ToolBlock,
     WelcomeBlock,
 )
+from jutul_agent.open_file import open_path
 from jutul_agent.paths import workspace_root
 from jutul_agent.session import Session
 from jutul_agent.trace import TraceLog
@@ -344,6 +348,14 @@ class TUIApp(App[None]):
         self._hide_approval_menu()
         await self._resume_pending(option.decision)
 
+    def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
+        """Open file:// links in the OS default application."""
+        href = event.href
+        if href.startswith("file://"):
+            path = Path(urllib.request.url2pathname(urllib.parse.urlparse(href).path))
+            open_path(path)
+            event.prevent_default()
+
     def on_resize(self, _event: events.Resize) -> None:
         if self._resize_timer is not None:
             self._resize_timer.stop()
@@ -481,17 +493,19 @@ class TUIApp(App[None]):
         if head == "/transcript":
             fmt = tail.lower()
             if fmt in ("", "html"):
-                target = self._session.state_dir / "transcript.html"
+                target = self._session.output_dir / "transcript.html"
                 with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
                     content = render_html(log_db.iter_events())
             elif fmt in ("md", "markdown"):
-                target = self._session.state_dir / "transcript.md"
+                target = self._session.output_dir / "transcript.md"
                 with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
                     content = render_markdown(log_db.iter_events())
             else:
                 await self._note("usage: /transcript [md]")
                 return
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
+            open_path(target)
             await self._note(f"transcript written to {target}")
             return
 

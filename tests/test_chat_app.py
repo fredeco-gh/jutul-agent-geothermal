@@ -132,7 +132,7 @@ async def test_transcript_slash_command_writes_file(session: Session) -> None:
         await pilot.press("enter")
         await wait_until_ready(app)
 
-    target = session.state_dir / "transcript.html"
+    target = session.output_dir / "transcript.html"
     assert target.exists()
     assert "<!doctype html>" in target.read_text(encoding="utf-8")
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import date
 from pathlib import Path
 
 PACKAGE_ROOT: Path = Path(__file__).resolve().parent
@@ -100,6 +101,20 @@ def workspace_hash(workspace: Path | None = None) -> str:
 def workspace_state_dir(workspace: Path | None = None) -> Path:
     """Per-workspace state directory under ``state_home()``."""
     return state_home() / "workspaces" / workspace_hash(workspace)
+
+
+def session_output_dir(session_id: str, workspace: Path | None = None) -> Path:
+    """Visible output directory for one session under the workspace.
+
+    Layout: ``<workspace>/jutul-agent/sessions/<YYYY-MM-DD>-<short_id>/``
+
+    This directory holds user-facing outputs (plots, transcripts, reports).
+    Internal state (SQLite trace, REPL log) stays in ``workspace_state_dir``.
+    """
+    ws = workspace or workspace_root()
+    short_id = session_id[:8]
+    date_str = date.today().isoformat()
+    return ws / "jutul-agent" / "sessions" / f"{date_str}-{short_id}"
 
 
 def workspace_memory_dir(workspace: Path | None = None) -> Path:

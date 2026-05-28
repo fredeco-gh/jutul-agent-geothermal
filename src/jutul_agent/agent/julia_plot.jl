@@ -13,6 +13,12 @@ export plot_and_save, is_makie_figure, save_figure
 
 is_makie_figure(x) = x isa Figure
 
+"""Return true if *fig* has no content blocks (axes, labels, etc.).
+
+Catches plotters that return an empty ``Figure()`` under CairoMakie.
+"""
+is_empty_figure(fig::Figure) = isempty(fig.content)
+
 function _ensure_parent_dir(path::AbstractString)
     parent_dir = dirname(path)
     if !isempty(parent_dir) && !isdir(parent_dir)
@@ -64,6 +70,13 @@ function plot_and_save(fig; path, format, size, dpi)
     if !is_makie_figure(fig)
         error("julia_plot: code must evaluate to a Makie Figure; got " *
               string(typeof(fig)))
+    end
+    if is_empty_figure(fig)
+        error(
+            "julia_plot: Figure has no content. " *
+            "A simulator plotter may have returned an empty Figure under " *
+            "CairoMakie — build the figure inline (Figure + Axis + lines!) instead."
+        )
     end
     return save_figure(fig; path = path, format = format, size = size, dpi = dpi)
 end

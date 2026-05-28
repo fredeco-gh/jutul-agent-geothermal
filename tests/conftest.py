@@ -22,11 +22,16 @@ load_dotenv()
 
 
 @pytest.fixture(autouse=True)
-def _reset_workspace_overrides():
+def _reset_workspace_overrides(tmp_path: Path, monkeypatch):
     from jutul_agent import paths
 
-    paths.set_workspace_root(None)
-    paths.set_state_home(None)
+    # Use tmp_path as workspace so session output dirs stay isolated and
+    # don't pollute the project root.  Tests that need a specific workspace
+    # layout use the ``workspace`` fixture which overrides these values.
+    paths.set_workspace_root(tmp_path)
+    paths.set_state_home(tmp_path / "state")
+    # Suppress OS file-open calls (image viewer, browser) during tests.
+    monkeypatch.setenv("JUTUL_AGENT_NO_OPEN", "1")
     yield
     paths.set_workspace_root(None)
     paths.set_state_home(None)

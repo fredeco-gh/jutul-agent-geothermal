@@ -52,10 +52,27 @@ I = [s[:Control][:Current][1]           for s in states]
 
 ## Plotting
 
-Headless plotting: `julia_plot` with `plot_dashboard(output; plot_type="simple", new_window=false)`
-or `plot_output(output, vars; new_window=false)`. These return `Figure` via `BattMoMakieExt`
-(loaded with CairoMakie). For interactive viewers (`plot_dashboard` with default
-`new_window=true`), use GLMakie only when the user explicitly asks.
+**BattMo's built-in plotters (`plot_output`, `plot_dashboard`) are GLMakie-only.**
+Under the default headless CairoMakie they emit
+`Warning: Independent figure creation not implemented for backend CairoMakie`
+and return an **empty `Figure()`** — `julia_plot` will refuse it.
+
+For headless `julia_plot` calls, build the figure inline from `sol.time_series`:
+
+```julia
+using CairoMakie
+states = sol.time_series
+t = [s[:Control][:Controller].time      for s in states]
+E = [s[:Control][:ElectricPotential][1] for s in states]
+
+fig = Figure(size = (700, 400))
+ax = Axis(fig[1, 1], title = "Voltage vs Time", xlabel = "t [s]", ylabel = "V")
+lines!(ax, t, E)
+fig
+```
+
+Only use `plot_dashboard` / `plot_output` when the user explicitly asks for an
+interactive GLMakie window (and they have a display available).
 
 ## Inputs from MATLAB
 

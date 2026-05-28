@@ -18,7 +18,10 @@ def test_filters_raw_todo_list_literal() -> None:
 
 
 def test_filters_duplicate_tool_output() -> None:
-    tool_out = "saved plot to artifacts/cc_discharge_compare.png (format=png); slot=cc"
+    tool_out = (
+        "saved plot to jutul-agent/sessions/2024-01-01-abc12345/artifacts/"
+        "cc_discharge_compare.png (format=png); slot=cc"
+    )
     recent = deque([tool_out])
     assert filter_assistant_text(tool_out, recent_tool_outputs=recent) is None
 

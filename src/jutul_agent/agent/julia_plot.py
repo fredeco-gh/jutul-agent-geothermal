@@ -9,6 +9,8 @@ from typing import Annotated, Literal
 
 from langchain_core.tools import InjectedToolCallId, tool
 
+from jutul_agent.open_file import open_path
+from jutul_agent.paths import workspace_root
 from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
 
@@ -118,7 +120,7 @@ def _build_save_call(
 
 
 def make_julia_plot_tool(session: Session):
-    artifacts_dir = session.state_dir / "artifacts"
+    artifacts_dir = session.output_dir / "artifacts"
     plot_ready: set[str] = set()
     adapter = session.simulator
 
@@ -168,7 +170,7 @@ def make_julia_plot_tool(session: Session):
             plot_id = uuid.uuid4().hex[:12]
             rel_path = f"artifacts/plot-{plot_id}.{format}"
 
-        abs_path = session.state_dir / rel_path
+        abs_path = session.output_dir / rel_path
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
         result = await session.julia.eval(
@@ -198,7 +200,14 @@ def make_julia_plot_tool(session: Session):
             },
         )
 
-        parts = [f"saved plot to {rel_path} (format={format})"]
+        open_path(abs_path)
+
+        try:
+            display = abs_path.relative_to(workspace_root()).as_posix()
+        except ValueError:
+            display = abs_path.as_posix()
+
+        parts = [f"saved plot to {display} (format={format})"]
         if safe_slot:
             parts.append(f"slot={safe_slot}")
         if size is not None:
