@@ -3,6 +3,7 @@
 Three modes, dispatched on the first argument:
 
 - ``jutul-agent init|setup [--sim <name>]``  bootstrap the current workspace.
+- ``jutul-agent doctor``                     diagnose the workspace setup.
 - ``jutul-agent transcript [<id>]``         render a session trace.
 - ``jutul-agent [--sim <name>] [prompt]``   launch the TUI, or run one turn.
 
@@ -13,17 +14,36 @@ or its default (``$XDG_DATA_HOME/jutul-agent``).
 
 from __future__ import annotations
 
+import contextlib
 import sys
 
 from dotenv import load_dotenv
 
+from jutul_agent.interfaces.cli import doctor as doctor_cmd
 from jutul_agent.interfaces.cli import init as init_cmd
 from jutul_agent.interfaces.cli import run as run_cmd
 from jutul_agent.interfaces.cli import transcript as transcript_cmd
 from jutul_agent.interfaces.cli._helpers import apply_workspace_flags
 
 
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 so non-ASCII output can't crash the CLI.
+
+    Windows consoles default to a legacy code page (e.g. cp1252); printing a
+    character it can't encode raises ``UnicodeEncodeError`` and takes down the
+    whole command. Reconfiguring to UTF-8 (with replacement) keeps output
+    legible and the process alive regardless of the console's code page.
+    """
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            with contextlib.suppress(ValueError, OSError):
+                reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_streams()
     load_dotenv()
     argv = sys.argv[1:] if argv is None else argv
 
@@ -32,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
         args = init_cmd.build_parser(prog=f"jutul-agent {sub}").parse_args(argv[1:])
         apply_workspace_flags(args)
         return init_cmd.run(args)
+
+    if argv and argv[0] == "doctor":
+        args = doctor_cmd.build_parser().parse_args(argv[1:])
+        apply_workspace_flags(args)
+        return doctor_cmd.run(args)
 
     if argv and argv[0] == "transcript":
         args = transcript_cmd.build_parser().parse_args(argv[1:])

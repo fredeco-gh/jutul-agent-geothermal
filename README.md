@@ -126,6 +126,44 @@ uv run jutul-agent
 uv run jutul-agent "Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve."
 ```
 
+## Troubleshooting
+
+If `jutul-agent` fails to start, run the built-in setup check first — it
+inspects everything the agent needs and tells you exactly what's wrong:
+
+```sh
+uv run jutul-agent doctor
+```
+
+It checks, with a one-line fix for each problem:
+
+- `julia` is on PATH and is **1.12+**
+- a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
+- which Julia project this workspace resolves to (see the gotcha below)
+- that project has a `Project.toml` containing `AgentREPL`
+- `using AgentREPL` actually loads in that project
+
+**Gotcha — workspace vs. launch directory.** `jutul-agent` uses the
+directory you launch it from as the workspace, not where you ran `init`.
+`cd` into the initialised folder before launching, or pass
+`--workspace <path>` explicitly. Note too that a `Project.toml` in the 
+root of your workspace takes precedence over `.jutul-agent/julia-env/`
+— if that root project doesn't include `AgentREPL`, startup will fail.
+`doctor` flags this case.
+
+**"Julia failed to start before the agent could connect".** This means the
+Julia subprocess crashed during startup; the message now includes Julia's
+own error and the path to a full log
+(`…/sessions/<id>/julia-startup.log`). The most common cause is an
+out-of-date or incomplete env — rebuild it with:
+
+```sh
+uv run jutul-agent init --sim <name> --precompile --force
+```
+
+`init --precompile` verifies `using AgentREPL` loads as its final step, so a
+clean `init` rules out this whole class of failure.
+
 ## TUI
 
 ```sh

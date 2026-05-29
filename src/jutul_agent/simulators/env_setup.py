@@ -86,8 +86,24 @@ def bootstrap_workspace(
         _run_pkg(project, cmds)
     if precompile:
         _warmup_plotting(project)
+        # Exercise the exact entrypoint the runtime uses. Instantiate + a plot
+        # warm-up can both pass while `using AgentREPL` still fails (bad git rev,
+        # Julia-version mismatch, half-resolved manifest) — which then surfaces
+        # at launch as a baffling "Connection closed". Catch it here instead.
+        verify_agentrepl_loads(project)
 
     return project
+
+
+def verify_agentrepl_loads(project: Path) -> None:
+    """Confirm ``using AgentREPL`` succeeds in ``project``.
+
+    This is the package the runtime loads to start the MCP server; if it
+    can't load, the agent can't start. Raises ``EnvSetupError`` on failure.
+    """
+
+    print("Verifying AgentREPL loads...", flush=True)
+    _run_pkg(project, ["using AgentREPL"])
 
 
 def resolve_and_instantiate(project: Path) -> None:

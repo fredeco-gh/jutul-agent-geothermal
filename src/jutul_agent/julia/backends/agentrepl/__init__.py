@@ -6,7 +6,11 @@ client (``backend.py``) and the captured-stdout text cleanup
 ``__init__`` re-exports a ``JuliaSession``-compatible class.
 """
 
-from jutul_agent.julia.backends.agentrepl.backend import AgentREPLBackend, AgentREPLConfig
+from jutul_agent.julia.backends.agentrepl.backend import (
+    AgentREPLBackend,
+    AgentREPLConfig,
+    JuliaStartupError,
+)
 from jutul_agent.julia.backends.agentrepl.text import (
     render_terminal_output,
     strip_ansi,
@@ -16,6 +20,7 @@ from jutul_agent.julia.backends.agentrepl.text import (
 __all__ = [
     "AgentREPLBackend",
     "AgentREPLConfig",
+    "JuliaStartupError",
     "render_terminal_output",
     "strip_ansi",
     "strip_julia_repl_echo",

@@ -35,7 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Other commands: `jutul-agent init|setup [--sim <name>]`, "
-            "`jutul-agent transcript [<id>]`. (`setup` is an alias for `init`.)"
+            "`jutul-agent doctor`, `jutul-agent transcript [<id>]`. "
+            "(`setup` is an alias for `init`.)"
         ),
     )
     parser.add_argument("--version", action="version", version=f"jutul-agent {__version__}")
@@ -114,12 +115,7 @@ async def _run_session(
     adapter: Any,
     config: Any,
 ) -> int:
-    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-    from jutul_agent.agent.approval import parse_approval_mode
-    from jutul_agent.agent.builder import build_agent, resolve_model
-    from jutul_agent.julia.backends.agentrepl import AgentREPLBackend, AgentREPLConfig
-    from jutul_agent.session import Session
+    from jutul_agent.julia.backends.agentrepl import AgentREPLConfig, JuliaStartupError
     from jutul_agent.simulators.env_setup import (
         EnvSetupError,
         bootstrap_workspace,
@@ -171,7 +167,32 @@ async def _run_session(
     repl_config = AgentREPLConfig(
         julia_project=julia_project,
         log_file=state_dir / "repl.log",
+        stderr_file=state_dir / "julia-startup.log",
     )
+    print(f"Workspace:     {ws}", file=sys.stderr)
+    print(f"Julia project: {julia_project}", file=sys.stderr)
+    try:
+        return await _run_with_backend(repl_config, args, adapter, config, session_id, state_dir)
+    except JuliaStartupError as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        return 1
+
+
+async def _run_with_backend(
+    repl_config: Any,
+    args: argparse.Namespace,
+    adapter: Any,
+    config: Any,
+    session_id: str,
+    state_dir: Path,
+) -> int:
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    from jutul_agent.agent.approval import parse_approval_mode
+    from jutul_agent.agent.builder import build_agent, resolve_model
+    from jutul_agent.julia.backends.agentrepl import AgentREPLBackend
+    from jutul_agent.session import Session
+
     async with AgentREPLBackend(repl_config) as julia:
         session = Session.create(
             julia=julia,
