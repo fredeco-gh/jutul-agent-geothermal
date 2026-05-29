@@ -129,32 +129,37 @@ class AgentREPLBackend:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
+        # Tearing down the MCP stdio transport routinely raises noise once the
+        # Julia subprocess has gone away: anyio's "cancel scope in a different
+        # task" RuntimeError, a BrokenResourceError from the stdout reader, or
+        # an ExceptionGroup wrapping either. None of it is actionable — the
+        # session is already over — and letting it escape dumps a frightening
+        # traceback on an otherwise-clean exit (and would mask any real error
+        # from the `async with` body). So we swallow teardown exceptions here.
         try:
             if self._session_cm is not None:
-                await self._session_cm.__aexit__(*exc_info)
-        finally:
-            try:
-                if self._stdio_cm is not None:
+                with contextlib.suppress(Exception):
+                    await self._session_cm.__aexit__(*exc_info)
+            if self._stdio_cm is not None:
+                with contextlib.suppress(Exception):
                     await self._stdio_cm.__aexit__(*exc_info)
-            finally:
-                if self._errlog is not None:
-                    with contextlib.suppress(Exception):
-                        self._errlog.close()
-                self._session = None
-                self._session_cm = None
-                self._stdio_cm = None
-                self._errlog = None
+        finally:
+            if self._errlog is not None:
+                with contextlib.suppress(Exception):
+                    self._errlog.close()
+            self._session = None
+            self._session_cm = None
+            self._stdio_cm = None
+            self._errlog = None
 
     async def _quiet_cleanup(self) -> None:
-        """Unwind partially-entered context managers, swallowing teardown noise.
+        """Unwind partially-entered context managers after a failed startup.
 
-        Teardown after a failed startup tends to raise the anyio
-        "cancel scope in a different task" RuntimeError; that is cosmetic and
-        must not mask the real Julia error we are about to raise.
+        ``__aexit__`` already swallows teardown noise; this is just the
+        explicit unwind we trigger before re-raising a ``JuliaStartupError``.
         """
 
-        with contextlib.suppress(Exception):
-            await self.__aexit__(None, None, None)
+        await self.__aexit__(None, None, None)
 
     @property
     def _default_errlog(self) -> IO[str]:

@@ -143,23 +143,7 @@ async def _run_session(
         # Workspace env already exists. Pick up any deps the template gained
         # since this env was last bootstrapped (e.g. CSV/Interpolations added
         # to an investigation template) and install them so they're available.
-        try:
-            added = sync_julia_env_with_template(adapter.julia_env_template_path, workspace=ws)
-        except Exception as exc:
-            added = []
-            print(f"warning: env sync failed: {exc}", file=sys.stderr)
-        if added:
-            print(
-                f"Added missing deps to workspace env: {', '.join(added)} "
-                "— resolving and installing...",
-                flush=True,
-            )
-            from jutul_agent.simulators.env_setup import resolve_and_instantiate
-
-            try:
-                resolve_and_instantiate(julia_project)
-            except EnvSetupError as exc:
-                print(f"warning: failed to install new deps: {exc}", file=sys.stderr)
+        _sync_workspace_env(adapter, ws, julia_project, args.sim or config.simulator)
 
     session_id = str(uuid.uuid4())
     state_dir = session_dir(session_id)
@@ -176,6 +160,56 @@ async def _run_session(
     except JuliaStartupError as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 1
+
+
+def _sync_workspace_env(
+    adapter: Any,
+    ws: Path,
+    julia_project: Path,
+    sim_name: str | None,
+) -> None:
+    """Add template deps the workspace env is missing, then install them.
+
+    Best-effort and self-healing: if resolve/instantiate fails (e.g. the new
+    deps conflict with what's already pinned), we roll the Project.toml back
+    to its previous contents so the env is left no worse than before, and
+    point the user at the command that rebuilds it cleanly. Either way we
+    proceed to launch — AgentREPL itself may still start fine.
+    """
+
+    from jutul_agent.simulators.env_setup import EnvSetupError, resolve_and_instantiate
+
+    project_toml = julia_project / "Project.toml"
+    before = project_toml.read_text(encoding="utf-8") if project_toml.exists() else None
+
+    try:
+        added = sync_julia_env_with_template(adapter.julia_env_template_path, workspace=ws)
+    except Exception as exc:
+        print(f"warning: env sync failed: {exc}", file=sys.stderr)
+        return
+
+    if not added:
+        return
+
+    print(
+        f"Added missing deps to workspace env: {', '.join(added)} — resolving and installing...",
+        flush=True,
+    )
+    try:
+        resolve_and_instantiate(julia_project)
+    except EnvSetupError as exc:
+        if before is not None:
+            project_toml.write_text(before, encoding="utf-8")
+        rebuild = "jutul-agent init --force --precompile"
+        if sim_name:
+            rebuild += f" --sim {sim_name}"
+        print(
+            f"warning: could not install {', '.join(added)} ({exc}).\n"
+            f"         Rolled back the env so it still works as before. To rebuild it "
+            f"cleanly, run:\n             {rebuild}\n"
+            f"         Run `jutul-agent doctor` to check the result.",
+            file=sys.stderr,
+        )
 
 
 async def _run_with_backend(
