@@ -290,7 +290,11 @@ async def _headless_turn(agent: Any, session: Any, prompt: str) -> int:
     result = await runner.run_prompt(prompt)
     if result.interrupts:
         print(
-            "error: this turn requires approval, but headless resume is not implemented yet.",
+            "error: this turn paused for approval, but headless mode can't prompt for it yet.\n"
+            "       Re-run with `--approval-mode auto` to let the agent run tools without "
+            "approval,\n"
+            "       or launch the interactive TUI (`uv run jutul-agent`) to approve steps as "
+            "they come up.",
             file=sys.stderr,
         )
         print(f"\n[session {session.session_id}]", file=sys.stderr)

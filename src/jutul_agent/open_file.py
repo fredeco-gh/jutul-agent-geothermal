@@ -25,8 +25,28 @@ def open_path(path: Path) -> None:
         if system == "Windows":
             os.startfile(path)  # type: ignore[attr-defined]
         elif system == "Darwin":
-            subprocess.Popen(["open", str(path)])
+            _spawn(["open", str(path)])
         else:
-            subprocess.Popen(["xdg-open", str(path)])
+            # On a headless Linux box there's no display server; xdg-open often
+            # falls through to a viewer that prints "unable to open X server"
+            # to our stderr. Skip rather than spew.
+            if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                return
+            _spawn(["xdg-open", str(path)])
     except Exception:
         pass
+
+
+def _spawn(argv: list[str]) -> None:
+    """Launch a detached viewer, discarding its stdout/stderr.
+
+    The child's own diagnostics (e.g. a viewer failing to reach the display)
+    must not leak into jutul-agent's output.
+    """
+
+    subprocess.Popen(
+        argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+    )

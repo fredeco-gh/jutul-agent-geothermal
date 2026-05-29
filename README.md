@@ -114,17 +114,19 @@ uv run jutul-agent init --sim battmo --precompile
 first time can take ~15 min (Julia compiles BattMo + plotting); subsequent
 starts are seconds.
 
-Then either launch the TUI:
+Then launch the TUI and ask for a run in plain language:
 
 ```sh
 uv run jutul-agent
 ```
 
-…or run a one-shot headless turn:
-
-```sh
-uv run jutul-agent "Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve."
 ```
+> Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve.
+```
+
+The agent runs the simulation in its persistent Julia REPL, writes any
+implementation files into your workspace, and saves the plot to the session's
+artifacts.
 
 ## Troubleshooting
 
@@ -191,8 +193,18 @@ Keyboard:
 | `Shift+Tab`  | Cycle approval mode.                                  |
 | `Ctrl+P`/`↑` | Previous history entry.                               |
 
-For one-shot, non-interactive use, pass the prompt as a positional argument
-(see the BattMo example above).
+### Non-interactive use
+
+The TUI is the intended way to use jutul-agent. For scripting or CI you can
+also run a single turn by passing the prompt as a positional argument. Headless
+mode can't pause to ask for approval, so pass `--approval-mode auto`:
+
+```sh
+uv run jutul-agent --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
+```
+
+Without `auto` (or `workspace`), a turn that needs to run a shell command or
+edit a file stops with an "approval required" message — use the TUI for that.
 
 ## Transcripts
 
