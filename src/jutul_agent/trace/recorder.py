@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.errors import GraphBubbleUp
 from langgraph.types import Command
 
 from jutul_agent.trace import TraceLog
@@ -47,7 +48,21 @@ class TraceRecorder(AgentMiddleware):
             "tool_call",
             {"id": call.get("id"), "name": call.get("name"), "args": call.get("args")},
         )
-        result = await handler(request)
+        try:
+            result = await handler(request)
+        except GraphBubbleUp:
+            # Control-flow signals — approval interrupts, parent commands,
+            # graph-drain bubbles — must propagate untouched. (Cancellation and
+            # KeyboardInterrupt are BaseException, so `except Exception` below
+            # never catches them.)
+            raise
+        except Exception as exc:
+            # A tool raised instead of returning a result. Don't let one failed
+            # tool call abort the entire turn: hand the error back to the model
+            # as a tool result so it can recover (retry, pick another tool, fix
+            # its arguments).
+            result = _tool_error_result(call, exc)
+
         if isinstance(result, ToolMessage):
             self._trace.append(
                 "tool_result",
@@ -55,6 +70,20 @@ class TraceRecorder(AgentMiddleware):
                     "tool_call_id": getattr(result, "tool_call_id", None),
                     "name": getattr(result, "name", None),
                     "content": content_to_str(result.content),
+                    "status": getattr(result, "status", None),
                 },
             )
         return result
+
+
+def _tool_error_result(call: dict[str, Any], exc: Exception) -> ToolMessage:
+    """Turn a raised tool exception into an error ``ToolMessage`` for the model."""
+
+    name = call.get("name") or "tool"
+    content = f"Error running tool `{name}`: {type(exc).__name__}: {exc}"
+    return ToolMessage(
+        content=content,
+        tool_call_id=call.get("id") or "",
+        name=call.get("name"),
+        status="error",
+    )
