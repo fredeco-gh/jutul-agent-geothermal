@@ -87,6 +87,39 @@ def test_bootstrap_is_idempotent(tmp_path: Path) -> None:
     assert target.joinpath("touched").exists()  # not overwritten
 
 
+def test_manifest_has_package_format_2(tmp_path: Path) -> None:
+    proj = tmp_path / "env"
+    proj.mkdir()
+    (proj / "Manifest.toml").write_text(
+        'julia_version = "1.12.0"\n'
+        'manifest_format = "2.0"\n\n'
+        "[deps]\n"
+        "[[deps.BattMo]]\n"
+        'uuid = "6f0c0536-3c2c-4762-a987-c605a8a6f898"\n'
+        'version = "1.0.0"\n',
+        encoding="utf-8",
+    )
+    assert env_setup.manifest_has_package(proj, "BattMo") is True
+    assert env_setup.manifest_has_package(proj, "JutulDarcy") is False
+
+
+def test_manifest_has_package_format_1(tmp_path: Path) -> None:
+    proj = tmp_path / "env"
+    proj.mkdir()
+    (proj / "Manifest.toml").write_text(
+        '[[Jutul]]\nuuid = "x"\nversion = "1.0"\n',
+        encoding="utf-8",
+    )
+    assert env_setup.manifest_has_package(proj, "Jutul") is True
+    assert env_setup.manifest_has_package(proj, "BattMo") is False
+
+
+def test_manifest_has_package_missing_manifest(tmp_path: Path) -> None:
+    proj = tmp_path / "env"
+    proj.mkdir()
+    assert env_setup.manifest_has_package(proj, "BattMo") is False
+
+
 def test_is_workspace_env_ready_reflects_project_toml(tmp_path: Path) -> None:
     module_dir = _make_template(tmp_path)
     workspace = tmp_path / "ws"

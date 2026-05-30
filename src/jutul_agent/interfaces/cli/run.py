@@ -139,11 +139,9 @@ async def _run_session(
         except EnvSetupError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        _ensure_simulator_installed(adapter, ws, julia_project, args.sim or config.simulator)
     else:
-        # Workspace env already exists. Pick up any deps the template gained
-        # since this env was last bootstrapped (e.g. CSV/Interpolations added
-        # to an investigation template) and install them so they're available.
-        _sync_workspace_env(adapter, ws, julia_project, args.sim or config.simulator)
+        _prepare_existing_env(adapter, ws, julia_project, args.sim or config.simulator)
 
     session_id = str(uuid.uuid4())
     state_dir = session_dir(session_id)
@@ -161,6 +159,80 @@ async def _run_session(
     except JuliaStartupError as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 1
+
+
+def _prepare_existing_env(
+    adapter: Any,
+    ws: Path,
+    julia_project: Path,
+    sim_name: str | None,
+) -> None:
+    """Ready an existing workspace env for the active simulator.
+
+    A workspace holds one simulator. A managed env (``.jutul-agent/julia-env``)
+    built for a *different* simulator can't be reconciled — e.g. BattMo and
+    JutulDarcy pin incompatible shared deps — so we rebuild it from the active
+    template rather than merging into an unsatisfiable env. A user-owned root
+    ``Project.toml`` is never touched. Otherwise we just pick up new template
+    deps and heal an un-instantiated manifest.
+    """
+
+    if not (ws / "Project.toml").exists():
+        foreign = _foreign_simulator(julia_project, adapter)
+        if foreign is not None:
+            _rebuild_managed_env(adapter, ws, sim_name, reason=f"was built for {foreign}")
+            return
+
+    _sync_workspace_env(adapter, ws, julia_project, sim_name)
+    _ensure_simulator_installed(adapter, ws, julia_project, sim_name)
+
+
+def _foreign_simulator(julia_project: Path, adapter: Any) -> str | None:
+    """Display name of another simulator whose package this env declares.
+
+    Shared Jutul-stack packages (e.g. JutulDarcy for Fimbul) are in the active
+    adapter's ``package_imports`` and don't count — only a different
+    simulator's primary package marks the env as built for something else.
+    """
+
+    from jutul_agent.simulators import registry
+    from jutul_agent.simulators.env_setup import project_has_package
+
+    for name in registry.names():
+        other = registry.get(name)
+        if other.name == adapter.name or other.primary_package in adapter.package_imports:
+            continue
+        if project_has_package(julia_project, other.primary_package):
+            return other.display_name
+    return None
+
+
+def _rebuild_managed_env(adapter: Any, ws: Path, sim_name: str | None, *, reason: str) -> None:
+    """Replace the managed workspace env with the active simulator's template."""
+
+    from jutul_agent.simulators.env_setup import EnvSetupError, bootstrap_workspace
+
+    print(
+        f"Workspace Julia env {reason}; rebuilding it for {adapter.display_name} "
+        "from the template (one-time, can take a few minutes)...",
+        flush=True,
+    )
+    try:
+        bootstrap_workspace(adapter, workspace=ws, force=True, precompile=True)
+    except EnvSetupError as exc:
+        _warn_rebuild(adapter.primary_package, sim_name, exc)
+
+
+def _warn_rebuild(pkg: str, sim_name: str | None, exc: Exception) -> None:
+    rebuild = "jutul-agent init --force --precompile"
+    if sim_name:
+        rebuild += f" --sim {sim_name}"
+    print(
+        f"warning: could not prepare {pkg} ({exc}).\n"
+        f"         The agent may fail to load it. Rebuild the env with:\n"
+        f"             {rebuild}",
+        file=sys.stderr,
+    )
 
 
 def _sync_workspace_env(

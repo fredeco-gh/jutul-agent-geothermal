@@ -73,6 +73,11 @@ class AgentREPLConfig:
     extra_args: tuple[str, ...] = field(default_factory=lambda: ("--startup-file=no",))
     log_file: Path | None = None
     stderr_file: Path | None = None
+    # Working directory for the Julia process. Set to the workspace so that
+    # relative paths in agent code — ``include("candidate.jl")``,
+    # ``CSV.read("experiments/data.csv")`` — resolve against the same files the
+    # file tools write. Falls back to the parent process cwd when unset.
+    cwd: Path | None = None
 
 
 class AgentREPLBackend:
@@ -224,6 +229,7 @@ class AgentREPLBackend:
             command=self._config.julia_executable,
             args=args,
             env=env,
+            cwd=str(self._config.cwd) if self._config.cwd is not None else None,
         )
 
 

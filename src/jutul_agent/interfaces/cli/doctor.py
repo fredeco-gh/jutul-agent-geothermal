@@ -80,6 +80,7 @@ def run(args: argparse.Namespace) -> int:
     sim_name = _check_simulator(report, sim_name)
     project = _check_julia_project(report, ws)
     has_agentrepl = _check_agentrepl_dep(report, project)
+    _check_simulator_installed(report, project, sim_name)
 
     # Only attempt the (slow) load if the cheap checks passed — otherwise the
     # error would just restate what we already reported.
@@ -181,6 +182,35 @@ def _check_julia_project(report: _Report, ws: Path) -> Path | None:
     else:
         report.line(PASS, "Julia project", detail)
     return project
+
+
+def _check_simulator_installed(report: _Report, project: Path | None, sim_name: str | None) -> None:
+    """Verify the simulator's package is resolved in the env's manifest.
+
+    `_check_agentrepl_loads` only proves AgentREPL works; a workspace whose
+    Project lists the simulator but whose Manifest never resolved it still
+    passes that check, then fails at runtime on `using <Sim>`. This closes
+    that gap cheaply (a manifest read, no Julia subprocess).
+    """
+
+    if project is None or sim_name is None or sim_name not in registry.names():
+        return
+    from jutul_agent.simulators.env_setup import manifest_has_package
+
+    adapter = registry.get(sim_name)
+    pkg = adapter.primary_package
+    # Placeholder simulators (e.g. vocsim) declare a package they don't load.
+    if pkg not in adapter.package_imports:
+        return
+    if manifest_has_package(project, pkg):
+        report.line(PASS, f"{pkg} resolved in env")
+        return
+    report.line(
+        FAIL,
+        f"{pkg} resolved in env",
+        f"{pkg} is in Project.toml but not in Manifest.toml (env not instantiated)",
+        f"Run `jutul-agent init --sim {sim_name} --precompile` to install it.",
+    )
 
 
 def _check_agentrepl_dep(report: _Report, project: Path | None) -> bool:
