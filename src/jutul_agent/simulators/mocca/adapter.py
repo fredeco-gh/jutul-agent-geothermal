@@ -24,11 +24,12 @@ MOCCA = SimulatorAdapter(
         "`Mocca.setup_mocca_case(constants, info)` → `(case, ts_config)` → "
         "`Mocca.simulate_process(case; timestep_selector_cfg=ts_config, "
         "output_substates=true)`. Built-in plotting: `Mocca.plot_outlet"
-        "(case, states, timesteps)`. Examples on disk live under "
-        '`joinpath(pkgdir(Mocca), "examples")` — `dcb_haghpanah_2013_co2_n2.jl` '
+        "(case, states, timesteps)`. Examples are mounted under "
+        "`/simulator/examples/` — `dcb_haghpanah_2013_co2_n2.jl` "
         "(direct column breakthrough), `cyclic_vsa_haghpanah_2013_co2_n2.jl` "
         "(4-stage VSA), `custom_setup_cyclic_vsa.jl`, plus `optimization.jl` "
-        "and `history_matching.jl`. Reference JSON inputs ship in "
-        '`joinpath(pkgdir(Mocca), "..", "models", "json")`.'
+        "and `history_matching.jl`. Reference JSON inputs ship beside the "
+        'package at `joinpath(pkgdir(Mocca), "..", "models", "json")` '
+        "(outside `/simulator/`; read via the REPL)."
     ),
 )

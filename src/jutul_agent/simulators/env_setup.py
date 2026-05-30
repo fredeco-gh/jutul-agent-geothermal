@@ -35,6 +35,79 @@ def is_workspace_env_ready(workspace: Path | None = None) -> bool:
     return (project / "Project.toml").exists()
 
 
+def manifest_has_package(julia_project: Path, package: str) -> bool:
+    """True if the env's ``Manifest.toml`` actually resolves ``package``.
+
+    A ``Project.toml`` can list a dependency that the manifest never resolved —
+    deps edited (or a template merged) without a follow-up ``Pkg.resolve`` /
+    ``Pkg.instantiate``. Such a package is *declared* but not installed, and
+    ``using <package>`` then fails at runtime with "is required but does not
+    seem to be installed", even though ``jutul-agent doctor``'s AgentREPL check
+    passes. Inspecting the manifest catches that before launch.
+    """
+
+    manifest = julia_project / "Manifest.toml"
+    if not manifest.exists():
+        return False
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    deps = data.get("deps")
+    if isinstance(deps, dict):  # manifest format 2.0: [[deps.Pkg]]
+        return package in deps
+    # format 1.0: package sections are top-level tables
+    return package in data
+
+
+def project_has_package(julia_project: Path, package: str) -> bool:
+    """True if ``package`` is a direct dependency in the env's Project.toml."""
+
+    proj = julia_project / "Project.toml"
+    if not proj.exists():
+        return False
+    try:
+        data = tomllib.loads(proj.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return package in (data.get("deps") or {})
+
+
+def resolve_package_source(julia_project: Path, package: str) -> Path | None:
+    """On-disk source directory (``pkgdir``) of ``package`` in ``julia_project``.
+
+    Uses ``Base.find_package``, which resolves the package's entry file from the
+    active project *without loading or compiling it* — fast (~Julia startup,
+    no ``using``) and side-effect-free. Returns the package root (parent of
+    ``src/``), or ``None`` if Julia is missing, the package isn't resolved, or
+    the path doesn't exist. Best-effort: used only to mount ``/simulator/``.
+    """
+
+    if shutil.which("julia") is None:
+        return None
+    code = (
+        f'let p = Base.find_package("{package}"); '
+        'print(p === nothing ? "" : dirname(dirname(p))) end'
+    )
+    try:
+        result = subprocess.run(
+            ["julia", f"--project={julia_project}", "--startup-file=no", "-e", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    path = result.stdout.strip()
+    if not path:
+        return None
+    candidate = Path(path)
+    return candidate if candidate.is_dir() else None
+
+
 _PLOT_WARMUP = (
     "using CairoMakie; "
     "fig = Figure(size = (64, 64)); "

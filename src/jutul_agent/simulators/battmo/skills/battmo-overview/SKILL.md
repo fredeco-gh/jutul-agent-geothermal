@@ -25,49 +25,68 @@ A simulation is four parts you compose in order:
    constructors exist for full-cell, thermal, and 3D variants.
 4. **Simulation + solve** -
    `sim = Simulation(model, cell_parameters, cycling_protocol)` performs
-   validation; check `sim.is_valid`. Then `output = solve(sim)` runs it.
+   validation; check `sim.is_valid`. Then `sol = solve(sim)` runs it.
+   `solve` is expensive (a full simulation): bind `sol = solve(sim)` **once**
+   and reuse `sol` in later `julia_eval` / `julia_plot` calls — the REPL keeps
+   it. Do not re-run `solve` just to inspect or plot the result.
 
 ## Finding what you need
 
-Find example layout and APIs on disk via `pkgdir`; see the
-`workspace-and-source` skill for the idiom:
+BattMo's source is mounted read-only at `/simulator/` — browse it with the
+file tools (see the `workspace-and-source` skill):
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using BattMo; print(pkgdir(BattMo))')
-ls "$SRC/examples/beginner_tutorials"      # best starting point
-rg "load_cell_parameters" "$SRC/src"       # locate APIs and uses
-cat "$SRC/examples/beginner_tutorials/2_run_a_simulation.jl"
+```text
+glob("/simulator/examples/beginner_tutorials/*.jl")    # best starting point
+grep("load_cell_parameters", path="/simulator/src")     # locate APIs and uses
+read_file("/simulator/examples/beginner_tutorials/2_run_a_simulation.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc LithiumIonBattery")`.
 
 ## Result inspection
 
+`solve` returns a `SimulationOutput`. Its `time_series` field is a
+**`Dict{String, Any}` mapping each output variable to a `Vector` over the
+report steps** — not a list of per-timestep state objects. Index it by
+variable name; never iterate it or index it with an integer.
+
 ```julia
-states = output[:states]
-t = [s[:Control][:Controller].time      for s in states]
-E = [s[:Control][:ElectricPotential][1] for s in states]
-I = [s[:Control][:Current][1]           for s in states]
+sol = solve(sim)               # SimulationOutput
+ts  = sol.time_series          # Dict{String,Any}: variable name => Vector over steps
+keys(ts)                       # discover what's available before assuming names
+t = Float64.(ts["Time"])       # seconds
+V = Float64.(ts["Voltage"])    # cell voltage
+I = Float64.(ts["Current"])    # cell current
 ```
 
+The vectors can be `Vector{Any}`, so wrap with `Float64.(…)` before plotting
+or doing arithmetic. If a key you expect is missing, call `keys(ts)` and use
+what's actually there. `sol` has no `keys`/`getindex` of its own — go through
+`sol.time_series`.
+
 ## Plotting
+
+**The BattMo example files `using ... GLMakie`, but GLMakie is NOT installed
+here — only CairoMakie is.** When you adapt an example for `julia_plot`, drop
+`GLMakie` and `using CairoMakie` instead, or the call fails with "Package
+GLMakie not found".
 
 **BattMo's built-in plotters (`plot_output`, `plot_dashboard`) are GLMakie-only.**
 Under the default headless CairoMakie they emit
 `Warning: Independent figure creation not implemented for backend CairoMakie`
 and return an **empty `Figure()`** — `julia_plot` will refuse it.
 
-For headless `julia_plot` calls, build the figure inline from `sol.time_series`:
+For headless `julia_plot` calls, build the figure inline from the
+`sol.time_series` vectors. Reuse the `sol` you already solved in a previous
+`julia_eval` — `julia_plot` shares the same REPL, so there's no need to
+re-`solve` inside the plot:
 
 ```julia
 using CairoMakie
-states = sol.time_series
-t = [s[:Control][:Controller].time      for s in states]
-E = [s[:Control][:ElectricPotential][1] for s in states]
-
+ts = sol.time_series
 fig = Figure(size = (700, 400))
-ax = Axis(fig[1, 1], title = "Voltage vs Time", xlabel = "t [s]", ylabel = "V")
-lines!(ax, t, E)
+ax = Axis(fig[1, 1], title = "Voltage vs time", xlabel = "Time [s]", ylabel = "Voltage [V]")
+lines!(ax, Float64.(ts["Time"]), Float64.(ts["Voltage"]))
 fig
 ```
 

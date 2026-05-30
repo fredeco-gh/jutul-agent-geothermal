@@ -50,6 +50,7 @@ MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
 _SHARED_SKILLS_ROUTE = "/skills/shared/"
 _SIMULATOR_SKILLS_ROUTE = "/skills/simulator/"
 _SESSION_ROUTE = "/session/"
+_SIMULATOR_SOURCE_ROUTE = "/simulator/"
 
 # Appended to the base deepagents prompt closest to the conversation. Keep
 # provider-specific divergence here; the static prompt assembled in
@@ -60,16 +61,24 @@ _PROMPT_SUFFIX = (
     "state) and retry with a concrete fix — do not repeat the same failing call. "
     "Virtual file-tool paths (e.g. `/experiments/foo.csv`) are not valid in "
     "`julia_eval`, `julia_plot`, or `execute`; use workspace-relative paths "
-    "(`experiments/foo.csv`). If a Julia package is missing, check what is already "
-    "in the workspace env, use a stdlib alternative (e.g. `DelimitedFiles`), or "
-    "install only when necessary. Prefer probing the REPL, reading skills, or "
-    "grepping installed simulator sources over guessing. "
+    "(`experiments/foo.csv`). The active simulator's installed source is mounted "
+    "read-only at `/simulator/` — `read_file`, `glob`, and `grep` it to study "
+    "examples (`/simulator/examples/`) and source (`/simulator/src/`) with the "
+    "same tools you use for workspace files. Use `julia_eval` `@doc` / `methods` / "
+    "`names` for exact signatures and docstrings. If a Julia package is missing, "
+    "check what is already in the workspace env, use a stdlib alternative "
+    "or install only when necessary. Prefer reading "
+    "`/simulator/`, probing the REPL, or reading skills over guessing. "
     "Never invoke `julia` (or `julia --project ...`, `julia -e ...`) through "
     "`execute`; use `julia_eval` / `julia_plot` for all Julia code. `execute` "
     "is for non-Julia shell work only (grep, find, ls, git). "
-    "Skill markdown is already in your system prompt — never paste a skill body "
-    "or your MEMORY.md index back into a reply; refer to them by name and "
-    "summarise the part that's relevant."
+    "The user already sees every tool result in the UI — file contents you "
+    "read, `grep`/`glob` results, REPL output, your MEMORY.md index, and skill "
+    "text. Never paste any of that back into a reply or wrap it in a code "
+    "fence. Refer to files and findings by path, summarise the relevant part in "
+    "your own words, and quote at most a line or two when it's genuinely "
+    "necessary. Your replies are for conclusions and next steps, not for "
+    "echoing what a tool just returned."
 )
 
 _SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "anthropic")
@@ -105,14 +114,19 @@ def build_backend(
     workspace: Path | None = None,
     memory_dir: Path | None = None,
     session_dir: Path | None = None,
+    simulator_source: Path | None = None,
+    simulator_source_writable: bool = False,
 ) -> CompositeBackend:
-    """Mount the workspace plus stable skill, memory, and session routes.
+    """Mount the workspace plus stable skill, memory, session, and source routes.
 
     The shell + filesystem default is rooted at ``workspace`` (defaults to
     the current ``workspace_root()``). Skill markdown is mounted under
     ``/skills/shared/`` and ``/skills/simulator/``; the per-workspace
     memory dir at ``/memory/``; the live session state read-only at
-    ``/session/`` when ``session_dir`` is set.
+    ``/session/`` when ``session_dir`` is set. The active simulator's installed
+    package source is mounted at ``/simulator/`` when ``simulator_source`` is
+    given — read-only for registry installs, writable when the package is a
+    ``Pkg.develop`` checkout (``simulator_source_writable``).
     """
 
     routes: dict[str, Any] = {}
@@ -129,6 +143,9 @@ def build_backend(
         routes[route] = backend
     if session_dir is not None:
         routes[_SESSION_ROUTE] = FilesystemBackend(root_dir=session_dir, virtual_mode=True)
+    if simulator_source is not None and simulator_source.is_dir():
+        source_cls = FilesystemBackend if simulator_source_writable else ReadOnlyFilesystemBackend
+        routes[_SIMULATOR_SOURCE_ROUTE] = source_cls(root_dir=simulator_source, virtual_mode=True)
 
     return CompositeBackend(
         default=LocalShellBackend(
@@ -157,6 +174,8 @@ def build_agent(
     model: Any | None = None,
     checkpointer: Any | None = None,
     approval_mode: ApprovalMode | str | None = None,
+    simulator_source: Path | None = None,
+    simulator_source_writable: bool = False,
 ):
     register_provider_profiles()
 
@@ -165,6 +184,8 @@ def build_agent(
         session.simulator,
         memory_dir=memory_dir,
         session_dir=session.state_dir,
+        simulator_source=simulator_source,
+        simulator_source_writable=simulator_source_writable,
     )
 
     tools = [

@@ -28,7 +28,7 @@ the same workspace file.
 leading slash**:
 
 ```julia
-CSV.read("experiments/observations/cc_discharge_1C.csv", DataFrame)
+CSV.read("experiments/observations/data.csv", DataFrame)
 include("candidate.jl")
 ```
 
@@ -56,23 +56,42 @@ relative path like `"experiments"`, not `"/workspace"`.
   REPL keeps state across calls, so you can iterate on the file and
   re-`include` it without paying the package-load cost again.
 
-## Searching installed simulator source
+## Reading installed simulator source and examples
 
-The active simulator's Julia packages are installed in the workspace's
-Julia env. To grep or read them, ask Julia for the path and use the shell:
+The active simulator's package source is mounted **read-only at
+`/simulator/`** — the same place `pkgdir(<primary package>)` points. Browse
+it with the ordinary file tools, exactly like workspace files:
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using JutulDarcy; print(pkgdir(JutulDarcy))')
-rg "MyPattern" "$SRC/examples"
+```text
+glob("/simulator/examples/**/*.jl")        # discover examples
+read_file("/simulator/examples/.../2_run_a_simulation.jl")
+grep("load_cell_parameters", path="/simulator/src")   # find API uses
 ```
 
-Replace `JutulDarcy` with the active simulator's primary package. Once
-you know the directory, use `read_file`, `rg`, `find`, or any other
-shell idiom you would normally reach for.
+Use this to learn the real API from worked examples and from the source.
+It is **reference only** — don't try to `edit_file` under `/simulator/`
+(it's a registry install shared across projects). To change the package
+itself, `Pkg.develop` it (see below); then `/simulator/` becomes your
+writable checkout.
 
-If `.jutul-agent/config.toml` sets a `source_path` for the simulator,
-the package is `Pkg.develop`-ed there, so you can also `edit_file`
-inside that path to modify the library itself.
+For exact signatures and docstrings, stay in the REPL — these read the
+installed version directly and are always current:
+
+```julia
+# julia_eval
+@doc some_function             # docstring
+methods(solve)                 # available methods
+names(SimulatorPackage)        # exported names of the active simulator's package
+```
+
+Rule of thumb: **`/simulator/` for examples and source you want to read or
+grep; `@doc` / `methods` / `names` in `julia_eval` for precise API.** You
+should never need to pass an absolute host path to a file tool.
+
+If `.jutul-agent/config.toml` sets a `source_path` for the simulator, the
+package is `Pkg.develop`-ed there, so `/simulator/` is that checkout and is
+**writable** — you can `edit_file` it to modify the library, then
+re-`include` to test.
 
 ## Workspace already has its own Project.toml?
 

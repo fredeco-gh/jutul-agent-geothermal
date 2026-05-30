@@ -152,6 +152,7 @@ async def _run_session(
         julia_project=julia_project,
         log_file=state_dir / "repl.log",
         stderr_file=state_dir / "julia-startup.log",
+        cwd=ws,
     )
     print(f"Workspace:     {ws}", file=sys.stderr)
     print(f"Julia project: {julia_project}", file=sys.stderr)
@@ -212,6 +213,70 @@ def _sync_workspace_env(
         )
 
 
+def _ensure_simulator_installed(
+    adapter: Any, ws: Path, julia_project: Path, sim_name: str | None
+) -> None:
+    """Install the simulator package if the env declares but never resolved it.
+
+    Catches the "`jutul-agent doctor` is happy but `using <Sim>` fails" trap:
+    the Project lists the package but the Manifest never resolved it, so it
+    loads neither at startup nor in the agent's first call. Cheap when the env
+    is healthy (a manifest read); only pays the install cost when needed. If
+    the resolve itself fails on a managed env (a broken or conflicted manifest),
+    rebuild it from the template. Best-effort — on failure we warn and launch.
+    """
+
+    from jutul_agent.simulators.env_setup import (
+        EnvSetupError,
+        manifest_has_package,
+        resolve_and_instantiate,
+    )
+
+    pkg = adapter.primary_package
+    # Placeholder simulators (e.g. vocsim) declare a primary package they don't
+    # actually load; only verify packages the agent will `using`.
+    if pkg not in adapter.package_imports:
+        return
+    if manifest_has_package(julia_project, pkg):
+        return
+
+    print(
+        f"Workspace Julia env has not resolved {pkg} yet — installing "
+        "(one-time, can take a few minutes)...",
+        flush=True,
+    )
+    try:
+        resolve_and_instantiate(julia_project)
+    except EnvSetupError as exc:
+        # A user-owned root env is theirs to fix; only rebuild the managed env.
+        if not (ws / "Project.toml").exists():
+            _rebuild_managed_env(adapter, ws, sim_name, reason="could not be resolved")
+            return
+        _warn_rebuild(pkg, sim_name, exc)
+
+
+async def _resolve_simulator_source(
+    adapter: Any, julia_project: Path, config: Any
+) -> tuple[Path | None, bool]:
+    """Resolve the simulator package's source dir for the ``/simulator/`` mount.
+
+    Returns ``(source_dir, writable)``. ``writable`` is True only when the user
+    ``Pkg.develop``-ed the package (config ``source_path`` set) — then editing
+    the mounted source edits their own checkout; otherwise it's a registry
+    install and stays read-only. Resolution is a fast, no-compile Julia call run
+    off the event loop; ``None`` if the package isn't resolved.
+    """
+
+    from jutul_agent.simulators.env_setup import resolve_package_source
+
+    pkg = adapter.primary_package
+    if pkg not in adapter.package_imports:
+        return None, False
+    source = await asyncio.to_thread(resolve_package_source, julia_project, pkg)
+    writable = config.simulator_config(adapter.name).source_path is not None
+    return source, writable
+
+
 async def _run_with_backend(
     repl_config: Any,
     args: argparse.Namespace,
@@ -241,11 +306,16 @@ async def _run_with_backend(
             async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as checkpointer:
                 model_label = resolve_model(args.model)
                 approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
+                source, source_writable = await _resolve_simulator_source(
+                    adapter, repl_config.julia_project, config
+                )
                 agent = build_agent(
                     session,
                     model=model_label,
                     checkpointer=checkpointer,
                     approval_mode=approval_mode,
+                    simulator_source=source,
+                    simulator_source_writable=source_writable,
                 )
                 if args.prompt:
                     return await _headless_turn(agent, session, args.prompt)

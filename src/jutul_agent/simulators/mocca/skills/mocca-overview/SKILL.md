@@ -46,13 +46,18 @@ hand them to `setup_mocca_case` directly — see
 
 ## Finding what you need
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using Mocca; print(pkgdir(Mocca))')
-ls "$SRC/examples"            # dcb_haghpanah, cyclic_vsa_haghpanah, custom_setup, optimization, history_matching
-ls "$SRC/../models/json"      # reference inputs (paths are package-relative)
-rg "function +setup_mocca_case" "$SRC/src"
-cat "$SRC/examples/dcb_haghpanah_2013_co2_n2.jl"   # canonical starting point
+Mocca's source is mounted read-only at `/simulator/`; browse it with the
+file tools:
+
+```text
+glob("/simulator/examples/*.jl")     # dcb_haghpanah, cyclic_vsa_haghpanah, custom_setup, ...
+grep("function setup_mocca_case", path="/simulator/src")
+read_file("/simulator/examples/dcb_haghpanah_2013_co2_n2.jl")   # canonical starting point
 ```
+
+The reference JSON inputs live *beside* the package (not under `/simulator/`)
+at `joinpath(pkgdir(Mocca), "..", "models", "json")` — get that path in
+`julia_eval` and read the files from the REPL.
 
 For docstrings, stay in the REPL: `julia_eval("@doc Mocca.setup_mocca_case")`.
 

@@ -27,14 +27,13 @@ five layers that you compose in order:
 ## Finding what you need
 
 Example layout and APIs change between versions — find them on disk rather
-than guessing. The installed package source is reachable from the shell via
-`pkgdir`. See the `workspace-and-source` skill for the idiom:
+than guessing. The installed source is mounted read-only at `/simulator/`;
+browse it with the file tools (see the `workspace-and-source` skill):
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using JutulDarcy; print(pkgdir(JutulDarcy))')
-ls "$SRC/examples"                              # discover layout
-rg "setup_well" "$SRC/src"                      # find an API
-cat "$SRC/examples/introduction/wells_intro.jl" # read a candidate file
+```text
+glob("/simulator/examples/**/*.jl")                 # discover layout
+grep("setup_well", path="/simulator/src")            # find an API
+read_file("/simulator/examples/introduction/wells_intro.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc setup_reservoir_model")`.

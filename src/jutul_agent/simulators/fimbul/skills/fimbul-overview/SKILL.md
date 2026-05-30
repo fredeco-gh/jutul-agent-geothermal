@@ -35,16 +35,13 @@ geothermal physics through the same Fimbul/JutulDarcy API surface.
 
 ## Finding what you need
 
-Find example layout and APIs on disk via `pkgdir`; see the
-`workspace-and-source` skill for the idiom:
+Fimbul's source is mounted read-only at `/simulator/`; browse it with the
+file tools (see the `workspace-and-source` skill):
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using Fimbul; print(pkgdir(Fimbul))')
-ls "$SRC/examples"                       # analytical / production / storage
-ls "$SRC/examples/production"            # ags_demo, coaxial_bhe_demo, doublet_demo, egs_demo
-ls "$SRC/examples/storage"               # ates_demo, btes_demo, ftes_demo, egg_htates
-rg "function +egg_geothermal" "$SRC/src" # find a case factory's source
-cat "$SRC/examples/production/doublet_demo.jl"
+```text
+glob("/simulator/examples/**/*.jl")              # analytical / production / storage
+grep("function egg_geothermal", path="/simulator/src")   # a case factory's source
+read_file("/simulator/examples/production/doublet_demo.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc egg_geothermal_doublet")`.

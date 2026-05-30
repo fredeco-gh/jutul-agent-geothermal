@@ -138,9 +138,8 @@ def make_julia_plot_tool(session: Session):
         and record it for the session transcript.
 
         Headless by default: code must evaluate to a `Figure` (not call `display`).
-        Prefer native simulator plotters or inline Makie (see `plotting-basics` skill).
-        JutulDarcy/Fimbul also load thin helpers: `well_rates_figure(wd)`,
-        `cell_field_heatmap(g, field)`.
+        Prefer inline Makie or a native simulator plotter (see the `plotting-basics`
+        skill, and the active simulator's own skill for any plot helpers it ships).
 
         Args:
             code: Julia code expected to produce a Makie `Figure`.

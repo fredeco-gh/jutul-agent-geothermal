@@ -23,8 +23,8 @@ JUTULDARCY = SimulatorAdapter(
         "(`setup_vertical_well`, `setup_well`) → fluid system (`ImmiscibleSystem`, "
         "`BlackOilSystem`, `CompositionalSystem`) → `setup_reservoir_model(domain, "
         "sys; wells=...)` → initial state + controls + forces → `simulate_reservoir`. "
-        "Units come from `si_units(:darcy, :bar, :day, ...)`. Examples on disk: "
-        '`joinpath(pkgdir(JutulDarcy), "examples")` — `wells_intro.jl`, '
+        "Units come from `si_units(:darcy, :bar, :day, ...)`. Examples are mounted "
+        "at `/simulator/examples/` — `wells_intro.jl`, "
         "`intro_example.jl`, `compositional_5components.jl`, `data_input_file.jl`."
     ),
 )

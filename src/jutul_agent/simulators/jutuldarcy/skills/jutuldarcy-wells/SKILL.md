@@ -74,10 +74,10 @@ wd[:Producer][:rate]     # total rate
 
 ## Canonical example
 
-For a worked end-to-end version, locate and read the wells intro:
+For a worked end-to-end version, locate and read the wells intro from the
+mounted source:
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using JutulDarcy; print(pkgdir(JutulDarcy))')
-fd wells_intro "$SRC/examples"      # or: find "$SRC/examples" -name 'wells_intro*'
-cat "$SRC/examples/introduction/wells_intro.jl"
+```text
+glob("/simulator/examples/**/wells_intro*.jl")
+read_file("/simulator/examples/introduction/wells_intro.jl")
 ```

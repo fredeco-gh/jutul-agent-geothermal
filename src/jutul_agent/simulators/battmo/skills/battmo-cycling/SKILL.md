@@ -20,12 +20,11 @@ cell_parameters = load_cell_parameters(; from_default_set = "chen_2020")
 ```
 
 To enumerate other default sets that ship with your installed version,
-search the source from the shell:
+search the mounted source with the file tools:
 
-```bash
-SRC=$(julia --project=.jutul-agent/julia-env --startup-file=no -e 'using BattMo; print(pkgdir(BattMo))')
-rg "from_default_set" "$SRC/src"
-cat "$SRC/examples/beginner_tutorials/5_create_parameter_sets.jl"
+```text
+grep("from_default_set", path="/simulator/src")
+read_file("/simulator/examples/beginner_tutorials/5_create_parameter_sets.jl")
 ```
 
 Edit a loaded parameter set as a dictionary-like structure before passing it
