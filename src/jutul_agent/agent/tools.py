@@ -140,7 +140,8 @@ def make_write_report_tool(session: Session):
                 what was tried, what worked, and what to do next.
             title: Optional page title (defaults to the simulator name).
             output_path: Where to write the HTML report. Defaults to the
-                session output directory (``jutul-agent/sessions/<id>/report.html``).
+                session output directory
+                (``jutul-agent-output/sessions/<id>/report.html``).
         """
         from jutul_agent.open_file import open_path
         from jutul_agent.transcript.report import render_report

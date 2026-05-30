@@ -48,11 +48,12 @@ def write_last_session(session_id: str, *, state_root: Path | None = None) -> No
 
 
 def _ensure_jutul_agent_gitignore(output_dir: Path) -> None:
-    """Drop a ``.gitignore`` at the root of ``<workspace>/jutul-agent/`` so
-    generated sessions, transcripts, and reports stay out of the user's repo.
+    """Drop a ``.gitignore`` at the root of ``<workspace>/jutul-agent-output/``
+    so generated sessions, transcripts, and reports stay out of the user's repo.
 
-    ``output_dir`` is ``<workspace>/jutul-agent/sessions/<date>-<sid>/``; the
-    gitignore goes two levels up at ``<workspace>/jutul-agent/.gitignore``.
+    ``output_dir`` is ``<workspace>/jutul-agent-output/sessions/<date>-<sid>/``;
+    the gitignore goes two levels up at
+    ``<workspace>/jutul-agent-output/.gitignore``.
     """
     root = output_dir.parent.parent
     gitignore = root / ".gitignore"

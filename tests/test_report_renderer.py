@@ -61,6 +61,20 @@ def test_render_report_minimal_shell() -> None:
         assert "cytoscape" not in doc
 
 
+def test_render_report_writes_transcript_beside_report(tmp_path) -> None:
+    events = [
+        make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
+        make_event(2, "message_user", {"content": "run it"}),
+    ]
+    out = tmp_path / "experiments" / "report.html"
+    doc = render_report(events, out, session_id="abc", simulator="BattMo")
+
+    transcript = out.parent / "transcript.html"
+    assert transcript.exists()  # generated so the footer link resolves
+    assert 'href="transcript.html"' in doc  # same-dir link, not ../ or trace.sqlite
+    assert "trace.sqlite" not in doc
+
+
 def test_render_report_hero_stat_and_tones(tmp_path) -> None:
     # Baseline at rmse=0.05; child improves; grandchild regresses; second
     # branch stays neutral (no metric on the second child). Tone classes

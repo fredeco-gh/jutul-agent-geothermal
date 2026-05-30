@@ -9,7 +9,8 @@ Page structure (rendered when the agent calls ``write_report``):
   colour-coded SVG tree of the parent/child structure with a legend
 * attempt details — collapsible cards with rationale, parameter changes,
   metrics, and any plots referenced by ``record_attempt``
-* footer — links back to the session transcript and raw trace
+* footer — links to the full session transcript, which ``render_report``
+  writes alongside the report so the link always resolves
 """
 
 from __future__ import annotations
@@ -361,6 +362,17 @@ def render_report(
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(doc, encoding="utf-8")
+
+    # Generate the transcript the footer links to, right next to the report, so
+    # the link always resolves without the user having to run `/transcript`.
+    try:
+        from jutul_agent.transcript.html import render_html
+
+        (out.parent / _TRANSCRIPT_FILENAME).write_text(render_html(event_list), encoding="utf-8")
+    except Exception:
+        # A transcript hiccup must never fail the report write.
+        pass
+
     return doc
 
 
@@ -870,10 +882,13 @@ def _resolve_plot(path: str, artifact_dirs: Sequence[Path]) -> Path | None:
     return None
 
 
+_TRANSCRIPT_FILENAME = "transcript.html"
+
+
 def _render_footer(session_id: str) -> str:
-    transcript = "../transcript.html" if session_id else "transcript.html"
-    trace = "../trace.sqlite" if session_id else "trace.sqlite"
+    # ``render_report`` writes the transcript next to the report, so this link
+    # resolves on its own (same directory) — no manual `/transcript` needed.
     return (
-        f'<footer>Also see the <a href="{transcript}">session transcript</a> '
-        f'and raw <a href="{trace}">trace.sqlite</a>.</footer>'
+        f'<footer>Also see the <a href="{_TRANSCRIPT_FILENAME}">'
+        "full session transcript</a>.</footer>"
     )
