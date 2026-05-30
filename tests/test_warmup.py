@@ -78,3 +78,52 @@ async def test_all_real_adapters_warm_their_primary_package() -> None:
             f"adapter {name!r} warmup_code does not load primary package "
             f"{adapter.primary_package!r}"
         )
+
+
+async def test_all_real_adapters_warm_the_plotting_path() -> None:
+    """Warm-up must compile the CairoMakie save path so the first plot is fast."""
+
+    from jutul_agent.simulators import registry
+
+    for name in registry.names():
+        if name == "vocsim":
+            continue
+        adapter = registry.get(name)
+        assert "CairoMakie.save" in adapter.warmup_code, (
+            f"adapter {name!r} does not warm the plotting path"
+        )
+
+
+def test_warmup_loads_cairomakie_before_solving() -> None:
+    """CairoMakie must load before the solve.
+
+    Loading a package after warming the solve invalidates the solve's compiled
+    code, so the agent's first real solve recompiles from scratch (~35 s vs
+    ~0.6 s). CairoMakie therefore has to be in the up-front `using`.
+    """
+    from jutul_agent.simulators.warmup import warmup_script
+
+    script = warmup_script(packages=("BattMo",), solve_block="solve(sim)")
+    assert "CairoMakie" in script.split("solve(", 1)[0], (
+        "CairoMakie must be loaded before the warm-up solve to avoid invalidation"
+    )
+
+
+def test_warmup_script_stages_are_independent_try_blocks() -> None:
+    """A failure in one stage (missing pkg, API drift) must not abort the rest."""
+
+    from jutul_agent.simulators.warmup import warmup_script
+
+    script = warmup_script(packages=("Foo",), solve_block="error_here()")
+    # using, solve, and plotting are each their own try/catch.
+    assert script.count("try") == 3
+    assert script.count("catch") == 3
+    assert "using Foo" in script
+    assert "error_here()" in script
+
+
+def test_battmo_warmup_runs_a_real_solve() -> None:
+    from jutul_agent.simulators.battmo import BATTMO
+
+    assert "Simulation(" in BATTMO.warmup_code
+    assert "solve(" in BATTMO.warmup_code

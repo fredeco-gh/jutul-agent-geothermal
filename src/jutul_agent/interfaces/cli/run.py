@@ -256,6 +256,7 @@ async def _run_with_backend(
                     session=session,
                     model_label=model_label,
                     approval_mode=approval_mode,
+                    warmup_task=warmup_task,
                 ).run_async()
         finally:
             if warmup_task is not None and not warmup_task.done():

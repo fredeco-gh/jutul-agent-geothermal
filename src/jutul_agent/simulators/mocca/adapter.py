@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
+from jutul_agent.simulators.warmup import warmup_script
 
 MOCCA = SimulatorAdapter(
     name="mocca",
@@ -12,7 +13,9 @@ MOCCA = SimulatorAdapter(
     module_dir=Path(__file__).resolve().parent,
     package_imports=("Jutul", "Mocca"),
     primary_package="Mocca",
-    warmup_code="using Jutul, Mocca, CSV, DataFrames, Statistics, Interpolations",
+    warmup_code=warmup_script(
+        packages=("Jutul", "Mocca", "CSV", "DataFrames", "Statistics", "Interpolations"),
+    ),
     domain_hints=(
         "Mocca (MOdelling for Carbon Capture) simulates adsorption-based "
         "CO2 capture processes (pressure / temperature / vacuum swing "

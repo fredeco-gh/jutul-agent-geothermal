@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
+from jutul_agent.simulators.warmup import warmup_script
 
 JUTULDARCY = SimulatorAdapter(
     name="jutuldarcy",
@@ -12,7 +13,9 @@ JUTULDARCY = SimulatorAdapter(
     module_dir=Path(__file__).resolve().parent,
     package_imports=("Jutul", "JutulDarcy"),
     primary_package="JutulDarcy",
-    warmup_code="using Jutul, JutulDarcy, CSV, DataFrames, Statistics, Interpolations",
+    warmup_code=warmup_script(
+        packages=("Jutul", "JutulDarcy", "CSV", "DataFrames", "Statistics", "Interpolations"),
+    ),
     domain_hints=(
         "JutulDarcy is a fully-differentiable porous-media reservoir simulator "
         "built on the Jutul framework. Core concepts: `CartesianMesh` or unstructured "

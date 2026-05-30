@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
+from jutul_agent.simulators.warmup import warmup_script
 
 FIMBUL = SimulatorAdapter(
     name="fimbul",
