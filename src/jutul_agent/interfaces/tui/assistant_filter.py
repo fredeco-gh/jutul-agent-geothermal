@@ -17,7 +17,11 @@ import re
 from collections import deque
 
 _TODO_UPDATE = re.compile(r"^Updated todo list to \[\{", re.IGNORECASE | re.DOTALL)
-_NUMBERED_LINE = re.compile(r"^\s*\d+\t")
+# `read_file` prefixes every line with a number and a tab; the agent often
+# pastes that verbatim, sometimes with the tab rendered as spaces. Strip either
+# form so the dump markers below still match.
+_NUMBERED_LINE = re.compile(r"^\s*\d+(?:\t| {2,})")
+_FENCE_LINE = re.compile(r"^\s*```")
 # Skill files start with a YAML frontmatter block whose first field is
 # ``name:`` — that's specific enough to never appear in regular prose.
 _SKILL_FRONTMATTER = re.compile(r"^---\s*\nname:\s*\S+", re.MULTILINE)
@@ -46,9 +50,15 @@ def filter_assistant_text(
         return None
     if _looks_like_raw_todo_list(stripped):
         return None
-    if _looks_like_skill_dump(stripped):
+
+    # Dump detection runs on a normalized copy (line-number prefixes and code
+    # fences removed) so a pasted `read_file` body — `1 ---`, `2 name: …`,
+    # fenced or not — still trips the markers. The *displayed* text stays the
+    # original ``stripped``.
+    cleaned = _normalize_for_compare(stripped)
+    if _looks_like_skill_dump(cleaned):
         return None
-    if recent_tool_outputs and _mostly_duplicates_tool_output(stripped, recent_tool_outputs):
+    if recent_tool_outputs and _mostly_duplicates_tool_output(cleaned, recent_tool_outputs):
         return None
     if len(stripped) > _MAX_PROSE_CHARS:
         return stripped[:_TRUNCATED_PROSE_CHARS].rstrip() + "\n\n_… [assistant message truncated]_"
@@ -109,11 +119,11 @@ def _mostly_duplicates_tool_output(text: str, outputs: deque[str]) -> bool:
     for tool_out in outputs:
         if normalized == tool_out:
             return True
-        if len(normalized) >= 80 and normalized in tool_out:
+        if len(normalized) >= 60 and normalized in tool_out:
             return True
-        if len(tool_out) >= 80 and tool_out in normalized:
+        if len(tool_out) >= 60 and tool_out in normalized:
             return True
-        if _overlap_ratio(normalized, tool_out) >= 0.85:
+        if _overlap_ratio(normalized, tool_out) >= 0.7:
             return True
     return False
 
@@ -135,6 +145,8 @@ def _overlap_ratio(left: str, right: str) -> float:
 def _normalize_for_compare(text: str) -> str:
     lines = []
     for line in text.splitlines():
+        if _FENCE_LINE.match(line):
+            continue
         stripped = _NUMBERED_LINE.sub("", line).strip()
         if stripped:
             lines.append(stripped)

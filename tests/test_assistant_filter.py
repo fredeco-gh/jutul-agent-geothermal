@@ -26,6 +26,29 @@ def test_filters_duplicate_tool_output() -> None:
     assert filter_assistant_text(tool_out, recent_tool_outputs=recent) is None
 
 
+def test_filters_line_numbered_skill_dump() -> None:
+    # The agent pastes `read_file` output verbatim — line numbers + tabs defeat
+    # the raw `^---\nname:` marker, so detection must normalize them away.
+    text = "1\t---\n2\tname: battmo-overview\n3\tdescription: BattMo workflow\n4\t---"
+    assert filter_assistant_text(text) is None
+
+
+def test_filters_line_numbered_memory_dump() -> None:
+    text = "1\t# Memory index\n2\t\n3\tThis file is the always-loaded index."
+    assert filter_assistant_text(text) is None
+
+
+def test_filters_space_numbered_skill_dump() -> None:
+    # Some renders turn the read_file tab into spaces.
+    text = "1  ---\n2  name: battmo-cycling\n3  description: protocols\n4  ---"
+    assert filter_assistant_text(text) is None
+
+
+def test_filters_fenced_skill_dump() -> None:
+    text = "```\n---\nname: battmo-overview\ndescription: workflow\n---\n```"
+    assert filter_assistant_text(text) is None
+
+
 def test_keeps_unrelated_prose() -> None:
     recent = deque(["unrelated tool output line that is plenty long"])
     text = "Here is a short explanation of what I plan to do next."

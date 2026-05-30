@@ -122,19 +122,30 @@ class _AssistantStream:
         if not text:
             return
         async with self._lock:
-            if filter_text is not None:
-                preview = filter_text(text)
-                if preview is None:
-                    return
             self._prose_buffer += text
+            # Filter the accumulated buffer, not the incoming chunk. Filtering
+            # per-chunk drops whichever chunk holds the tell-tale marker (a
+            # ``# Memory index`` heading, skill frontmatter, the start of an
+            # echoed file) while keeping the rest, so the dump leaks. Checking
+            # the whole buffer lets the suppression fire as soon as the message
+            # *becomes* a dump; we then drop any block already mounted.
+            if filter_text is not None and filter_text(self._prose_buffer) is None:
+                if self.prose is not None:
+                    await self.prose.remove()
+                    self.prose = None
+                return
             block = self.prose
             if block is None:
                 block = MessageBlock("Assistant", "assistant", "", markdown=True)
                 self.prose = block
                 await log.mount(block)
-            elif not block.is_mounted:
-                await block._mounted_event.wait()
-            await block.append_content(text)
+                # Render the whole buffer — covers a fresh block and a re-mount
+                # after an earlier chunk was (transiently) suppressed.
+                await block.append_content(self._prose_buffer)
+            else:
+                if not block.is_mounted:
+                    await block._mounted_event.wait()
+                await block.append_content(text)
 
     async def append_reasoning(self, log: VerticalScroll, text: str) -> None:
         if not text:
@@ -219,8 +230,7 @@ class TUIApp(App[None]):
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("ctrl+c", "quit", "Quit", priority=True),
-        Binding("ctrl+d", "quit", "Quit", priority=True),
+        Binding("ctrl+c", "interrupt", "Interrupt / Copy / Quit", priority=True),
         Binding("ctrl+g", "cancel_turn", "Cancel", priority=True),
         Binding("ctrl+l", "clear_visible_log", "Clear Log", priority=True),
         Binding("ctrl+o", "toggle_tool_output", "Toggle Tool Output", priority=True),
@@ -241,11 +251,14 @@ class TUIApp(App[None]):
         session: Session,
         model_label: str | None = None,
         approval_mode: ApprovalMode | str | None = None,
+        warmup_task: Any | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
         self._session = session
         self._model_label = model_label
+        self._warmup_task = warmup_task
+        self._warming = warmup_task is not None and not warmup_task.done()
         self._approval_mode = (
             approval_mode
             if isinstance(approval_mode, ApprovalMode)
@@ -267,6 +280,8 @@ class TUIApp(App[None]):
         self._stream = _AssistantStream()
         self._resize_timer: Timer | None = None
         self._scroll_timer: Timer | None = None
+        self._quit_armed = False
+        self._quit_timer: Timer | None = None
         # Resolved in ``on_mount``; both widgets are always present.
         self._log: VerticalScroll = None  # type: ignore[assignment]
         self._prompt: PromptTextArea = None  # type: ignore[assignment]
@@ -310,6 +325,23 @@ class TUIApp(App[None]):
         self._set_status("ready")
         self._prompt.focus()
         self._refresh_prompt_guide()
+        if self._warming:
+            self.run_worker(self._watch_warmup(), name="warmup-watch")
+
+    async def _watch_warmup(self) -> None:
+        """Clear the 'warming up' indicator once the background warm-up ends.
+
+        ``asyncio.shield`` keeps the warm-up running if this watcher is torn
+        down — ``run.py`` owns the task's lifecycle and cancels it on exit.
+        """
+        task = self._warmup_task
+        if task is None:
+            return
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await asyncio.shield(task)
+        self._warming = False
+        if self.is_mounted:
+            self._refresh_prompt_guide()
 
     async def _handle_approval_nav(self, key: str) -> bool:
         if not self._approval_menu.visible or self._busy:
@@ -333,9 +365,65 @@ class TUIApp(App[None]):
         label = self._approval_mode.display_label()
         await self._note(f"Permission mode: {label}")
         self._refresh_prompt_guide()
-        if self._pending_interrupts and self._should_auto_approve_pending():
-            resume_payload = self._build_resume_payload({"type": "approve"})
-            await self._resume_turn(resume_payload)
+        await self._auto_approve_pending_if_allowed()
+
+    async def action_interrupt(self) -> None:
+        """Ctrl+C: interrupt → copy → double-press to exit.
+
+        Priority:
+        1. A turn is running → interrupt it (same as Ctrl+G).
+        2. Idle with a text selection → copy it (OSC 52). Textual turns mouse
+           drags into a selection; this is what lets the user actually copy it
+           instead of quitting. (No mouse? Use ``/copy`` for the last reply.)
+        3. Idle, nothing selected → first press arms exit and shows a hint, a
+           second press within the window quits.
+        """
+        if self._busy:
+            self._disarm_quit()
+            await self.action_cancel_turn()
+            return
+
+        selected: str | None = None
+        with contextlib.suppress(Exception):
+            selected = self.screen.get_selected_text()
+        if selected:
+            self.copy_to_clipboard(selected)
+            with contextlib.suppress(Exception):
+                self.screen.selections = {}
+            self._disarm_quit()
+            self.notify("Copied selection to clipboard.", timeout=2.0)
+            return
+
+        if self._quit_armed:
+            self.exit()
+            return
+        self._arm_quit()
+
+    def _arm_quit(self) -> None:
+        self._quit_armed = True
+        self.notify("Press Ctrl+C again to exit.", timeout=2.0)
+        if self._quit_timer is not None:
+            self._quit_timer.stop()
+        self._quit_timer = self.set_timer(2.0, self._disarm_quit)
+
+    def _disarm_quit(self) -> None:
+        self._quit_armed = False
+        if self._quit_timer is not None:
+            self._quit_timer.stop()
+            self._quit_timer = None
+
+    async def _auto_approve_pending_if_allowed(self) -> None:
+        """Resume an already-shown approval once a mode change clears it.
+
+        Mirrors the menu-driven path: hide the menu and drop the transient
+        approval cards before resuming so nothing stale lingers in the log.
+        """
+        if not (self._pending_interrupts and self._should_auto_approve_pending()):
+            return
+        self._hide_approval_menu()
+        await self._clear_approval_blocks()
+        resume_payload = self._build_resume_payload({"type": "approve"})
+        await self._resume_turn(resume_payload)
 
     async def on_approval_menu_selected(self, event: ApprovalMenu.Selected) -> None:
         if not self._pending_interrupts or self._busy:
@@ -397,7 +485,6 @@ class TUIApp(App[None]):
             pending_count=len(self._pending_interrupts),
             tool_toggle_available=any(block.expandable for block in self._tool_blocks),
             approval_mode_label=self._approval_mode.display_label(),
-            busy=self._busy,
         )
         self._refresh_prompt_guide()
 
@@ -509,6 +596,10 @@ class TUIApp(App[None]):
             await self._note(f"transcript written to {target}")
             return
 
+        if head == "/copy":
+            await self._copy_last_assistant_message()
+            return
+
         if head == "/clear":
             await self._clear_visible_log()
             return
@@ -556,9 +647,7 @@ class TUIApp(App[None]):
                 f"approval mode set to `{self._approval_mode.value}` for this session. "
                 "Restart jutul-agent to change which tools interrupt at build time."
             )
-            if self._pending_interrupts and self._should_auto_approve_pending():
-                resume_payload = self._build_resume_payload({"type": "approve"})
-                await self._resume_turn(resume_payload)
+            await self._auto_approve_pending_if_allowed()
             self._refresh_prompt_guide()
             return
 
@@ -567,6 +656,21 @@ class TUIApp(App[None]):
     async def _note(self, text: str) -> None:
         await self._log.mount(MessageBlock("System", "system", text))
         self._schedule_scroll_end()
+
+    async def _copy_last_assistant_message(self) -> None:
+        """Copy the most recent assistant reply to the clipboard (OSC 52).
+
+        A reliable alternative to mouse-selection when the terminal doesn't
+        cooperate with Textual's text selection.
+        """
+        assistant_blocks = [
+            block for block in self._log.query(MessageBlock) if block.has_class("assistant")
+        ]
+        if not assistant_blocks:
+            await self._note("no assistant message to copy yet")
+            return
+        self.copy_to_clipboard(assistant_blocks[-1].content_text)
+        await self._note("copied the last assistant message to the clipboard")
 
     async def _run_turn(self, prompt: str) -> None:
         self._set_status("thinking…")
@@ -1043,11 +1147,17 @@ class TUIApp(App[None]):
         guide.set_activity(self._activity_label())
 
     def _activity_label(self) -> str:
+        # Lives in the bottom bar (next to the input) and composes the turn
+        # status with the background warm-up so warming stays visible during a
+        # turn instead of being replaced by "thinking…".
         if self._pending_interrupts:
             return "approval required"
+        parts: list[str] = []
         if self._busy:
-            return self._status_text
-        return "ready"
+            parts.append(self._status_text)
+        if self._warming:
+            parts.append("warming Julia")
+        return " · ".join(parts) if parts else "ready"
 
     def _compute_prompt_guide(self) -> str:
         position = self._history.position
@@ -1061,6 +1171,8 @@ class TUIApp(App[None]):
             if self._approval_menu.visible:
                 return "↑/↓ select · Enter confirm · Esc reject · Shift+Tab cycle mode"
             return "approval pending"
+        if self._busy:
+            return "Ctrl+G cancel"
         value = self._prompt.value
         if value.startswith("/"):
             return self._command_guide(value)
@@ -1168,12 +1280,25 @@ class TUIApp(App[None]):
                 used.add(id(block))
                 break
 
+    async def _clear_approval_blocks(self) -> None:
+        """Remove the pending approval cards from the log.
+
+        The cards are transient: their only job is to show the diff/command
+        while the user decides. Once decided, the outcome is carried by the
+        tool card (running / rejected) and the durable record lives in the
+        SQLite trace, so leaving a stale colored card in the log just clutters
+        the conversation.
+        """
+        for block in self._active_approval_blocks:
+            with contextlib.suppress(Exception):
+                await block.remove()
+        self._active_approval_blocks = []
+
     async def _preview_pending_decision(self, decision: dict[str, str]) -> None:
         decision_type = decision.get("type") or "pending"
         reason = decision.get("message")
 
-        for block in self._active_approval_blocks:
-            await block.set_decision(decision_type, reason)
+        await self._clear_approval_blocks()
 
         if decision_type == "approve":
             for block in self._tool_blocks:

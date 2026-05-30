@@ -332,6 +332,125 @@ async def test_tui_starts_with_welcome_card(session: Session) -> None:
         assert "/approve" not in welcome_cards[0]._content
 
 
+async def test_ctrl_c_copies_selection_when_present(session: Session, monkeypatch) -> None:
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        copied: list[str] = []
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+        monkeypatch.setattr(app.screen, "get_selected_text", lambda: "agent said this")
+
+        await app.action_interrupt()
+
+        assert copied == ["agent said this"]
+        assert app._quit_armed is False
+
+
+async def test_ctrl_c_requires_two_presses_to_exit(session: Session, monkeypatch) -> None:
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        monkeypatch.setattr(app.screen, "get_selected_text", lambda: None)
+        exited: list[bool] = []
+        monkeypatch.setattr(app, "exit", lambda *a, **k: exited.append(True))
+
+        await app.action_interrupt()  # first press arms quit, does not exit
+        assert app._quit_armed is True
+        assert exited == []
+
+        await app.action_interrupt()  # second press exits
+        assert exited == [True]
+
+
+async def test_ctrl_c_disarm_resets_after_window(session: Session, monkeypatch) -> None:
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        monkeypatch.setattr(app.screen, "get_selected_text", lambda: None)
+
+        await app.action_interrupt()
+        assert app._quit_armed is True
+        app._disarm_quit()
+        assert app._quit_armed is False
+
+
+async def test_ctrl_c_interrupts_running_turn(session: Session, monkeypatch) -> None:
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        cancelled: list[bool] = []
+
+        async def fake_cancel() -> None:
+            cancelled.append(True)
+
+        monkeypatch.setattr(app, "action_cancel_turn", fake_cancel)
+        exited: list[bool] = []
+        monkeypatch.setattr(app, "exit", lambda *a, **k: exited.append(True))
+        app._busy = True
+
+        await app.action_interrupt()  # while busy: interrupt, don't arm/exit
+
+        assert cancelled == [True]
+        assert exited == []
+        assert app._quit_armed is False
+
+
+async def test_copy_command_copies_last_assistant_message(session: Session, monkeypatch) -> None:
+    app = TUIApp(agent=streaming_agent(), session=session)
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "hello")
+        await wait_until_ready(app)
+        copied: list[str] = []
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+
+        await pilot.press(*list("/copy"))
+        await pilot.press("enter")
+        await wait_until_ready(app)
+
+        assert len(copied) == 1
+        assert copied[0].strip()  # the assistant reply text, non-empty
+
+
+async def test_streamed_memory_dump_is_suppressed(session: Session) -> None:
+    # Regression: per-chunk filtering used to drop the chunk holding the
+    # `# Memory index` marker but keep the rest, leaking the dump. The filter
+    # must see the accumulated buffer and suppress the whole block.
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        chunks = ["```\n# Memory index\n", "\nThis file is the always-loaded index.\n", "```"]
+        for chunk in chunks:
+            await app._stream.append_prose(app._log, chunk, filter_text=app._filter_assistant_text)
+        assert app._stream.prose is None  # nothing surfaced
+        assert not [b for b in app.query(MessageBlock) if b.has_class("assistant")]
+
+
+async def test_warming_indicator_coexists_with_turn_status(session: Session) -> None:
+    # The warm-up indicator must stay visible while a turn runs (it used to be
+    # replaced by "thinking…" / the Ctrl+G hint), and it lives in the bottom bar.
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        app._busy = True
+        app._warming = True
+        app._status_text = "thinking…"
+        label = app._activity_label()
+        assert "thinking" in label and "warming" in label
+
+        app._warming = False
+        assert "warming" not in app._activity_label()
+
+
+async def test_streamed_normal_prose_is_shown(session: Session) -> None:
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        for chunk in ["The cell uses ", "the chen_2020 set."]:
+            await app._stream.append_prose(app._log, chunk, filter_text=app._filter_assistant_text)
+        assert app._stream.prose is not None
+        assert app._stream._prose_buffer == "The cell uses the chen_2020 set."
+
+
 async def test_tui_does_not_mount_footer_shortcuts(session: Session) -> None:
     app = TUIApp(agent=_stub_agent(), session=session)
 

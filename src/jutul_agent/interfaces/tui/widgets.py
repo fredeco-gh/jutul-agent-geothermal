@@ -119,6 +119,11 @@ class MessageBlock(Vertical):
             return
         yield Static(self._content, classes="message-body", id="message-body", markup=False)
 
+    @property
+    def content_text(self) -> str:
+        """The message's raw text (markdown source for assistant replies)."""
+        return self._content
+
     def on_mount(self) -> None:
         self._body_widget = self.query_one("#message-body")
         self.refresh_for_width()
@@ -306,6 +311,9 @@ def _render_welcome_message(
             "Ask a question or describe a task.",
             "Shift+Tab cycles approval mode "
             "(*workspace* auto-approves file edits; *auto* skips all prompts).",
+            "**Ctrl+C** interrupts a running turn. When idle: select text + "
+            "**Ctrl+C** copies it (or `/copy` for the whole last reply); "
+            "**Ctrl+C** twice exits.",
         ]
     )
     return "\n".join(lines)
@@ -397,7 +405,6 @@ class StatusBar(Static):
         self._pending_count = 0
         self._tool_toggle_available = False
         self._approval_mode_label = "default"
-        self._busy = False
 
     def set_state(
         self,
@@ -405,12 +412,10 @@ class StatusBar(Static):
         pending_count: int = 0,
         tool_toggle_available: bool = False,
         approval_mode_label: str = "default",
-        busy: bool = False,
     ) -> None:
         self._pending_count = pending_count
         self._tool_toggle_available = tool_toggle_available
         self._approval_mode_label = approval_mode_label
-        self._busy = busy
         self.refresh()
 
     def render(self) -> Text:
@@ -435,10 +440,8 @@ class StatusBar(Static):
             text.append(" · ", style="dim")
             text.append(f"{self._pending_count} {label}", style="yellow")
 
-        if self._busy:
-            text.append(" · ", style="dim")
-            text.append("Ctrl+G cancel", style="bold yellow")
-
+        # Live state (turn status, warm-up, Ctrl+G cancel) lives in the bottom
+        # bar next to the input — see ``_activity_label`` / the prompt guide.
         if self._tool_toggle_available:
             text.append(" · ", style="dim")
             text.append("details available", style="dim")
@@ -654,7 +657,12 @@ def _status_style(message: str) -> str:
     lowered = message.lower()
     if "approval" in lowered:
         return "bold yellow"
-    if "thinking" in lowered or "running" in lowered or "resuming" in lowered:
+    if (
+        "thinking" in lowered
+        or "running" in lowered
+        or "resuming" in lowered
+        or "warming" in lowered
+    ):
         return "yellow"
     if "error" in lowered or "failed" in lowered:
         return "red"

@@ -30,6 +30,7 @@ class SlashCommandSpec:
 BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/help", "show available commands"),
     SlashCommandSpec("/transcript", "write transcript (HTML; append 'md' for markdown)"),
+    SlashCommandSpec("/copy", "copy the last assistant message to the clipboard"),
     SlashCommandSpec("/clear", "clear the visible log"),
     SlashCommandSpec(
         "/approval-mode",
