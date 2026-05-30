@@ -91,6 +91,13 @@ simulator from a `Project.toml` in the workspace when it can.
 `Pkg.instantiate` and warm up plotting; use `--force` to replace an existing
 `.jutul-agent/julia-env/` after upgrading jutul-agent.
 
+**One simulator per workspace.** Each workspace's `.jutul-agent/julia-env/`
+holds a single simulator — different simulators (e.g. BattMo and JutulDarcy)
+have incompatible Julia dependencies and can't share one env. Use a separate
+folder per simulator. If you point an existing workspace at a different
+simulator, jutul-agent rebuilds its env from the new simulator's template on
+the next run.
+
 ### Supported simulators
 
 | `--sim`      | Package                                                      | Domain                                         |
@@ -143,6 +150,8 @@ It checks, with a one-line fix for each problem:
 - a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
 - which Julia project this workspace resolves to (see the gotcha below)
 - that project has a `Project.toml` containing `AgentREPL`
+- the simulator's package is actually resolved in the env's `Manifest.toml`
+  (catches a `Project.toml` that lists it but was never instantiated)
 - `using AgentREPL` actually loads in that project
 
 **Gotcha — workspace vs. launch directory.** `jutul-agent` uses the
@@ -178,20 +187,26 @@ Inside the TUI:
 |-------------------|-----------------------------------------------------|
 | `/transcript`     | Write the session transcript to disk (HTML).        |
 | `/transcript md`  | Same, as markdown.                                  |
+| `/copy`           | Copy the last assistant message to the clipboard.   |
 | `/clear`          | Clear the visible log and restore the welcome card. |
 | `/approval-mode`  | Set approval policy: `ask`, `workspace`, `auto`.    |
 | `/help`           | List commands.                                      |
-| `/quit`           | Exit (also `Ctrl+D`).                               |
+| `/quit`           | Exit the TUI.                                        |
 
 Keyboard:
 
-| Key          | Effect                                                |
-|--------------|-------------------------------------------------------|
-| `Ctrl+G`     | Cancel the in-flight turn (resets Julia if needed).   |
-| `Ctrl+L`     | Clear the visible log.                                |
-| `Ctrl+O`     | Toggle the latest tool block between preview / full.  |
-| `Shift+Tab`  | Cycle approval mode.                                  |
-| `Ctrl+P`/`↑` | Previous history entry.                               |
+| Key          | Effect                                                          |
+|--------------|-----------------------------------------------------------------|
+| `Ctrl+C`     | Interrupt the running turn; with text selected, copy it; press twice when idle to exit. |
+| `Ctrl+G`     | Cancel the in-flight turn (resets Julia if needed).             |
+| `Ctrl+L`     | Clear the visible log.                                          |
+| `Ctrl+O`     | Toggle the latest tool block between preview / full.            |
+| `Shift+Tab`  | Cycle approval mode.                                            |
+| `Ctrl+P`/`↑` | Previous history entry.                                         |
+
+Select text with the mouse and press `Ctrl+C` to copy it (or use `/copy`
+for the whole last reply — handy when your terminal doesn't play nicely with
+in-app selection).
 
 ### Non-interactive use
 
