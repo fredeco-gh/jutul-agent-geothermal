@@ -25,10 +25,12 @@ from deepagents import (
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
+from jutul_agent.agent.backend import ReadOnlyFilesystemBackend
 from jutul_agent.agent.julia_plot import make_julia_plot_tool
 from jutul_agent.agent.memory import (
     build_memory_middleware,
     ensure_memory_dir,
+    make_remember_tool,
     memory_backend_route,
 )
 from jutul_agent.agent.prompts import assemble_session_prompt
@@ -170,6 +172,7 @@ def build_agent(
         make_julia_plot_tool(session),
         make_record_attempt_tool(session),
         make_write_report_tool(session),
+        make_remember_tool(memory_dir),
     ]
     mode = (
         approval_mode

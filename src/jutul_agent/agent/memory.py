@@ -11,7 +11,7 @@ Layout on disk (under ``workspace_state_dir() / "memory/"``)::
     memory/
     ├── MEMORY.md             # index, always loaded
     ├── user_workflow.md      # one fact per file (created on demand)
-    ├── jutuldarcy_quirks.md
+    ├── simulator_quirks.md
     └── …
 
 Memory is workspace-scoped because ``workspace_state_dir()`` hashes the
@@ -22,16 +22,20 @@ global tier can be added by mounting a second backend route under
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
 from deepagents.backends import FilesystemBackend
 from deepagents.middleware.memory import MemoryMiddleware
+from langchain_core.tools import tool
 
 MEMORY_ROUTE = "/memory/"
 MEMORY_INDEX_FILENAME = "MEMORY.md"
 MEMORY_INDEX_PATH = MEMORY_ROUTE + MEMORY_INDEX_FILENAME
+
+_VALID_KINDS = ("user", "project", "simulator", "preference", "reference")
 
 _INDEX_SEED = """# Memory index
 
@@ -62,9 +66,14 @@ on demand with `read_file` and edit them with `edit_file` /
 
 - At the start of a turn, scan the index to see what's known.
 - For details on any indexed item, `read_file('/memory/<file>.md')`.
-- After learning something durable, write a small note file (one fact
-  per file is the norm) and add a line to `/memory/MEMORY.md` linking
-  to it.
+- After learning something durable, **call the `remember` tool** — it
+  writes the note file and updates the `/memory/MEMORY.md` index for you,
+  with no approval prompt. Prefer it over hand-writing memory files with
+  `write_file`/`edit_file` (those are gated by approval). One fact per
+  call is the norm.
+- Save proactively: once you know the user's goal, role, or simulator
+  focus, or you confirm a quirk/workaround, record it the same turn — a
+  short `remember` call now saves rediscovery next session.
 
 **What to save** (per-workspace, durable knowledge):
 
@@ -151,3 +160,78 @@ def build_memory_middleware(backend) -> MemoryMiddleware:
         system_prompt=JUTUL_MEMORY_SYSTEM_PROMPT,
         add_cache_control=True,
     )
+
+
+def _slugify(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.strip().lower()).strip("-")
+    return (slug or "note")[:48]
+
+
+def _index_hook(content: str) -> str:
+    """One-line hook for the index, derived from the note body."""
+    first = next((line.strip() for line in content.splitlines() if line.strip()), "")
+    first = re.sub(r"\s+", " ", first)
+    return first[:100] + ("…" if len(first) > 100 else "")
+
+
+def _append_index_entry(index_path: Path, *, title: str, filename: str, hook: str) -> None:
+    """Add a one-line pointer to MEMORY.md, skipping duplicates by filename."""
+    text = index_path.read_text(encoding="utf-8") if index_path.exists() else _INDEX_SEED
+    marker = f"(file: `{filename}`)"
+    entry = f"- `{title}` — {hook} {marker}"
+    lines = [line for line in text.splitlines() if marker not in line]
+    if not text.endswith("\n"):
+        text += "\n"
+    index_path.write_text("\n".join(lines).rstrip() + "\n" + entry + "\n", encoding="utf-8")
+
+
+def make_remember_tool(memory_dir: Path):
+    """Build the ``remember`` tool that persists one durable fact to memory.
+
+    Writes directly to the per-workspace memory dir (bypassing the approval
+    gate that fronts ``write_file``/``edit_file``) and keeps ``MEMORY.md`` in
+    sync, so saving a fact is a single low-friction call.
+    """
+
+    @tool
+    async def remember(content: str, title: str, kind: str = "project") -> str:
+        """Save one durable fact to workspace memory (persists across sessions).
+
+        Use this for things worth knowing next time: the user's role/goal,
+        confirmed simulator quirks or calling conventions, stable paths the
+        user pointed at, and corrections (capture the rule *and why*). One
+        fact per call. Do not store credentials or transient task state.
+
+        Args:
+            content: The fact, in a few sentences of Markdown. For a
+                correction, include why it matters and how to apply it.
+            title: Short human-readable title (also used to name the file).
+            kind: One of ``user``, ``project``, ``simulator``, ``preference``,
+                ``reference``. Defaults to ``project``.
+
+        Returns:
+            Confirmation with the note filename.
+        """
+        ensure_memory_dir(memory_dir)
+        normalized_kind = kind.strip().lower()
+        if normalized_kind not in _VALID_KINDS:
+            normalized_kind = "project"
+
+        name = _slugify(title)
+        filename = f"{name}.md"
+        note_path = memory_dir / filename
+        body = content.strip()
+        note_path.write_text(
+            f"---\nname: {name}\ndescription: {title.strip()}\ntype: {normalized_kind}\n---\n\n"
+            f"{body}\n",
+            encoding="utf-8",
+        )
+        _append_index_entry(
+            memory_dir / MEMORY_INDEX_FILENAME,
+            title=title.strip(),
+            filename=filename,
+            hook=_index_hook(body),
+        )
+        return f"remembered `{title.strip()}` → {filename} (kind={normalized_kind})"
+
+    return remember
