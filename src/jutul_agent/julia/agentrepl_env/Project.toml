@@ -1,2 +1,7 @@
 [deps]
 AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"
+
+# AgentREPL.jl is not in the General registry; declare where Pkg fetches it so
+# the env resolves from a clean checkout without a hand-built Manifest.
+[sources]
+AgentREPL = {url = "https://github.com/samtalki/AgentREPL.jl", rev = "main"}

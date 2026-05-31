@@ -7,7 +7,6 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 
-[compat]
-BattMo = "0.2"
-Jutul = "0.4"
-julia = "1.10"
+# AgentREPL.jl is not in the General registry yet.
+[sources]
+AgentREPL = {url = "https://github.com/samtalki/AgentREPL.jl", rev = "main"}

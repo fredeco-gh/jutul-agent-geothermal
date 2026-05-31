@@ -31,7 +31,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.mark.skipif(
     not _julia_available() or not _env_ready(JUTULDARCY_ENV),
-    reason="Julia and the jutuldarcy env template are required",
+    reason="Julia and an instantiated jutuldarcy env are required",
 )
 async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
     config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
@@ -80,7 +80,7 @@ async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(
     not _julia_available() or not _env_ready(BATTMO_ENV),
-    reason="Julia and the battmo env template are required",
+    reason="Julia and an instantiated battmo env are required",
 )
 async def test_julia_plot_battmo_inline_makie(tmp_path: Path) -> None:
     config = AgentREPLConfig(julia_project=BATTMO_ENV)
