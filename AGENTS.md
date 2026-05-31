@@ -22,7 +22,9 @@ work on the Jutul ecosystem.
 ## Validation
 
 - Default suite (no Julia): `uv run pytest -q -m "not integration"`
-- Integration suite (requires Julia + simulator envs): `uv run pytest -q -m integration`
+- Integration suite (requires Julia + an instantiated env): `uv run pytest -q -m integration`.
+  Envs instantiate from `Project.toml` + `[sources]`.
+  `tests/test_simulators_smoke.py` loads each simulator with `using <Sim>`.
 - Live LLM (humans only, needs API key): `uv run pytest tests/live/`
 - Update transcript / report snapshots after renderer changes:
   `uv run pytest --snapshot-update tests/test_transcript_html.py tests/test_transcript.py tests/test_report_renderer.py`
@@ -31,6 +33,18 @@ work on the Jutul ecosystem.
   format-on-save / pre-commit if installed).
 
 See [docs/testing.md](docs/testing.md) for the full testing guide.
+
+## Continuous integration
+
+Two GitHub Actions workflows:
+
+- `ci.yml` — every push/PR. `lint` (ruff); `test` across Linux/Windows/macOS
+  (`pytest -m "not integration"`, no Julia); `julia-integration` (Linux only:
+  instantiates the bare AgentREPL env, runs `test_julia_session.py`).
+- `simulators.yml` — per-simulator smoke matrix (`jutuldarcy`, `battmo`,
+  `fimbul`, `mocca`; Linux). On PR + push to `main`, a weekly Monday run
+  (catches upstream breakage), and manual dispatch. Each job instantiates the
+  env from `Project.toml` + `[sources]` and runs `test_simulators_smoke.py`.
 
 ## Local git hooks
 
@@ -73,8 +87,10 @@ exactly three things:
 - `adapter.py` — constructs the `SimulatorAdapter`. Set
   `module_dir = Path(__file__).resolve().parent` so the base class can
   derive `julia_env_template_path`, `skills_dir`, and `plot_helpers_path`.
-- `julia_env/` — `Project.toml` (+ optional `Manifest.toml`, `plots.jl`)
-  copied into a workspace on bootstrap.
+- `julia_env/` — `Project.toml` declaring deps plus a `[sources]` entry for the
+  unregistered AgentREPL.jl. The
+  `Manifest.toml` is generated on instantiate.
+  Optional `plots.jl`. Copied into a workspace on bootstrap.
 - `skills/<skill-name>/SKILL.md` — markdown skills surfaced via the
   deep-agents skill system.
 

@@ -187,9 +187,22 @@ def resolve_and_instantiate(project: Path) -> None:
     not the Manifest.toml (e.g. after auto-syncing new deps in). Running
     ``Pkg.resolve`` first updates the manifest from Project.toml before
     install.
+
+    ``Pkg.resolve`` assumes the General registry already exists and fails with
+    "no registries have been installed" on a fresh Julia depot (unlike
+    ``Pkg.instantiate``, ``resolve`` does not bootstrap it). So install General
+    first when none is reachable.
     """
 
-    _run_pkg(project, ["using Pkg", "Pkg.resolve()", "Pkg.instantiate()"])
+    _run_pkg(
+        project,
+        [
+            "using Pkg",
+            'isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General")',
+            "Pkg.resolve()",
+            "Pkg.instantiate()",
+        ],
+    )
 
 
 def _warmup_plotting(project: Path) -> None:

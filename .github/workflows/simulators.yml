@@ -1,0 +1,59 @@
+name: Simulators
+
+# Per-simulator smoke tests against a live Julia env. Separate from the main CI
+# lane because instantiating simulator libraries is a multi-minute precompile.
+# Since the envs ship no committed Manifest and carry no version pins, every run
+# resolves the latest compatible upstream, so a green run here means jutul-agent
+# still works against current version of simulators.
+on:
+  # On PRs and pushes to main: did my change break a simulator?
+  pull_request:
+  push:
+    branches: [main]
+  # Weekly: did an upstream release break us since the last commit?
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: ${{ matrix.simulator }}
+    strategy:
+      # One simulator failing shouldn't cancel the others, we want to see
+      # exactly which upstreams broke.
+      fail-fast: false
+      matrix:
+        simulator: [jutuldarcy, battmo, fimbul, mocca]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+
+      # Matrix-aware by default: each simulator gets its own depot cache, so a
+      # change to one env doesn't invalidate the others.
+      - name: Cache Julia artifacts
+        uses: julia-actions/cache@v2
+
+      # Refresh the registry so a fresh resolve sees the latest releases,
+      # then instantiate from Project + [sources].
+      - name: Instantiate ${{ matrix.simulator }} env
+        run: >
+          julia --project=src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env
+          --startup-file=no
+          -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'
+
+      - name: Smoke test (env loads + using ${{ matrix.simulator }})
+        run: uv run pytest tests/test_simulators_smoke.py -k ${{ matrix.simulator }} -ra
