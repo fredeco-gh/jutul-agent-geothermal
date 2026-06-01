@@ -54,6 +54,15 @@ def state_home() -> Path:
     return Path.home() / ".local" / "share" / "jutul-agent"
 
 
+def user_config_path() -> Path:
+    """User-global config file, at the root of the state home.
+
+    Settings here apply across every workspace (e.g. the default model); the
+    per-workspace ``.jutul-agent/config.toml`` overrides them.
+    """
+    return state_home() / "config.toml"
+
+
 def resolve_workspace_path(raw: str | Path) -> Path:
     """Resolve a user-supplied path to a real workspace path.
 

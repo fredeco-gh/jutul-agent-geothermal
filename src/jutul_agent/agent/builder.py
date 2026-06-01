@@ -40,6 +40,7 @@ from jutul_agent.agent.memory import (
     make_remember_tool,
     memory_backend_route,
 )
+from jutul_agent.agent.models import PROVIDERS
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
@@ -97,19 +98,31 @@ _PROMPT_SUFFIX = (
     "is for non-Julia shell work only (grep, find, ls, git)."
 )
 
-_SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "anthropic")
-
 _provider_profiles_registered = False
 
 
-def resolve_model(explicit: Any | None = None) -> Any:
-    if explicit:
-        return explicit
-    return os.environ.get(MODEL_ENV_VAR) or DEFAULT_MODEL
+def resolve_model(
+    explicit: Any | None = None,
+    *,
+    workspace_model: str | None = None,
+    user_model: str | None = None,
+) -> Any:
+    """Resolve the model id by precedence, highest first.
+
+    ``--model`` (``explicit``) > workspace config > user-global config >
+    ``$JUTUL_AGENT_MODEL`` (a dev/CI override) > ``DEFAULT_MODEL``.
+    """
+    return (
+        explicit or workspace_model or user_model or os.environ.get(MODEL_ENV_VAR) or DEFAULT_MODEL
+    )
 
 
 def register_provider_profiles() -> None:
-    """Register per-provider HarnessProfiles once per process."""
+    """Register the base HarnessProfile for every provider, once per process.
+
+    deepagents has no wildcard profile key, so the same profile is registered
+    under each provider in ``models.PROVIDERS``.
+    """
 
     global _provider_profiles_registered
     if _provider_profiles_registered:
@@ -119,7 +132,7 @@ def register_provider_profiles() -> None:
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
         system_prompt_suffix=_PROMPT_SUFFIX,
     )
-    for provider in _SUPPORTED_PROVIDERS:
+    for provider in PROVIDERS:
         register_harness_profile(provider, profile)
     _provider_profiles_registered = True
 

@@ -35,6 +35,27 @@ def test_load_and_write_workspace_config_round_trip(tmp_path: Path) -> None:
     assert loaded.simulator_config("jutuldarcy").source_path == (tmp_path / "src").resolve()
 
 
+def test_workspace_config_persists_model(tmp_path: Path) -> None:
+    write_workspace_config(
+        WorkspaceConfig(simulator="battmo", model="anthropic:claude-sonnet-4-6"),
+        workspace=tmp_path,
+    )
+    text = (tmp_path / ".jutul-agent" / "config.toml").read_text(encoding="utf-8")
+    # Top-level `model` key must precede the [workspace] table to be valid TOML.
+    assert text.index("model =") < text.index("[workspace]")
+
+    loaded = load_workspace_config(tmp_path)
+    assert loaded.model == "anthropic:claude-sonnet-4-6"
+    assert loaded.simulator == "battmo"
+
+
+def test_workspace_config_without_model_omits_key(tmp_path: Path) -> None:
+    write_workspace_config(WorkspaceConfig(simulator="battmo"), workspace=tmp_path)
+    text = (tmp_path / ".jutul-agent" / "config.toml").read_text(encoding="utf-8")
+    assert "model" not in text
+    assert load_workspace_config(tmp_path).model is None
+
+
 def test_auto_detect_from_deps(tmp_path: Path) -> None:
     (tmp_path / "Project.toml").write_text(
         '[deps]\nJutulDarcy = "uuid"\n',
