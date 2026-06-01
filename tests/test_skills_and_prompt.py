@@ -40,6 +40,8 @@ def test_assemble_session_prompt_includes_runtime_context(tmp_path: Path) -> Non
     assert "julia_eval" in prompt
     assert "write_file" in prompt
     assert "workspace" in prompt
+    # Source mounts are named by package and lead with the primary.
+    assert "/packages/TestSim/" in prompt
     # Retry guidance lives in HarnessProfile suffix, not the static prompt.
     assert "retry before responding" not in prompt
 

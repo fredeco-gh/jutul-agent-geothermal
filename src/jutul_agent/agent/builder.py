@@ -7,12 +7,16 @@ This module wires everything ``create_deep_agent`` needs in one place:
 - ``register_provider_profiles`` — provider-specific ``HarnessProfile``
   registration (disables the default general-purpose subagent, appends a
   short prompt suffix).
-- ``build_agent`` — the entry point used by the CLI/TUI.
+- ``build_agent`` — the entry point used by the CLI/TUI. Returns the agent
+  together with its live backend, so callers can mount extra folders
+  mid-session (``/add-dir``).
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +37,7 @@ from jutul_agent.agent.memory import (
     make_remember_tool,
     memory_backend_route,
 )
+from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.prompts import assemble_session_prompt
 from jutul_agent.agent.tools import (
     make_julia_eval_tool,
@@ -50,7 +55,23 @@ MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
 _SHARED_SKILLS_ROUTE = "/skills/shared/"
 _SIMULATOR_SKILLS_ROUTE = "/skills/simulator/"
 _SESSION_ROUTE = "/session/"
-_SIMULATOR_SOURCE_ROUTE = "/simulator/"
+_PACKAGES_ROUTE = "/packages/"
+
+
+@dataclass(frozen=True)
+class PackageSource:
+    """An installed Julia package's source dir, to mount under ``/packages/``.
+
+    ``name`` is the Julia package name (``JutulDarcy``, ``Fimbul``, ``Jutul``),
+    so the route is identical whether the package is a registry install or a
+    local ``Pkg.develop`` checkout. ``writable`` is set only for a developed
+    package the user owns; registry installs stay read-only.
+    """
+
+    name: str
+    path: Path
+    writable: bool = False
+
 
 # Appended to the base deepagents prompt closest to the conversation. Keep
 # provider-specific divergence here; the static prompt assembled in
@@ -61,14 +82,19 @@ _PROMPT_SUFFIX = (
     "state) and retry with a concrete fix — do not repeat the same failing call. "
     "Virtual file-tool paths (e.g. `/experiments/foo.csv`) are not valid in "
     "`julia_eval`, `julia_plot`, or `execute`; use workspace-relative paths "
-    "(`experiments/foo.csv`). The active simulator's installed source is mounted "
-    "read-only at `/simulator/` — `read_file`, `glob`, and `grep` it to study "
-    "examples (`/simulator/examples/`) and source (`/simulator/src/`) with the "
-    "same tools you use for workspace files. Use `julia_eval` `@doc` / `methods` / "
+    "(`experiments/foo.csv`). The installed source of the simulator and its key "
+    "Julia packages is mounted read-only under `/packages/<Package>/` (e.g. "
+    "`/packages/JutulDarcy/`) — `read_file`, `glob`, and `grep` it to study "
+    "examples (`/packages/<Package>/examples/`) and source "
+    "(`/packages/<Package>/src/`) with the same tools you use for workspace files. "
+    "Folders the user adds to the session "
+    "are mounted writable at `/dirs/<name>/` — read, grep, write, and edit them with "
+    "the file tools (in `julia_eval` / `execute` use their absolute on-disk paths, "
+    "not the `/dirs/` virtual path). Use `julia_eval` `@doc` / `methods` / "
     "`names` for exact signatures and docstrings. If a Julia package is missing, "
     "check what is already in the workspace env, use a stdlib alternative "
     "or install only when necessary. Prefer reading "
-    "`/simulator/`, probing the REPL, or reading skills over guessing. "
+    "`/packages/`, probing the REPL, or reading skills over guessing. "
     "Never invoke `julia` (or `julia --project ...`, `julia -e ...`) through "
     "`execute`; use `julia_eval` / `julia_plot` for all Julia code. `execute` "
     "is for non-Julia shell work only (grep, find, ls, git). "
@@ -114,8 +140,8 @@ def build_backend(
     workspace: Path | None = None,
     memory_dir: Path | None = None,
     session_dir: Path | None = None,
-    simulator_source: Path | None = None,
-    simulator_source_writable: bool = False,
+    package_sources: Sequence[PackageSource] | None = None,
+    mounted_dirs: Sequence[str | Path] | None = None,
 ) -> CompositeBackend:
     """Mount the workspace plus stable skill, memory, session, and source routes.
 
@@ -123,10 +149,10 @@ def build_backend(
     the current ``workspace_root()``). Skill markdown is mounted under
     ``/skills/shared/`` and ``/skills/simulator/``; the per-workspace
     memory dir at ``/memory/``; the live session state read-only at
-    ``/session/`` when ``session_dir`` is set. The active simulator's installed
-    package source is mounted at ``/simulator/`` when ``simulator_source`` is
-    given — read-only for registry installs, writable when the package is a
-    ``Pkg.develop`` checkout (``simulator_source_writable``).
+    ``/session/`` when ``session_dir`` is set. Each ``package_sources`` entry is
+    mounted at ``/packages/<name>/`` — read-only for registry installs, writable
+    for a ``Pkg.develop`` checkout the user owns. Any ``mounted_dirs`` are added
+    writable under ``/dirs/<name>/`` (see ``agent.mounts``).
     """
 
     routes: dict[str, Any] = {}
@@ -143,18 +169,26 @@ def build_backend(
         routes[route] = backend
     if session_dir is not None:
         routes[_SESSION_ROUTE] = FilesystemBackend(root_dir=session_dir, virtual_mode=True)
-    if simulator_source is not None and simulator_source.is_dir():
-        source_cls = FilesystemBackend if simulator_source_writable else ReadOnlyFilesystemBackend
-        routes[_SIMULATOR_SOURCE_ROUTE] = source_cls(root_dir=simulator_source, virtual_mode=True)
+    for source in package_sources or ():
+        if not source.path.is_dir():
+            continue
+        source_cls = FilesystemBackend if source.writable else ReadOnlyFilesystemBackend
+        routes[f"{_PACKAGES_ROUTE}{source.name}/"] = source_cls(
+            root_dir=source.path, virtual_mode=True
+        )
 
-    return CompositeBackend(
+    ws = workspace or workspace_root()
+    backend = CompositeBackend(
         default=LocalShellBackend(
-            root_dir=workspace or workspace_root(),
+            root_dir=ws,
             virtual_mode=True,
             inherit_env=True,
         ),
         routes=routes,
     )
+    for raw in mounted_dirs or ():
+        mount_dir(backend, raw, workspace=ws)
+    return backend
 
 
 def skill_sources(adapter: SimulatorAdapter) -> list[str | tuple[str, str]]:
@@ -174,9 +208,18 @@ def build_agent(
     model: Any | None = None,
     checkpointer: Any | None = None,
     approval_mode: ApprovalMode | str | None = None,
-    simulator_source: Path | None = None,
-    simulator_source_writable: bool = False,
-):
+    package_sources: Sequence[PackageSource] | None = None,
+    mounted_dirs: Sequence[str | Path] | None = None,
+) -> tuple[Any, CompositeBackend]:
+    """Build the session agent and return it with its live ``CompositeBackend``.
+
+    The backend is returned alongside the agent because it's the same object the
+    filesystem middleware uses: callers keep it to mount more folders mid-session
+    (the TUI ``/add-dir`` command), and a route added to it is visible to the
+    agent's next tool call. Callers that don't need it just ignore the second
+    element.
+    """
+
     register_provider_profiles()
 
     memory_dir = ensure_memory_dir(session.memory_dir(workspace_memory=workspace_memory_dir()))
@@ -184,8 +227,8 @@ def build_agent(
         session.simulator,
         memory_dir=memory_dir,
         session_dir=session.state_dir,
-        simulator_source=simulator_source,
-        simulator_source_writable=simulator_source_writable,
+        package_sources=package_sources,
+        mounted_dirs=mounted_dirs,
     )
 
     tools = [
@@ -201,7 +244,7 @@ def build_agent(
         else parse_approval_mode(approval_mode)
     )
     subagents = [factory(session) for factory in session.simulator.subagent_factories]
-    return create_deep_agent(
+    agent = create_deep_agent(
         model=resolve_model(model),
         backend=backend,
         tools=tools,
@@ -215,3 +258,4 @@ def build_agent(
         ],
         checkpointer=checkpointer,
     )
+    return agent, backend

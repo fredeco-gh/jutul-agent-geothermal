@@ -98,6 +98,30 @@ folder per simulator. If you point an existing workspace at a different
 simulator, jutul-agent rebuilds its env from the new simulator's template on
 the next run.
 
+### Add a folder to the workspace
+
+Sometimes the files you want the agent to use live outside the workspace — a
+shared dataset, a sibling repo, a folder of reference scripts. Mount one (or
+more) so the agent can read, grep, write, and edit it with the same file tools
+it uses for workspace files:
+
+```sh
+# at launch (repeatable)
+uv run jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
+```
+
+```text
+# or any time inside the TUI
+/add-dir ../shared-data        mount it now
+/add-dir                       list the folders mounted this session
+```
+
+Each added folder shows up in the agent's filesystem at `/dirs/<name>/`
+(named after the folder, disambiguated if two share a name). Mounts are
+*session-scoped* — they last until you exit and aren't written to
+`config.toml`. In `julia_eval`/`execute` the agent uses the folder's real
+absolute path; the `/dirs/` route is for the file tools.
+
 ### Supported simulators
 
 | `--sim`      | Package                                                      | Domain                                         |
@@ -187,6 +211,7 @@ Inside the TUI:
 |-------------------|-----------------------------------------------------|
 | `/transcript`     | Write the session transcript to disk (HTML).        |
 | `/transcript md`  | Same, as markdown.                                  |
+| `/add-dir <path>` | Mount an extra folder so the agent can read/edit it. |
 | `/copy`           | Copy the last assistant message to the clipboard.   |
 | `/clear`          | Clear the visible log and restore the welcome card. |
 | `/approval-mode`  | Set approval policy: `ask`, `workspace`, `auto`.    |

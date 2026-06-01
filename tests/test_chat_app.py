@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from langchain_core.messages import AIMessage, HumanMessage
 from textual.widgets import Footer
 
@@ -593,6 +595,61 @@ async def test_tui_multiline_submit_shows_user_message_immediately(session: Sess
         assert "line one" in user_blocks[0]._content
 
         await wait_until_ready(app)
+
+
+async def test_add_dir_command_mounts_folder(session: Session, tmp_path: Path) -> None:
+    from jutul_agent.agent.builder import build_backend
+    from jutul_agent.agent.mounts import MOUNTED_DIRS_ROOT
+
+    extra = tmp_path / "shared-data"
+    extra.mkdir()
+    backend = build_backend(session.simulator, workspace=tmp_path)
+    app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
+
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        await app._handle_command(f"/add-dir {extra}")
+        await pilot.pause()
+
+        assert f"{MOUNTED_DIRS_ROOT}shared-data/" in backend.routes
+        notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
+        assert any("shared-data" in block._content for block in notes)
+
+
+async def test_add_dir_command_reports_bad_path(session: Session, tmp_path: Path) -> None:
+    from jutul_agent.agent.builder import build_backend
+
+    backend = build_backend(session.simulator, workspace=tmp_path)
+    app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
+
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        await app._handle_command(f"/add-dir {tmp_path / 'does-not-exist'}")
+        await pilot.pause()
+
+        notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
+        assert any("could not add folder" in block._content for block in notes)
+
+
+async def test_add_dir_command_lists_when_no_arg(session: Session, tmp_path: Path) -> None:
+    from jutul_agent.agent.builder import build_backend
+    from jutul_agent.agent.mounts import mount_dir
+
+    extra = tmp_path / "alpha"
+    extra.mkdir()
+    backend = build_backend(session.simulator, workspace=tmp_path)
+    mount_dir(backend, extra, workspace=tmp_path)
+    app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
+
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        await app._handle_command("/add-dir")
+        await pilot.pause()
+
+        notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
+        assert any(
+            "Mounted folders" in block._content and "alpha" in block._content for block in notes
+        )
 
 
 async def test_message_block_streams_before_mount_completes() -> None:

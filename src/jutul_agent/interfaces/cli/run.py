@@ -60,6 +60,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the resolved workspace Julia project.",
     )
+    parser.add_argument(
+        "--add-dir",
+        type=Path,
+        action="append",
+        default=None,
+        metavar="DIR",
+        dest="add_dir",
+        help=(
+            "Mount an extra folder so the agent can read and edit it, alongside "
+            "the workspace. Repeatable. Also available at runtime via /add-dir."
+        ),
+    )
     add_workspace_flags(parser)
     parser.add_argument(
         "--ephemeral-memory",
@@ -327,26 +339,53 @@ def _ensure_simulator_installed(
         _warn_rebuild(pkg, sim_name, exc)
 
 
-async def _resolve_simulator_source(
-    adapter: Any, julia_project: Path, config: Any
-) -> tuple[Path | None, bool]:
-    """Resolve the simulator package's source dir for the ``/simulator/`` mount.
+async def _resolve_package_sources(adapter: Any, julia_project: Path, config: Any) -> list[Any]:
+    """Resolve the source dirs to mount under ``/packages/`` for this simulator.
 
-    Returns ``(source_dir, writable)``. ``writable`` is True only when the user
-    ``Pkg.develop``-ed the package (config ``source_path`` set) — then editing
-    the mounted source edits their own checkout; otherwise it's a registry
-    install and stays read-only. Resolution is a fast, no-compile Julia call run
-    off the event loop; ``None`` if the package isn't resolved.
+    Mounts every package in ``adapter.package_imports`` (the simulator plus the
+    Jutul-stack packages it builds on, e.g. JutulDarcy for Fimbul), so the agent
+    can read each one's examples and source. The primary package is writable
+    only when the user ``Pkg.develop``-ed it (config ``source_path`` set) — then
+    editing the mount edits their own checkout; everything else stays read-only.
+    Resolution is one fast, no-compile Julia call run off the event loop.
     """
 
-    from jutul_agent.simulators.env_setup import resolve_package_source
+    from jutul_agent.agent.builder import PackageSource
+    from jutul_agent.simulators.env_setup import resolve_package_sources
 
-    pkg = adapter.primary_package
-    if pkg not in adapter.package_imports:
-        return None, False
-    source = await asyncio.to_thread(resolve_package_source, julia_project, pkg)
-    writable = config.simulator_config(adapter.name).source_path is not None
-    return source, writable
+    sources = await asyncio.to_thread(
+        resolve_package_sources, julia_project, adapter.package_imports
+    )
+    primary_developed = config.simulator_config(adapter.name).source_path is not None
+    return [
+        PackageSource(
+            name=name,
+            path=path,
+            writable=primary_developed and name == adapter.primary_package,
+        )
+        for name, path in sources.items()
+    ]
+
+
+def _resolve_add_dirs(raw_dirs: Any, ws: Path) -> list[Path]:
+    """Resolve ``--add-dir`` paths, warning on (and skipping) bad ones.
+
+    One unreadable folder shouldn't abort startup, so invalid entries are
+    reported and dropped; the agent launches with whatever resolved cleanly.
+    """
+
+    from jutul_agent.agent.mounts import MountError, resolve_dir
+
+    resolved: list[Path] = []
+    for raw in raw_dirs or ():
+        try:
+            path = resolve_dir(raw, workspace=ws)
+        except MountError as exc:
+            print(f"warning: --add-dir {raw}: {exc}", file=sys.stderr)
+            continue
+        if path not in resolved:
+            resolved.append(path)
+    return resolved
 
 
 async def _run_with_backend(
@@ -361,6 +400,7 @@ async def _run_with_backend(
 
     from jutul_agent.agent.approval import parse_approval_mode
     from jutul_agent.agent.builder import build_agent, resolve_model
+    from jutul_agent.agent.mounts import mounted_dirs
     from jutul_agent.julia.backends.agentrepl import AgentREPLBackend
     from jutul_agent.session import Session
 
@@ -378,17 +418,26 @@ async def _run_with_backend(
             async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as checkpointer:
                 model_label = resolve_model(args.model)
                 approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
-                source, source_writable = await _resolve_simulator_source(
+                package_sources = await _resolve_package_sources(
                     adapter, repl_config.julia_project, config
                 )
-                agent = build_agent(
+                extra_dirs = _resolve_add_dirs(args.add_dir, repl_config.cwd)
+                agent, backend = build_agent(
                     session,
                     model=model_label,
                     checkpointer=checkpointer,
                     approval_mode=approval_mode,
-                    simulator_source=source,
-                    simulator_source_writable=source_writable,
+                    package_sources=package_sources,
+                    mounted_dirs=extra_dirs,
                 )
+                for src in package_sources:
+                    access = "writable" if src.writable else "read-only"
+                    print(
+                        f"Package source: /packages/{src.name}/ -> {src.path} ({access})",
+                        file=sys.stderr,
+                    )
+                for mount in mounted_dirs(backend):
+                    print(f"Added folder:  {mount.path} -> {mount.route}", file=sys.stderr)
                 if args.prompt:
                     return await _headless_turn(agent, session, args.prompt)
                 from jutul_agent.interfaces.tui import TUIApp
@@ -396,6 +445,7 @@ async def _run_with_backend(
                 await TUIApp(
                     agent=agent,
                     session=session,
+                    backend=backend,
                     model_label=model_label,
                     approval_mode=approval_mode,
                     warmup_task=warmup_task,

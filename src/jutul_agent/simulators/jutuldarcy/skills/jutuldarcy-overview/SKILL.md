@@ -27,13 +27,13 @@ five layers that you compose in order:
 ## Finding what you need
 
 Example layout and APIs change between versions — find them on disk rather
-than guessing. The installed source is mounted read-only at `/simulator/`;
+than guessing. The installed source is mounted read-only at `/packages/JutulDarcy/`;
 browse it with the file tools (see the `workspace-and-source` skill):
 
 ```text
-glob("/simulator/examples/**/*.jl")                 # discover layout
-grep("setup_well", path="/simulator/src")            # find an API
-read_file("/simulator/examples/introduction/wells_intro.jl")
+glob("/packages/JutulDarcy/examples/**/*.jl")                 # discover layout
+grep("setup_well", path="/packages/JutulDarcy/src")            # find an API
+read_file("/packages/JutulDarcy/examples/introduction/wells_intro.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc setup_reservoir_model")`.

@@ -21,7 +21,7 @@ def assemble_session_prompt(adapter: SimulatorAdapter) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
         "Primary Julia packages: " + ", ".join(adapter.package_imports) + ".",
-        _tool_guide(),
+        _tool_guide(adapter),
     ]
     hints = adapter.domain_hints.strip()
     if hints:
@@ -29,7 +29,24 @@ def assemble_session_prompt(adapter: SimulatorAdapter) -> str:
     return "\n\n".join(sections) + "\n"
 
 
-def _tool_guide() -> str:
+def _package_mounts(adapter: SimulatorAdapter) -> str:
+    """The ``/packages/<Package>/`` routes the agent can browse, named explicitly.
+
+    Lists every package in ``package_imports`` (when its source resolves it is
+    mounted read-only), leading with the primary so the agent knows where the
+    simulator's own examples live.
+    """
+
+    ordered = [adapter.primary_package, *adapter.package_imports]
+    seen: list[str] = []
+    for pkg in ordered:
+        if pkg in adapter.package_imports and pkg not in seen:
+            seen.append(pkg)
+    return ", ".join(f"/packages/{pkg}/" for pkg in seen)
+
+
+def _tool_guide(adapter: SimulatorAdapter) -> str:
+    primary = adapter.primary_package
     return (
         "You operate in the user's *workspace* (their current working "
         "directory). Two tool families:\n"
@@ -44,11 +61,12 @@ def _tool_guide() -> str:
         "  - The stock file/shell tools (`read_file`, `write_file`, "
         "`edit_file`, `glob`, `grep`, `execute`) operate in the workspace. Use "
         "them to create real implementation files the user can inspect and "
-        "edit. The active simulator's installed source is mounted read-only at "
-        "`/simulator/` — `read_file`, `glob`, and `grep` it to study examples "
-        "(`/simulator/examples/`), documentation (`/simulator/docs/`), and "
-        "source (`/simulator/src/`) with the same tools "
-        "(see the `workspace-and-source` skill).\n"
+        "edit. The simulator and the Julia packages it builds on are mounted "
+        f"read-only under `/packages/<Package>/` ({_package_mounts(adapter)}) — "
+        f"`read_file`, `glob`, and `grep` them to study examples "
+        f"(`/packages/{primary}/examples/`), documentation "
+        f"(`/packages/{primary}/docs/`), and source (`/packages/{primary}/src/`) "
+        "with the same tools (see the `workspace-and-source` skill).\n"
         "Two ways to run Julia, one shared REPL:\n"
         '    1. Direct — `julia_eval("<code>")` for probes, quick computations, '
         "and building/solving inline.\n"

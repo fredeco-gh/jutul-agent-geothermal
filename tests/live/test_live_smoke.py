@@ -53,7 +53,7 @@ async def _attempt(tmp_path: Path) -> None:
     async with AgentREPLBackend(config) as julia:
         session = Session.create(julia=julia, state_root=tmp_path / "state", simulator=JUTULDARCY)
         try:
-            agent = build_agent(session, model=model)
+            agent, _ = build_agent(session, model=model)
             runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
             prompt = (
                 "Read the workspace file `/data.jl` with read_file, then use julia_eval "

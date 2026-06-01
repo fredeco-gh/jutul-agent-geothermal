@@ -14,6 +14,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
@@ -74,21 +75,28 @@ def project_has_package(julia_project: Path, package: str) -> bool:
     return package in (data.get("deps") or {})
 
 
-def resolve_package_source(julia_project: Path, package: str) -> Path | None:
-    """On-disk source directory (``pkgdir``) of ``package`` in ``julia_project``.
+def resolve_package_sources(julia_project: Path, packages: Sequence[str]) -> dict[str, Path]:
+    """On-disk source dirs (``pkgdir``) of ``packages`` in ``julia_project``.
 
-    Uses ``Base.find_package``, which resolves the package's entry file from the
-    active project *without loading or compiling it* — fast (~Julia startup,
-    no ``using``) and side-effect-free. Returns the package root (parent of
-    ``src/``), or ``None`` if Julia is missing, the package isn't resolved, or
-    the path doesn't exist. Best-effort: used only to mount ``/simulator/``.
+    Resolves every package in a single Julia subprocess (one startup, no
+    per-package cost). Uses ``Base.find_package``, which resolves a package's
+    entry file from the active project without loading or compiling it. Returns a
+    ``{package: package_root}`` map containing only the packages that resolved to
+    an existing directory; missing Julia, an unresolved package, or a vanished path
+    simply drops that entry. Best-effort: used only to mount installed source
+    read-only under ``/packages/``.
     """
 
-    if shutil.which("julia") is None:
-        return None
+    if not packages or shutil.which("julia") is None:
+        return {}
+    names = "[" + ", ".join(f'"{name}"' for name in packages) + "]"
+    # Print one "name\troot" line per resolvable package; skip the rest.
     code = (
-        f'let p = Base.find_package("{package}"); '
-        'print(p === nothing ? "" : dirname(dirname(p))) end'
+        f"for name in {names}; "
+        "p = Base.find_package(name); "
+        "p === nothing && continue; "
+        'println(name, "\\t", dirname(dirname(p))); '
+        "end"
     )
     try:
         result = subprocess.run(
@@ -99,14 +107,20 @@ def resolve_package_source(julia_project: Path, package: str) -> Path | None:
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return {}
     if result.returncode != 0:
-        return None
-    path = result.stdout.strip()
-    if not path:
-        return None
-    candidate = Path(path)
-    return candidate if candidate.is_dir() else None
+        return {}
+
+    sources: dict[str, Path] = {}
+    for line in result.stdout.splitlines():
+        name, _, path = line.partition("\t")
+        name, path = name.strip(), path.strip()
+        if not (name and path):
+            continue
+        candidate = Path(path)
+        if candidate.is_dir():
+            sources[name] = candidate
+    return sources
 
 
 _PLOT_WARMUP = (
