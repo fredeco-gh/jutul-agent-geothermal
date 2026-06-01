@@ -9,6 +9,7 @@ Slash commands typed into the input box:
 - ``/transcript`` — render the current session's trace to HTML on disk.
 - ``/transcript md`` — render the transcript as markdown instead.
 - ``/add-dir <path>`` — mount an extra folder so the agent can read/edit it.
+- ``/model [provider:model]`` — open the model selector, or switch directly.
 - ``/clear`` — clear the visible log and restore the welcome card.
 - ``/approve`` — approve the currently pending tool actions.
 - ``/reject [reason]`` — reject the currently pending tool actions.
@@ -69,6 +70,12 @@ from jutul_agent.interfaces.tui.commands import (
     active_commands,
     matching_specs,
 )
+from jutul_agent.interfaces.tui.model_menu import (
+    ApiKeyModal,
+    ModelChoice,
+    ModelMenu,
+    OllamaPullModal,
+)
 from jutul_agent.interfaces.tui.prompt import PromptTextArea
 from jutul_agent.interfaces.tui.widgets import (
     ApprovalBlock,
@@ -80,12 +87,15 @@ from jutul_agent.interfaces.tui.widgets import (
 )
 from jutul_agent.open_file import open_path
 from jutul_agent.paths import workspace_root
+from jutul_agent.recent_models import record_recent_model
 from jutul_agent.session import Session
 from jutul_agent.trace import TraceLog
 from jutul_agent.trace.messages import content_to_str, reasoning_to_str
 from jutul_agent.transcript import render_html, render_markdown
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual.timer import Timer
 
 _RESIZE_DEBOUNCE_SECONDS = 0.05
@@ -216,12 +226,14 @@ class TUIApp(App[None]):
         model_label: str | None = None,
         approval_mode: ApprovalMode | str | None = None,
         warmup_task: Any | None = None,
+        agent_factory: Callable[[str, Any], tuple[Any, Any]] | None = None,
     ) -> None:
         super().__init__()
         self._agent = agent
         self._session = session
         self._backend = backend
         self._model_label = model_label
+        self._agent_factory = agent_factory
         self._warmup_task = warmup_task
         self._warming = warmup_task is not None and not warmup_task.done()
         self._approval_mode = (
@@ -262,8 +274,6 @@ class TUIApp(App[None]):
             yield WelcomeBlock(
                 simulator_label=self._session.simulator.display_name,
                 session_id=self._session.session_id,
-                model_label=self._model_label,
-                approval_mode_label=self._approval_mode.display_label(),
             )
         with Vertical(id="input-panel"):
             yield ApprovalMenu(id="approval-menu")
@@ -277,11 +287,7 @@ class TUIApp(App[None]):
 
     def on_mount(self) -> None:
         self.title = "jutul-agent"
-        parts = [self._session.simulator.display_name]
-        if self._model_label:
-            parts.append(self._model_label)
-        parts.append(self._session.session_id[:8])
-        self.sub_title = " · ".join(parts)
+        self._refresh_subtitle()
         self._log = self.query_one("#log", VerticalScroll)
         self._prompt = self.query_one("#prompt", PromptTextArea)
         self._approval_menu = self.query_one("#approval-menu", ApprovalMenu)
@@ -289,6 +295,8 @@ class TUIApp(App[None]):
         self._set_status("ready")
         self._prompt.focus()
         self._refresh_prompt_guide()
+        if self._model_label:
+            record_recent_model(self._model_label)
         if self._warming:
             self.run_worker(self._watch_warmup(), name="warmup-watch")
 
@@ -573,6 +581,10 @@ class TUIApp(App[None]):
             await self._handle_add_dir(tail)
             return
 
+        if head == "/model":
+            await self._handle_model(tail)
+            return
+
         if head == "/clear":
             await self._clear_visible_log()
             return
@@ -680,6 +692,153 @@ class TUIApp(App[None]):
             f"write, and edit it with the file tools; in Julia or shell use the "
             f"absolute path `{mount.path}`."
         )
+
+    async def _handle_model(self, raw: str) -> None:
+        """Open the selector, or switch directly to a given ``provider:model``."""
+        target = raw.strip().strip("\"'")
+        if not target:
+            self.push_screen(ModelMenu(current=self._model_label), self._after_model_menu)
+            return
+        await self._switch_model(target)
+
+    def _after_model_menu(self, choice: ModelChoice | None) -> None:
+        if choice is None:
+            return
+        model_id, scope = choice
+        self.run_worker(self._switch_model(model_id, scope=scope), name="model-switch")
+
+    async def _switch_model(self, model_id: str, *, scope: str = "workspace") -> None:
+        """Switch to ``model_id``, prompting for a missing provider key first.
+
+        Refused while a turn is running or an approval is pending. Local models
+        go through ``_prepare_local_model`` instead of the key prompt.
+        """
+        if self._agent_factory is None:
+            await self._note("switching models isn't available in this session.")
+            return
+        if self._busy or self._pending_interrupts:
+            await self._note("finish or cancel the current turn before switching models.")
+            return
+        if model_id == self._model_label:
+            await self._note(f"already using `{model_id}`.")
+            return
+
+        from jutul_agent.agent.models import is_local
+
+        if is_local(model_id):
+            await self._prepare_local_model(model_id, scope)
+            return
+
+        from jutul_agent.credentials import missing_credential
+
+        env_var = missing_credential(model_id)
+        if env_var is not None:
+            self._prompt_api_key(model_id, scope, env_var)
+            return
+        await self._apply_model(model_id, scope)
+
+    async def _prepare_local_model(self, model_id: str, scope: str) -> None:
+        """Check a local (Ollama) model is reachable and pulled, then switch.
+
+        Reports if the server is down; pulls the model first if it's missing.
+        """
+        from jutul_agent import ollama_client
+
+        name = ollama_client.model_name(model_id)
+        if not await ollama_client.is_reachable():
+            await self._note(
+                f"Ollama isn't reachable at {ollama_client.host()}. Start it with "
+                "`ollama serve` (or install it from https://ollama.com), then try again."
+            )
+            return
+        if await ollama_client.is_installed(name):
+            await self._apply_model(model_id, scope)
+            return
+
+        def _after_pull(ok: bool | None) -> None:
+            if ok:
+                self.run_worker(self._apply_model(model_id, scope), name="model-switch")
+            else:
+                self.run_worker(
+                    self._note(f"`{name}` was not pulled; switch cancelled."),
+                    name="model-note",
+                )
+
+        self.push_screen(OllamaPullModal(model_name=name), _after_pull)
+
+    def _prompt_api_key(self, model_id: str, scope: str, env_var: str) -> None:
+        """Collect the provider key in a modal, store it, then resume the switch."""
+        from jutul_agent.agent.models import provider_info
+
+        info = provider_info(model_id)
+        label = info.label if info else model_id
+
+        def _on_key(key: str | None) -> None:
+            if not key:
+                self.run_worker(
+                    self._note(f"`{model_id}` needs {env_var}; switch cancelled."),
+                    name="model-note",
+                )
+                return
+            from jutul_agent.credentials import store_credential
+
+            store_credential(env_var, key)
+            self.run_worker(self._apply_model(model_id, scope), name="model-switch")
+
+        self.push_screen(ApiKeyModal(env_var=env_var, provider_label=label), _on_key)
+
+    async def _apply_model(self, model_id: str, scope: str) -> None:
+        """Rebuild the agent on the new model and persist the choice.
+
+        The rebuilt agent shares the session's checkpointer and thread id, so
+        the conversation continues; ``/add-dir`` mounts are re-applied.
+        """
+        dirs = [mount.path for mount in mounted_dirs(self._backend)] if self._backend else []
+        try:
+            agent, backend = self._agent_factory(model_id, dirs)
+        except Exception as exc:
+            await self._note(f"could not switch to `{model_id}`: {exc}")
+            return
+
+        self._agent = agent
+        self._backend = backend
+        self._model_label = model_id
+        self._turn_runner = TurnRunner(
+            agent, thread_id=self._session.session_id, trace=self._session.trace
+        )
+        self.query_one("#status", StatusBar).set_model(model_id)
+        self._refresh_subtitle()
+        record_recent_model(model_id)
+        where = self._persist_model(model_id, scope)
+        await self._note(f"model changed to `{model_id}` (saved to {where}).")
+
+    def _persist_model(self, model_id: str, scope: str) -> str:
+        """Save the model to the workspace or user-global config.
+
+        Returns where it was saved, for the confirmation note.
+        """
+        from dataclasses import replace
+
+        try:
+            if scope == "global":
+                from jutul_agent.user_config import load_user_config, write_user_config
+
+                write_user_config(replace(load_user_config(), model=model_id))
+                return "user config"
+            ws = workspace_root()
+            from jutul_agent.workspace import load_workspace_config, write_workspace_config
+
+            write_workspace_config(replace(load_workspace_config(ws), model=model_id), workspace=ws)
+            return "this workspace"
+        except OSError:
+            return "this session only (could not write config)"
+
+    def _refresh_subtitle(self) -> None:
+        parts = [self._session.simulator.display_name]
+        if self._model_label:
+            parts.append(self._model_label)
+        parts.append(self._session.session_id[:8])
+        self.sub_title = " · ".join(parts)
 
     async def _run_turn(self, prompt: str) -> None:
         self._set_status("thinking…")
@@ -1131,8 +1290,6 @@ class TUIApp(App[None]):
             WelcomeBlock(
                 simulator_label=self._session.simulator.display_name,
                 session_id=self._session.session_id,
-                model_label=self._model_label,
-                approval_mode_label=self._approval_mode.display_label(),
             )
         )
         self._schedule_scroll_end()

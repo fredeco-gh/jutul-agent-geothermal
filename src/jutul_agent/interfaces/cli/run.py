@@ -50,8 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default=None,
         help=(
-            f"LLM identifier (provider:model). Precedence: --model > "
-            f"${MODEL_ENV_VAR} > {DEFAULT_MODEL}."
+            "LLM identifier (provider:model) for this run. Precedence: --model > "
+            f"workspace config > user config > ${MODEL_ENV_VAR} > {DEFAULT_MODEL}."
         ),
     )
     parser.add_argument(
@@ -119,7 +119,14 @@ def dispatch(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    return asyncio.run(_run_session(args, adapter, config))
+    try:
+        return asyncio.run(_run_session(args, adapter, config))
+    except KeyboardInterrupt:
+        # Ctrl+C during the synchronous startup (Julia kernel, env bootstrap,
+        # warm-up) — before the TUI takes over input. Exit cleanly instead of
+        # dumping a traceback.
+        print("\nStartup interrupted.", file=sys.stderr)
+        return 130
 
 
 async def _run_session(
@@ -541,6 +548,7 @@ async def _run_with_backend(
     from jutul_agent.agent.render_profile import can_open_windows
     from jutul_agent.juliakernel import JuliaKernel
     from jutul_agent.session import Session
+    from jutul_agent.user_config import load_user_config
 
     # A live window is shown only for an interactive session with a display; a
     # one-shot `--prompt` run and any headless box render offscreen to a PNG.
@@ -559,20 +567,32 @@ async def _run_with_backend(
         try:
             ckpt_path = session.state_dir / "checkpoints.sqlite"
             async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as checkpointer:
-                model_label = resolve_model(args.model)
+                user_config = load_user_config()
+                model_label = resolve_model(
+                    args.model,
+                    workspace_model=config.model,
+                    user_model=user_config.model,
+                )
                 approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
                 package_sources = await _resolve_package_sources(
                     adapter, kernel_config.julia_project, config
                 )
                 extra_dirs = _resolve_add_dirs(args.add_dir, kernel_config.cwd)
-                agent, backend = build_agent(
-                    session,
-                    model=model_label,
-                    checkpointer=checkpointer,
-                    approval_mode=approval_mode,
-                    package_sources=package_sources,
-                    mounted_dirs=extra_dirs,
-                )
+
+                def build(model_id: str, dirs: Any) -> Any:
+                    # Rebuilds with the same checkpointer/session so the TUI can
+                    # switch models without losing the conversation; ``dirs`` keeps
+                    # any /add-dir mounts across the rebuild.
+                    return build_agent(
+                        session,
+                        model=model_id,
+                        checkpointer=checkpointer,
+                        approval_mode=approval_mode,
+                        package_sources=package_sources,
+                        mounted_dirs=dirs,
+                    )
+
+                agent, backend = build(model_label, extra_dirs)
                 if package_sources:
                     writable = [src.name for src in package_sources if src.writable]
                     summary = f"Packages: {len(package_sources)} mounted under /packages/"
@@ -592,6 +612,7 @@ async def _run_with_backend(
                     model_label=model_label,
                     approval_mode=approval_mode,
                     warmup_task=warmup_task,
+                    agent_factory=build,
                 ).run_async()
         finally:
             if warmup_task is not None and not warmup_task.done():
