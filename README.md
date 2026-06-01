@@ -58,13 +58,11 @@ uv sync
 
 ### 4. Add a provider API key
 
-```sh
-cp .env.example .env            # PowerShell: Copy-Item .env.example .env
-```
-
-Then edit `.env` — set `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`. The
-default model is `openai:gpt-5.4-mini`; override with `JUTUL_AGENT_MODEL`
-if needed.
+When a model needs a key that isn't set, jutul-agent prompts you for it (at
+`init`, or when you pick a model in the selector) and saves it for future runs.
+To set one up front instead, put it in your shell environment or a `.env`
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY`; see `.env.example`).
+Local models via [Ollama](https://ollama.com) need no key. See [Models](#models).
 
 ## Use it in any folder
 
@@ -171,7 +169,7 @@ uv run jutul-agent doctor
 It checks, with a one-line fix for each problem:
 
 - `julia` is on PATH and is **1.10+**
-- a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
+- the active model's provider key is set (or, for a local model, Ollama is running)
 - which Julia project this workspace resolves to (see the gotcha below)
 - the simulator's package is actually resolved in the env's `Manifest.toml`
   (catches a `Project.toml` that lists it but was never instantiated)
@@ -213,6 +211,7 @@ Inside the TUI:
 | `/transcript`     | Write the session transcript to disk (HTML).        |
 | `/transcript md`  | Same, as markdown.                                  |
 | `/add-dir <path>` | Mount an extra folder so the agent can read/edit it. |
+| `/model`          | Open the model selector (or `/model <provider:model>`). |
 | `/copy`           | Copy the last assistant message to the clipboard.   |
 | `/clear`          | Clear the visible log and restore the welcome card. |
 | `/approval-mode`  | Set approval policy: `ask`, `workspace`, `auto`.    |
@@ -264,22 +263,42 @@ Transcripts contain user prompts, model responses, tool calls with
 arguments, and tool outputs in chronological order — useful for sharing
 reproducible cases or reviewing what the agent actually did.
 
-## Model
+## Models
 
-Any `provider:model` supported by LangChain's `init_chat_model`:
+Type `/model` to open the selector. It lists a set of models (OpenAI,
+Anthropic, Google, and local Ollama models) and lets you type any other
+`provider:model` that LangChain's `init_chat_model` supports. You can switch
+mid-session; the conversation carries over. Press Enter to save the choice for
+this workspace, or Ctrl+A to set it as the default for every workspace.
+
+If the model's provider needs an API key that isn't set, the selector prompts
+you for it and saves it for future runs.
+
+```
+/model                                  open the selector
+/model anthropic:claude-sonnet-4-6      switch directly
+```
+
+You can also set the model for one run from the command line:
 
 ```sh
 uv run jutul-agent --sim jutuldarcy --model anthropic:claude-sonnet-4-6
 ```
 
-Persist via environment variable:
+### Local models (Ollama)
 
-```sh
-export JUTUL_AGENT_MODEL=anthropic:claude-sonnet-4-6        # bash / zsh
-$Env:JUTUL_AGENT_MODEL = "anthropic:claude-sonnet-4-6"      # PowerShell
-```
+Run models locally through [Ollama](https://ollama.com) — no API key needed.
+Install Ollama and start it (`ollama serve`), then pick an `ollama:` model in
+the selector. If the model isn't pulled yet, jutul-agent pulls it for you;
+or pull it yourself first with `ollama pull <model>`. Local models are
+convenient but generally weaker at tool use than the hosted ones.
 
-…or set `JUTUL_AGENT_MODEL` in your `.env`. Default: `openai:gpt-5.4-mini`.
+### Other providers
+
+Models from providers beyond the bundled ones (OpenAI, Anthropic, Google,
+Ollama) work once you install that provider's LangChain package — for example
+`uv add langchain-openrouter` — then enter its `provider:model` in the
+selector. jutul-agent tells you the exact package to install if it's missing.
 
 ## Layout
 
