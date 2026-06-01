@@ -31,12 +31,13 @@ extend. Do not dump a full script into the REPL and hope.
 - `methods(f)` - all method signatures.
 - `methodswith(T)` - methods that dispatch on `T`.
 - `fieldnames(typeof(x))` - fields of a value.
-- `pkgdir(Module)` - package path on disk (also mounted at `/simulator/`).
+- `pkgdir(Module)` - package path on disk (each package is also mounted at
+  `/packages/<Package>/`).
 
 The installed package is the source of truth. If your training prior says the
 API has a function but `methods` finds nothing, trust `methods`. To read
-examples or source, browse the read-only `/simulator/` mount with the file
-tools (`glob`/`grep`/`read_file`).
+examples or source, browse the read-only `/packages/<Package>/` mounts with the
+file tools (`glob`/`grep`/`read_file`).
 
 ## Code in your reply
 

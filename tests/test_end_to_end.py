@@ -40,7 +40,7 @@ async def test_agent_loop_drives_julia_eval(tmp_path: Path) -> None:
         ]
     )
 
-    agent = build_agent(session, model=model)
+    agent, _ = build_agent(session, model=model)
     result = await _run_turn(agent, session, "Compute 2 + 2 in Julia.")
 
     final_messages = result.messages
@@ -73,7 +73,7 @@ async def test_execute_tool_requires_approval(tmp_path: Path) -> None:
         ]
     )
 
-    agent = build_agent(
+    agent, _ = build_agent(
         session,
         model=model,
         checkpointer=MemorySaver(),
@@ -120,7 +120,7 @@ async def test_write_file_requires_approval(tmp_path: Path) -> None:
         ]
     )
 
-    agent = build_agent(
+    agent, _ = build_agent(
         session,
         model=model,
         checkpointer=MemorySaver(),
@@ -168,7 +168,7 @@ async def test_edit_file_requires_approval(tmp_path: Path) -> None:
         ]
     )
 
-    agent = build_agent(
+    agent, _ = build_agent(
         session,
         model=model,
         checkpointer=MemorySaver(),

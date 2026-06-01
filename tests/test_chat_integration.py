@@ -35,7 +35,7 @@ async def test_multi_tool_turn_renders_full_block_sequence(
         ]
     )
 
-    agent = build_agent(session, model=model)
+    agent, _ = build_agent(session, model=model)
     app = TUIApp(agent=agent, session=session, model_label="fake:script")
 
     async with app.run_test() as pilot:
@@ -76,7 +76,7 @@ async def test_status_revert_to_ready_after_turn(
     session, _ = session_with_pkg
 
     model = make_scripted_model([scripted_final("hello back")])
-    agent = build_agent(session, model=model)
+    agent, _ = build_agent(session, model=model)
     app = TUIApp(agent=agent, session=session)
 
     async with app.run_test() as pilot:

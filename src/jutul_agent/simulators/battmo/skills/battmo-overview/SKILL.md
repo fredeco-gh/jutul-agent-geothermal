@@ -32,13 +32,13 @@ A simulation is four parts you compose in order:
 
 ## Finding what you need
 
-BattMo's source is mounted read-only at `/simulator/` — browse it with the
+BattMo's source is mounted read-only at `/packages/BattMo/` — browse it with the
 file tools (see the `workspace-and-source` skill):
 
 ```text
-glob("/simulator/examples/beginner_tutorials/*.jl")    # best starting point
-grep("load_cell_parameters", path="/simulator/src")     # locate APIs and uses
-read_file("/simulator/examples/beginner_tutorials/2_run_a_simulation.jl")
+glob("/packages/BattMo/examples/beginner_tutorials/*.jl")    # best starting point
+grep("load_cell_parameters", path="/packages/BattMo/src")     # locate APIs and uses
+read_file("/packages/BattMo/examples/beginner_tutorials/2_run_a_simulation.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc LithiumIonBattery")`.

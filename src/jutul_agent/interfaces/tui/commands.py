@@ -33,6 +33,11 @@ BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/copy", "copy the last assistant message to the clipboard"),
     SlashCommandSpec("/clear", "clear the visible log"),
     SlashCommandSpec(
+        "/add-dir",
+        "mount an extra folder so the agent can read and edit it",
+        "<path>",
+    ),
+    SlashCommandSpec(
         "/approval-mode",
         "set approval policy for this session",
         "[ask|workspace|auto]",

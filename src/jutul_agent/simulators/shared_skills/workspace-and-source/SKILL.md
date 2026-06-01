@@ -56,23 +56,30 @@ relative path like `"experiments"`, not `"/workspace"`.
   REPL keeps state across calls, so you can iterate on the file and
   re-`include` it without paying the package-load cost again.
 
-## Reading installed simulator source and examples
+## Reading installed package source and examples
 
-The active simulator's package source is mounted **read-only at
-`/simulator/`** — the same place `pkgdir(<primary package>)` points. Browse
-it with the ordinary file tools, exactly like workspace files:
+The simulator's source — and the Jutul-stack packages it builds on — is
+mounted **read-only under `/packages/<Package>/`**, one route per package,
+each pointing where `pkgdir(<Package>)` does. The route is named by the Julia
+package (e.g. `/packages/Sim1/`, `/packages/Sim2/`, `/packages/Jutul/`),
+so it's the same whether the package is a registry install or your own
+`Pkg.develop` checkout. `ls("/packages/")` lists what's mounted this session.
+Browse them with the ordinary file tools, exactly like workspace files:
 
 ```text
-glob("/simulator/examples/**/*.jl")        # discover examples
-read_file("/simulator/examples/.../2_run_a_simulation.jl")
-grep("load_cell_parameters", path="/simulator/src")   # find API uses
+glob("/packages/Sim/examples/**/*.jl")        # discover examples
+read_file("/packages/Sim/examples/.../wells_intro.jl")
+grep("setup_well", path="/packages/Sim/src")  # find API uses
 ```
 
-Use this to learn the real API from worked examples and from the source.
-It is **reference only** — don't try to `edit_file` under `/simulator/`
-(it's a registry install shared across projects). To change the package
-itself, `Pkg.develop` it (see below); then `/simulator/` becomes your
-writable checkout.
+A simulator built on another package mounts both,
+so you can read the base package's examples for primitives the simulator reuses.
+
+Use these to learn the real API from worked examples and from the source.
+They are **reference only** — don't try to `edit_file` under `/packages/`
+(registry installs are shared across projects). To change a package itself,
+`Pkg.develop` it (see below); then its `/packages/<Package>/` route becomes
+your writable checkout.
 
 For exact signatures and docstrings, stay in the REPL — these read the
 installed version directly and are always current:
@@ -84,14 +91,14 @@ methods(solve)                 # available methods
 names(SimulatorPackage)        # exported names of the active simulator's package
 ```
 
-Rule of thumb: **`/simulator/` for examples and source you want to read or
-grep; `@doc` / `methods` / `names` in `julia_eval` for precise API.** You
-should never need to pass an absolute host path to a file tool.
+Rule of thumb: **`/packages/<Package>/` for examples and source you want to
+read or grep; `@doc` / `methods` / `names` in `julia_eval` for precise API.**
+You should never need to pass an absolute host path to a file tool.
 
-If `.jutul-agent/config.toml` sets a `source_path` for the simulator, the
-package is `Pkg.develop`-ed there, so `/simulator/` is that checkout and is
-**writable** — you can `edit_file` it to modify the library, then
-re-`include` to test.
+If `.jutul-agent/config.toml` sets a `source_path` for the simulator, its
+primary package is `Pkg.develop`-ed there, so that package's
+`/packages/<Package>/` route is the checkout and is **writable** — you can
+`edit_file` it to modify the library, then re-`include` to test.
 
 ## Workspace already has its own Project.toml?
 

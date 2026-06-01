@@ -8,6 +8,7 @@ Slash commands typed into the input box:
 
 - ``/transcript`` — render the current session's trace to HTML on disk.
 - ``/transcript md`` — render the transcript as markdown instead.
+- ``/add-dir <path>`` — mount an extra folder so the agent can read/edit it.
 - ``/clear`` — clear the visible log and restore the welcome card.
 - ``/approve`` — approve the currently pending tool actions.
 - ``/reject [reason]`` — reject the currently pending tool actions.
@@ -49,6 +50,7 @@ from jutul_agent.agent.approval import (
     parse_approval_mode,
     should_auto_approve_interrupt,
 )
+from jutul_agent.agent.mounts import MountError, mount_dir, mounted_dirs
 from jutul_agent.agent.turns import (
     TurnInterrupt,
     TurnReasoningDelta,
@@ -249,6 +251,7 @@ class TUIApp(App[None]):
         *,
         agent: Any,
         session: Session,
+        backend: Any | None = None,
         model_label: str | None = None,
         approval_mode: ApprovalMode | str | None = None,
         warmup_task: Any | None = None,
@@ -256,6 +259,7 @@ class TUIApp(App[None]):
         super().__init__()
         self._agent = agent
         self._session = session
+        self._backend = backend
         self._model_label = model_label
         self._warmup_task = warmup_task
         self._warming = warmup_task is not None and not warmup_task.done()
@@ -600,6 +604,10 @@ class TUIApp(App[None]):
             await self._copy_last_assistant_message()
             return
 
+        if head == "/add-dir":
+            await self._handle_add_dir(tail)
+            return
+
         if head == "/clear":
             await self._clear_visible_log()
             return
@@ -671,6 +679,42 @@ class TUIApp(App[None]):
             return
         self.copy_to_clipboard(assistant_blocks[-1].content_text)
         await self._note("copied the last assistant message to the clipboard")
+
+    async def _handle_add_dir(self, raw: str) -> None:
+        """Mount a folder into the agent filesystem, or list mounted folders.
+
+        With no argument, lists the folders already mounted this session; with a
+        path, mounts it writable under ``/dirs/<name>/`` so the file tools can
+        reach it. The route is live for the agent's next tool call.
+        """
+        if self._backend is None:
+            await self._note("adding folders isn't available in this session.")
+            return
+
+        path = raw.strip().strip("\"'")
+        if not path:
+            mounts = mounted_dirs(self._backend)
+            if mounts:
+                lines = ["Mounted folders:"]
+                lines += [f"  `{mount.route}` -> {mount.path}" for mount in mounts]
+                await self._note("\n".join(lines))
+            else:
+                await self._note(
+                    "usage: /add-dir <path> — mount a folder so the agent can read and edit it"
+                )
+            return
+
+        try:
+            mount = mount_dir(self._backend, path, workspace=workspace_root())
+        except MountError as exc:
+            await self._note(f"could not add folder: {exc}")
+            return
+
+        await self._note(
+            f"Mounted `{mount.path}` at `{mount.route}`. The agent can read, grep, "
+            f"write, and edit it with the file tools; in Julia or shell use the "
+            f"absolute path `{mount.path}`."
+        )
 
     async def _run_turn(self, prompt: str) -> None:
         self._set_status("thinking…")

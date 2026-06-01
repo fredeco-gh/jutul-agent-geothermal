@@ -46,16 +46,16 @@ hand them to `setup_mocca_case` directly — see
 
 ## Finding what you need
 
-Mocca's source is mounted read-only at `/simulator/`; browse it with the
+Mocca's source is mounted read-only at `/packages/Mocca/`; browse it with the
 file tools:
 
 ```text
-glob("/simulator/examples/*.jl")     # dcb_haghpanah, cyclic_vsa_haghpanah, custom_setup, ...
-grep("function setup_mocca_case", path="/simulator/src")
-read_file("/simulator/examples/dcb_haghpanah_2013_co2_n2.jl")   # canonical starting point
+glob("/packages/Mocca/examples/*.jl")     # dcb_haghpanah, cyclic_vsa_haghpanah, custom_setup, ...
+grep("function setup_mocca_case", path="/packages/Mocca/src")
+read_file("/packages/Mocca/examples/dcb_haghpanah_2013_co2_n2.jl")   # canonical starting point
 ```
 
-The reference JSON inputs live *beside* the package (not under `/simulator/`)
+The reference JSON inputs live *beside* the package (not under `/packages/Mocca/`)
 at `joinpath(pkgdir(Mocca), "..", "models", "json")` — get that path in
 `julia_eval` and read the files from the REPL.
 

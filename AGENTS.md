@@ -63,7 +63,7 @@ and check on staged `.py` files. To verify the whole tree like CI:
 - `src/jutul_agent/agent/builder.py` — deepagents wiring: composite backend,
   HarnessProfile registration, `build_agent` entry point. Custom tools sit
   alongside (`tools.py`, `julia_plot.py` + `julia_plot.jl`, `memory.py`,
-  `approval.py`, `turns.py`).
+  `approval.py`, `turns.py`, `mounts.py` — the `/add-dir` route mounting).
 - `src/jutul_agent/simulators/` — adapter dataclass, registry, env bootstrap,
   shared skills, and one folder per simulator (see below).
 - `src/jutul_agent/julia/` — `JuliaSession` Protocol in `session.py`; each

@@ -78,6 +78,6 @@ For a worked end-to-end version, locate and read the wells intro from the
 mounted source:
 
 ```text
-glob("/simulator/examples/**/wells_intro*.jl")
-read_file("/simulator/examples/introduction/wells_intro.jl")
+glob("/packages/JutulDarcy/examples/**/wells_intro*.jl")
+read_file("/packages/JutulDarcy/examples/introduction/wells_intro.jl")
 ```
