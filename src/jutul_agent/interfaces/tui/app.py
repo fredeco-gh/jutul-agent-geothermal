@@ -461,6 +461,11 @@ class TUIApp(App[None]):
         # don't re-wrap until their content is re-rendered, so nudge each
         # wrapping widget explicitly. A whole-screen refresh covers the rest.
         self._resize_timer = None
+        # This is a debounced timer callback; it can fire while the app is tearing
+        # down (e.g. the test harness exiting), when there is no active screen.
+        # Touching `self.screen` then raises ScreenStackError, so bail out.
+        if not self.screen_stack:
+            return
         for widget in (
             *self.query(MessageBlock),
             *self.query(ApprovalBlock),

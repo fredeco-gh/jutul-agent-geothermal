@@ -182,7 +182,7 @@ def test_precompile_runs_instantiate_and_plot_warmup(
     env_setup.bootstrap_workspace(_adapter(module_dir), workspace=workspace, precompile=True)
 
     assert any("Pkg.instantiate()" in cmd for cmd in captured)
-    assert any("CairoMakie" in cmd for cmd in captured)
+    assert any("GLMakie" in cmd for cmd in captured)
 
 
 def test_bootstrap_raises_when_julia_missing(

@@ -166,11 +166,42 @@ async def _run_session(
     )
     print(f"Workspace:     {ws}", file=sys.stderr)
     print(f"Julia project: {julia_project}", file=sys.stderr)
+    _warn_if_plotting_unavailable()
     try:
         return await _run_with_backend(repl_config, args, adapter, config, session_id, state_dir)
     except JuliaStartupError as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 1
+
+
+def _warn_if_plotting_unavailable() -> None:
+    """One-line heads-up at launch when GLMakie has no display here.
+
+    On headless Linux without ``xvfb-run`` (or with it opted out), the native
+    plotters can't render and ``julia_plot`` errors at use-time — but simulation,
+    eval, and the file tools all still work, so this is a warning, not a failure.
+    Surfacing it at launch means the user learns before their first plot, not
+    mid-session when a ``plot_reservoir`` call fails.
+    """
+
+    from jutul_agent.agent.render_profile import (
+        plotting_display_available,
+        xvfb_opted_out,
+    )
+
+    if plotting_display_available():
+        return
+    hint = (
+        "unset JUTUL_AGENT_NO_XVFB and install xvfb"
+        if xvfb_opted_out()
+        else "install xvfb (e.g. `sudo apt-get install -y xvfb`)"
+    )
+    print(
+        "warning: no display and xvfb not available — plotting (GLMakie) is "
+        f"unavailable; simulation still works. To enable plots, {hint}. "
+        "Run `jutul-agent doctor` for details.",
+        file=sys.stderr,
+    )
 
 
 def _prepare_existing_env(
@@ -415,8 +446,13 @@ async def _run_with_backend(
     from jutul_agent.agent.approval import parse_approval_mode
     from jutul_agent.agent.builder import build_agent, resolve_model
     from jutul_agent.agent.mounts import mounted_dirs
+    from jutul_agent.agent.render_profile import can_open_windows
     from jutul_agent.julia.backends.agentrepl import AgentREPLBackend
     from jutul_agent.session import Session
+
+    # A live window is shown only for an interactive session with a display; a
+    # one-shot `--prompt` run and any headless box render offscreen to a PNG.
+    open_windows = can_open_windows(interactive_session=not args.prompt)
 
     async with AgentREPLBackend(repl_config) as julia:
         session = Session.create(
@@ -424,6 +460,7 @@ async def _run_with_backend(
             simulator=adapter,
             session_id=session_id,
             ephemeral_memory=args.ephemeral_memory,
+            open_windows=open_windows,
         )
         write_last_session(session.session_id)
         warmup_task = _start_warmup(julia, adapter.warmup_code)

@@ -28,8 +28,12 @@ from deepagents import (
 from deepagents.backends import CompositeBackend, FilesystemBackend
 
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
-from jutul_agent.agent.backend import WorkspaceShellBackend
-from jutul_agent.agent.julia_plot import make_julia_plot_tool
+from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
+from jutul_agent.agent.julia_plot import (
+    make_close_plots_tool,
+    make_julia_plot_tool,
+    make_recapture_tool,
+)
 from jutul_agent.agent.memory import (
     build_memory_middleware,
     ensure_memory_dir,
@@ -169,7 +173,7 @@ def build_backend(
         routes[_PACKAGES_ROUTE] = packages_backend
 
     ws = workspace or workspace_root()
-    backend = CompositeBackend(
+    backend = RecursiveGrepBackend(
         default=WorkspaceShellBackend(
             root_dir=ws,
             virtual_mode=True,
@@ -238,6 +242,8 @@ def build_agent(
         make_julia_eval_tool(session, package_mounts=package_mounts),
         make_reset_julia_tool(session),
         make_julia_plot_tool(session),
+        make_recapture_tool(session),
+        make_close_plots_tool(session),
         make_record_attempt_tool(session),
         make_write_report_tool(session),
         make_remember_tool(memory_dir),

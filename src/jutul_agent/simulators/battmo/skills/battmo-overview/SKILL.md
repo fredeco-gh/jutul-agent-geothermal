@@ -66,32 +66,29 @@ what's actually there. `sol` has no `keys`/`getindex` of its own — go through
 
 ## Plotting
 
-**The BattMo example files `using ... GLMakie`, but GLMakie is NOT installed
-here — only CairoMakie is.** When you adapt an example for `julia_plot`, drop
-`GLMakie` and `using CairoMakie` instead, or the call fails with "Package
-GLMakie not found".
+BattMo's native plotters run on **GLMakie** (a default dependency) and are
+captured by `julia_plot` automatically — headless or interactive:
 
-**BattMo's built-in plotters (`plot_output`, `plot_dashboard`) are GLMakie-only.**
-Under the default headless CairoMakie they emit
-`Warning: Independent figure creation not implemented for backend CairoMakie`
-and return an **empty `Figure()`** — `julia_plot` will refuse it.
+- `plot_dashboard(output; new_window = false)` — interactive results dashboard
+- `plot_output(output; new_window = false)` — standard result plots
+- `plot_cell_curves(cell_parameters; new_window = false)` — per-cell property curves
 
-For headless `julia_plot` calls, build the figure inline from the
-`sol.time_series` vectors. Reuse the `sol` you already solved in a previous
-`julia_eval` — `julia_plot` shares the same REPL, so there's no need to
-re-`solve` inside the plot:
+Call them directly — you do **not** need to load a backend or strip `GLMakie`
+from example code; the tool activates the right backend. `julia_plot` captures
+the figure as an artifact whether BattMo opens its own window (`new_window=true`,
+its default) or not; in an interactive session it also opens a live window for
+the user. Reuse the `output`/`sol` you already solved; `julia_plot` shares the
+REPL.
+
+For a custom 2D view, build the figure inline from `sol.time_series`:
 
 ```julia
-using CairoMakie
 ts = sol.time_series
 fig = Figure(size = (700, 400))
 ax = Axis(fig[1, 1], title = "Voltage vs time", xlabel = "Time [s]", ylabel = "Voltage [V]")
 lines!(ax, Float64.(ts["Time"]), Float64.(ts["Voltage"]))
 fig
 ```
-
-Only use `plot_dashboard` / `plot_output` when the user explicitly asks for an
-interactive GLMakie window (and they have a display available).
 
 ## Inputs from MATLAB
 

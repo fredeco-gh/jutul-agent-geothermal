@@ -22,8 +22,8 @@ dissolution, and volatilization.
 
 **The Julia package is not registered yet.** Until it ships:
 
-- The `vocsim` workspace env contains only `Jutul`, `AgentREPL`, and
-  `CairoMakie`. There is no `VOCSim` package to `using`.
+- The `vocsim` workspace env contains only `Jutul`, `AgentREPL`,
+  `CairoMakie`, and `GLMakie`. There is no `VOCSim` package to `using`.
 - No domain-specific tools, plotting helpers, or example corpus exist
   for the agent to draw on.
 - Domain knowledge in the agent's prompt is intentionally minimal so

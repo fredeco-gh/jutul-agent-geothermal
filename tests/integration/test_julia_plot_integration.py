@@ -1,4 +1,25 @@
-"""Integration test: real Julia + CairoMakie via julia_plot."""
+"""Integration tests: real Julia + GLMakie via julia_plot.
+
+Three intentional layers:
+
+- ``test_julia_plot_captures_figure_shapes`` and ``..._view_returns_image_blocks``
+  exercise *our* capture/view machinery against plain Makie. They don't touch a
+  simulator's plotters, so they stay stable across upstream changes — they guard
+  the code we own.
+- ``test_native_plotters_render_to_png`` is a *canary* over JutulDarcy's own
+  plotters: it confirms the end-to-end wiring works today, and it embeds
+  JutulDarcy's setup/plotter API, so it will need updating when that API drifts.
+
+Skipped unless the JutulDarcy env is instantiated (the shipped template has no
+Manifest). To run locally:
+
+    julia --project=src/jutul_agent/simulators/jutuldarcy/julia_env \
+        -e 'using Pkg; Pkg.instantiate()'
+    uv run pytest tests/integration/test_julia_plot_integration.py
+
+On headless Linux GLMakie needs xvfb (jutul-agent auto-wraps the worker). CI runs
+these in the `plot-integration` job.
+"""
 
 from __future__ import annotations
 
@@ -10,107 +31,174 @@ import pytest
 from jutul_agent.agent.julia_plot import make_julia_plot_tool
 from jutul_agent.julia.backends.agentrepl import AgentREPLBackend, AgentREPLConfig
 from jutul_agent.session import Session
-from jutul_agent.simulators.battmo import BATTMO
+from jutul_agent.simulators.env_setup import manifest_has_package
 from jutul_agent.simulators.jutuldarcy import JUTULDARCY
-from jutul_agent.trace import TraceLog
 
 JUTULDARCY_ENV = JUTULDARCY.julia_env_template_path
-BATTMO_ENV = BATTMO.julia_env_template_path
 
 
 def _julia_available() -> bool:
     return shutil.which("julia") is not None
 
 
-def _env_ready(env_dir: Path) -> bool:
-    return (env_dir / "Project.toml").exists() and (env_dir / "Manifest.toml").exists()
+def _gl_ready(env_dir: Path) -> bool:
+    """Env is instantiated *and* actually resolved GLMakie."""
+    return (
+        (env_dir / "Project.toml").exists()
+        and (env_dir / "Manifest.toml").exists()
+        and manifest_has_package(env_dir, "GLMakie")
+    )
+
+
+def _session(julia: AgentREPLBackend, tmp_path: Path, sid: str) -> Session:
+    return Session.create(julia=julia, state_root=tmp_path, simulator=JUTULDARCY, session_id=sid)
+
+
+async def _plot(tool, code: str, slot: str):
+    msg = await tool.ainvoke(
+        {
+            "type": "tool_call",
+            "name": "julia_plot",
+            "id": f"call_{slot}",
+            "args": {"code": code, "slot": slot},
+        }
+    )
+    return str(getattr(msg, "content", msg))
 
 
 pytestmark = pytest.mark.integration
 
 
+# Every Makie return shape that `_as_figure` must resolve, built from plain Makie so
+# the test stays stable across simulator-package changes. `nonfig` is the negative
+# case: a non-figure value must NOT capture the (now stale) current figure.
+_FIGURE_SHAPES = {
+    "returns_figure": "fig = Figure(); lines!(Axis(fig[1, 1]), 1:3); fig",
+    "returns_figureaxisplot": "lines(1:3)",
+    "returns_tuple": "fig = Figure(); ax = Axis(fig[1, 1]); (fig, ax, lines!(ax, 1:3))",
+    "draws_then_nothing": "fig = Figure(); lines!(Axis(fig[1, 1]), 1:3); display(fig); nothing",
+}
+
+
 @pytest.mark.skipif(
-    not _julia_available() or not _env_ready(JUTULDARCY_ENV),
-    reason="Julia and an instantiated jutuldarcy env are required",
+    not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
+    reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_real_cairomakie(tmp_path: Path) -> None:
+async def test_julia_plot_captures_figure_shapes(tmp_path: Path) -> None:
+    """julia_plot captures every Makie return shape, and errors (not captures a stale
+    figure) when the code draws nothing new. Guards our capture logic, not anyone's
+    plotters."""
     config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
     async with AgentREPLBackend(config) as julia:
-        session = Session.create(
-            julia=julia,
-            state_root=tmp_path,
-            simulator=JUTULDARCY,
-            session_id="plot-integration",
-        )
+        session = _session(julia, tmp_path, "capture-shapes")
         tool = make_julia_plot_tool(session)
-        code = (
-            "using CairoMakie\n"
-            "fig = Figure(size = (400, 300))\n"
-            'ax = Axis(fig[1, 1], title = "Integration test")\n'
-            "lines!(ax, 1:5, (1:5) .^ 2)\n"
-            "fig"
-        )
-        msg = await tool.ainvoke(
-            {
-                "type": "tool_call",
-                "name": "julia_plot",
-                "id": "call_plot_integration",
-                "args": {"code": code, "caption": "integration plot"},
-            }
-        )
-        result = str(getattr(msg, "content", msg))
-        assert "saved plot to" in result
-        assert "/artifacts/plot-" in result
-        assert "format=png" in result
 
-        log = TraceLog(session.state_dir / "trace.sqlite")
-        try:
-            artifact = next(ev for ev in log.iter_events() if ev.kind == "artifact")
-            rel_path = artifact.payload["path"]
-            assert artifact.payload["format"] == "png"
-            assert artifact.payload["source_code"] == code
-            png_path = session.output_dir / rel_path
-            assert png_path.exists()
-            header = png_path.read_bytes()[:8]
-            assert header.startswith(b"\x89PNG\r\n\x1a\n")
-        finally:
-            log.close()
-            session.finalize()
+        failures: list[str] = []
+        for slot, code in _FIGURE_SHAPES.items():
+            result = await _plot(tool, code, slot)
+            png = session.output_dir / "artifacts" / f"{slot}.png"
+            if "saved plot to" not in result:
+                failures.append(f"{slot}: tool error: {result}")
+            elif not (png.exists() and png.stat().st_size > 500):
+                failures.append(f"{slot}: no/blank PNG")
+
+        # A non-figure return must error and write nothing, even though a previous
+        # plot (and warm-up) left a current figure behind.
+        result = await _plot(tool, "1 + 1", "nonfig")
+        if not result.startswith("ERROR"):
+            failures.append(f"nonfig: expected an error, got: {result}")
+        if (session.output_dir / "artifacts" / "nonfig.png").exists():
+            failures.append("nonfig: wrote a PNG for a non-figure value")
+
+        session.finalize()
+        assert not failures, "capture-shape failures:\n" + "\n".join(failures)
 
 
 @pytest.mark.skipif(
-    not _julia_available() or not _env_ready(BATTMO_ENV),
-    reason="Julia and an instantiated battmo env are required",
+    not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
+    reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_battmo_inline_makie(tmp_path: Path) -> None:
-    config = AgentREPLConfig(julia_project=BATTMO_ENV)
+async def test_julia_plot_view_returns_image_blocks(tmp_path: Path) -> None:
+    """view=True returns text + image content blocks the model can see."""
+    config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
     async with AgentREPLBackend(config) as julia:
-        session = Session.create(
-            julia=julia,
-            state_root=tmp_path,
-            simulator=BATTMO,
-            session_id="battmo-plot-integration",
-        )
+        session = _session(julia, tmp_path, "view-image")
         tool = make_julia_plot_tool(session)
         code = (
-            "using CairoMakie\n"
-            "fig = Figure(size = (400, 300))\n"
-            'ax = Axis(fig[1, 1], title = "BattMo integration test")\n'
-            "lines!(ax, 1:5, (1:5) .^ 2)\n"
+            "fig = Figure(size = (320, 240))\n"
+            "lines!(Axis(fig[1, 1]), 1:4, [1.0, 4.0, 9.0, 16.0])\n"
             "fig"
         )
         msg = await tool.ainvoke(
             {
                 "type": "tool_call",
                 "name": "julia_plot",
-                "id": "call_battmo_plot",
-                "args": {"code": code, "slot": "battmo_smoke"},
+                "id": "call_view",
+                "args": {"code": code, "view": True},
             }
         )
-        result = str(getattr(msg, "content", msg))
-        assert "/artifacts/battmo_smoke.png" in result
-
-        png_path = session.output_dir / "artifacts" / "battmo_smoke.png"
-        assert png_path.exists()
-        assert png_path.read_bytes()[:8].startswith(b"\x89PNG\r\n\x1a\n")
+        content = getattr(msg, "content", msg)
+        assert isinstance(content, list)
+        types = [b.get("type") for b in content]
+        assert "text" in types and "image" in types
+        image = next(b for b in content if b["type"] == "image")
+        assert image["mime_type"] == "image/png"
+        assert len(image["base64"]) > 100
         session.finalize()
+
+
+# Canary over JutulDarcy's own native plotters: confirms the end-to-end wiring works
+# today. These embed JutulDarcy's setup/plotter API (note the setup_reservoir_model
+# return convention and the GraphMakie extension), so they may need updating when
+# upstream changes — that is expected for a canary.
+_NATIVE_PLOTTERS = {
+    "reservoir_domain": "plot_reservoir(domain)",
+    "reservoir_model": "plot_reservoir(model)",
+    "cell_data": "plot_cell_data(physical_representation(domain), domain[:porosity])",
+    "variable_graph": (
+        "using GraphMakie, NetworkLayout, LayeredLayouts\n"
+        "plot_variable_graph(reservoir_model(model))"
+    ),
+    "model_graph": ("using GraphMakie, NetworkLayout, LayeredLayouts\nplot_model_graph(model)"),
+}
+
+
+@pytest.mark.skipif(
+    not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
+    reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
+)
+async def test_native_plotters_render_to_png(tmp_path: Path) -> None:
+    """Every native plotter we document renders to a non-blank PNG through julia_plot."""
+    config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
+    async with AgentREPLBackend(config) as julia:
+        session = _session(julia, tmp_path, "native-plotters")
+        # setup_reservoir_model returns the model directly (a tuple only with
+        # extra_out=true), and takes a system, not an :immiscible shortcut.
+        setup = await julia.eval(
+            "using JutulDarcy, Jutul\n"
+            "g = CartesianMesh((3, 3, 2), (30.0, 30.0, 6.0))\n"
+            "domain = reservoir_domain(g; permeability = 1e-13, porosity = 0.2)\n"
+            "Inj = setup_well(domain, (1, 1, 1); name = :Inj)\n"
+            "Prod = setup_well(domain, (3, 3, 1); name = :Prod)\n"
+            "sys = ImmiscibleSystem((LiquidPhase(), VaporPhase()); "
+            "reference_densities = [1000.0, 100.0])\n"
+            "model = setup_reservoir_model(domain, sys; wells = [Inj, Prod])\n"
+            '"setup ok"'
+        )
+        assert not setup.error, f"model setup failed: {setup.error}"
+
+        # Run every plotter, collecting failures so one broken plotter doesn't mask
+        # which of the others render (the report then names exactly what failed).
+        tool = make_julia_plot_tool(session)
+        failures: list[str] = []
+        for slot, code in _NATIVE_PLOTTERS.items():
+            result = await _plot(tool, code, slot)
+            png = session.output_dir / "artifacts" / f"{slot}.png"
+            if "saved plot to" not in result:
+                failures.append(f"{slot}: tool error: {result}")
+            elif not png.exists():
+                failures.append(f"{slot}: no PNG written")
+            elif png.stat().st_size <= 1000:
+                failures.append(f"{slot}: PNG looks blank ({png.stat().st_size} bytes)")
+        session.finalize()
+        assert not failures, "native plotters failed:\n" + "\n".join(failures)

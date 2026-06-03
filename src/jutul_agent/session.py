@@ -79,6 +79,9 @@ class Session:
     simulator: SimulatorAdapter
     session_id: str
     ephemeral_memory: bool = False
+    # Whether julia_plot may open a live Makie window for the user (interactive
+    # session with a display). Headless and one-shot runs render offscreen to a file.
+    open_windows: bool = False
     _ephemeral_memory_dir: Path | None = field(default=None, repr=False)
 
     @classmethod
@@ -90,6 +93,7 @@ class Session:
         session_id: str | None = None,
         state_root: Path | None = None,
         ephemeral_memory: bool = False,
+        open_windows: bool = False,
     ) -> Session:
         sid = session_id or str(uuid.uuid4())
         dir_ = session_dir(sid, state_root=state_root)
@@ -116,6 +120,7 @@ class Session:
             simulator=simulator,
             session_id=sid,
             ephemeral_memory=ephemeral_memory,
+            open_windows=open_windows,
             _ephemeral_memory_dir=ephemeral_dir,
         )
 

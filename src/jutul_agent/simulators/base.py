@@ -8,10 +8,9 @@ run time via ``jutul_agent.workspace``.
 
 Layout convention: each simulator owns one folder under
 ``src/jutul_agent/simulators/<name>/`` containing ``adapter.py``,
-``julia_env/`` (Project.toml + optional plots.jl), and ``skills/`` (one
-sub-directory per skill). The adapter passes its own ``module_dir`` so
-``julia_env_template_path``, ``skills_dir`` and ``plot_helpers_path`` can
-be derived without reaching into package-wide constants.
+``julia_env/`` (Project.toml), and ``skills/`` (one sub-directory per skill).
+The adapter passes its own ``module_dir`` so ``julia_env_template_path`` and
+``skills_dir`` can be derived without reaching into package-wide constants.
 """
 
 from __future__ import annotations
@@ -52,8 +51,3 @@ class SimulatorAdapter:
     @property
     def skills_dir(self) -> Path:
         return self.module_dir / "skills"
-
-    @property
-    def plot_helpers_path(self) -> Path | None:
-        candidate = self.julia_env_template_path / "plots.jl"
-        return candidate if candidate.is_file() else None

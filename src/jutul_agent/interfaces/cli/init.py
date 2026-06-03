@@ -55,7 +55,7 @@ def build_parser(prog: str = "jutul-agent init") -> argparse.ArgumentParser:
         action="store_true",
         dest="precompile",
         help=(
-            "Run Pkg.instantiate after bootstrap and warm up CairoMakie for "
+            "Run Pkg.instantiate after bootstrap and warm up GLMakie for "
             "julia_plot (slow on first run). --instantiate is a synonym."
         ),
     )
@@ -115,4 +115,32 @@ def run(args: argparse.Namespace) -> int:
         print("  env:           replaced from template (--force)")
     if args.precompile:
         print("  precompile:    done (Pkg.instantiate + plot warm-up)")
+        _note_headless_plotting()
     return 0
+
+
+def _note_headless_plotting() -> None:
+    """After --precompile, note when GLMakie can't render here (headless, no xvfb).
+
+    The plot warm-up is best-effort and silently skipped on a headless box, so
+    without this the user wouldn't learn that plotting needs xvfb until a plot
+    call fails mid-session. Simulation itself is unaffected.
+    """
+
+    from jutul_agent.agent.render_profile import (
+        plotting_display_available,
+        xvfb_opted_out,
+    )
+
+    if plotting_display_available():
+        return
+    hint = (
+        "unset JUTUL_AGENT_NO_XVFB and install xvfb"
+        if xvfb_opted_out()
+        else "install xvfb (e.g. `sudo apt-get install -y xvfb`)"
+    )
+    print(
+        "  note:          no display and xvfb not available, so GLMakie plotting "
+        f"is unavailable here.\n                 To enable plots, {hint}. "
+        "Simulation works without it."
+    )

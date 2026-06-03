@@ -168,12 +168,28 @@ def resolve_env_package_sources(julia_project: Path) -> dict[str, tuple[Path, bo
     return sources
 
 
+# Warm the GLMakie save path used by julia_plot. Wrapped in Julia try/catch so a
+# headless box with no GL/display only warns instead of failing the whole init.
 _PLOT_WARMUP = (
-    "using CairoMakie; "
-    "fig = Figure(size = (64, 64)); "
-    "lines!(Axis(fig[1, 1]), 1:2); "
-    'save(joinpath(tempdir(), "jutul-agent-plot-warmup.png"), fig)'
+    "try; using GLMakie; GLMakie.activate!(visible = false); "
+    "fig = Figure(size = (64, 64)); lines!(Axis(fig[1, 1]), 1:2); "
+    'save(joinpath(tempdir(), "jutul-agent-plot-warmup.png"), fig); '
+    'catch e; @warn "plot warm-up skipped (GLMakie unavailable here)" exception = e; end'
 )
+
+# Resolve + download deps (must succeed), then precompile best-effort. GLMakie is
+# a default dep but can fail to precompile on a headless box with no GL/display
+# (Makie issue #2791); that must not break the whole env, so the solver still
+# instantiates and the agent can simulate (plotting then errors clearly at use).
+# Auto-precompile is turned off for instantiate so the download/resolve step can't
+# be aborted by one package's precompile error; the follow-up Pkg.precompile()
+# compiles everything it can and we swallow the rest.
+_RESILIENT_INSTANTIATE = [
+    'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end',
+    "try; Pkg.precompile(); catch e; "
+    '@warn "Some packages failed to precompile (continuing; GL plotting may be '
+    'unavailable here)" exception=e; end',
+]
 
 
 def bootstrap_workspace(
@@ -192,8 +208,8 @@ def bootstrap_workspace(
          With ``force``, replace an existing workspace-local env first.
       2. If ``source_path`` is set, ``Pkg.develop(path=source_path)`` in
          the workspace env (idempotent; safe to re-run).
-      3. If ``precompile``, ``Pkg.instantiate()`` then a tiny CairoMakie save
-         to warm the plotting stack for ``julia_plot``.
+      3. If ``precompile``, ``Pkg.instantiate()`` then a tiny plot save to warm
+         the plotting stack for ``julia_plot``.
 
     Returns the path to the resolved Julia project.
     """
@@ -213,7 +229,7 @@ def bootstrap_workspace(
     if source_path is not None and not is_source:
         cmds.append(f'Pkg.develop(path=raw"{source_path}")')
     if precompile:
-        cmds.append("Pkg.instantiate()")
+        cmds.extend(_RESILIENT_INSTANTIATE)
 
     if len(cmds) > 1:
         _run_pkg(project, cmds)
@@ -259,13 +275,13 @@ def resolve_and_instantiate(project: Path) -> None:
             "using Pkg",
             'isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General")',
             "Pkg.resolve()",
-            "Pkg.instantiate()",
+            *_RESILIENT_INSTANTIATE,
         ],
     )
 
 
 def _warmup_plotting(project: Path) -> None:
-    """Precompile CairoMakie save path used by ``julia_plot`` (best effort)."""
+    """Precompile the GLMakie save path used by ``julia_plot`` (best effort)."""
 
     try:
         _run_pkg(project, [_PLOT_WARMUP])

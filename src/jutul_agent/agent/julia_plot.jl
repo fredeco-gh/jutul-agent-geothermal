@@ -1,29 +1,66 @@
-"""Headless Makie figure capture for jutul-agent's ``julia_plot`` tool.
+"""GLMakie figure capture for jutul-agent's julia_plot tool.
 
-The Python tool ``include``s this file once per session (after ``using
-CairoMakie``) and then calls ``JutulAgentPlots.plot_and_save`` with the
-user's expression wrapped in a ``begin … end`` block.
+The Python tool includes this file once per session. Before each plot it
+activates GLMakie (visible for an interactive window, offscreen otherwise),
+evaluates the user's expression, and hands the result to capture.
+
+capture resolves a Makie Figure from whatever the plotter produced: a returned
+Figure or FigureAxisPlot, a (fig, ax, plot) tuple, or, for plotters that open a
+window or call display and return an axis/screen/nothing, the figure Makie just
+drew (current_figure). It then saves that figure with GLMakie.
 """
 
 module JutulAgentPlots
 
-using CairoMakie
+import GLMakie
+const Makie = GLMakie.Makie  # Makie.save dispatches on the active GLMakie backend
 
-export plot_and_save, is_makie_figure, save_figure
+export capture, recapture, close_windows
 
-is_makie_figure(x) = x isa Figure
+# Interactive windows keyed by a caller-chosen string (the plot's slot). The same
+# key refreshes that window in place; a new key opens a new window. Recapturing a
+# key re-saves its Figure, so a window the user rotated yields their current view.
+const SCREENS = Dict{String, Any}()   # key -> GLMakie screen
+const FIGURES = Dict{String, Any}()   # key -> Figure
+const LAST_KEY = Ref{String}("")      # most recently shown key (recapture default)
 
-"""Return true if *fig* has no content blocks (axes, labels, etc.).
+"""Return true if fig has no content blocks (axes, scenes, labels)."""
+is_empty_figure(fig::Makie.Figure) = isempty(fig.content)
 
-Catches plotters that return an empty ``Figure()`` under CairoMakie.
-"""
-is_empty_figure(fig::Figure) = isempty(fig.content)
+"""Current Makie figure, or nothing (never throws). Snapshot this before running a
+plot expression to tell a freshly drawn figure from a stale one."""
+function _current_fig()
+    f = try
+        Makie.current_figure()
+    catch
+        nothing
+    end
+    return f isa Makie.Figure ? f : nothing
+end
+
+"""Resolve a Makie Figure from the value a plot expression evaluated to.
+
+A returned Figure, FigureAxisPlot, or (fig, ax, plot) tuple is used directly.
+Otherwise we fall back to the figure Makie just drew (current_figure), which is how
+plotters that open a window or call display surface theirs. prev is current_figure()
+from before the expression ran: if the current figure is unchanged from prev,
+nothing new was drawn (a non-figure return value, or a plotter that logged and drew
+nothing), so we return nothing and the caller reports an honest error rather than
+saving a stale, unrelated figure under this slot."""
+function _as_figure(x, prev = nothing)
+    x isa Makie.Figure && return x
+    x isa Makie.FigureAxisPlot && return x.figure
+    if x isa Tuple && length(x) >= 1 && x[1] isa Makie.Figure   # plot_cell_data / plot_mesh
+        return x[1]
+    end
+    cf = _current_fig()
+    (cf === nothing || cf === prev) && return nothing
+    return cf
+end
 
 function _ensure_parent_dir(path::AbstractString)
-    parent_dir = dirname(path)
-    if !isempty(parent_dir) && !isdir(parent_dir)
-        mkpath(parent_dir)
-    end
+    d = dirname(path)
+    (!isempty(d) && !isdir(d)) && mkpath(d)
 end
 
 function _save_kwargs(size, dpi)
@@ -31,54 +68,139 @@ function _save_kwargs(size, dpi)
     if size !== nothing && size isa Tuple && length(size) == 2
         push!(kwargs, :size => (Int(size[1]), Int(size[2])))
     end
-    if dpi !== nothing
-        push!(kwargs, :dpi => Int(dpi))
-    end
+    dpi !== nothing && push!(kwargs, :dpi => Int(dpi))
     return kwargs
 end
 
-"""
-    save_figure(fig; path, format=:png, size=nothing, dpi=nothing)
-
-Save a Makie ``Figure`` to *path* using CairoMakie. *format* is ``:png`` or ``:svg``.
-*size* and *dpi* are passed through to ``CairoMakie.save``.
-"""
-function save_figure(
-    fig::Figure;
-    path::AbstractString,
-    format::Symbol = :png,
-    size = nothing,
-    dpi = nothing,
-)
+"""Save a Makie Figure to path. `Makie.save` dispatches on the active backend and
+picks the format from the extension; the tool only ever passes `.png` (GLMakie)."""
+function save_figure(fig::Makie.Figure; path::AbstractString, size = nothing, dpi = nothing)
     _ensure_parent_dir(path)
-    kwargs = _save_kwargs(size, dpi)
-    if format in (:png, :svg)
-        CairoMakie.save(path, fig; kwargs...)
-    else
-        error("unsupported plot format: $format (use :png or :svg)")
-    end
+    Makie.save(path, fig; _save_kwargs(size, dpi)...)
     return path
 end
 
-"""
-    plot_and_save(fig; path, format, size, dpi)
+"""Resolve a Makie Figure from value and save it to path. When open_window is set
+(an interactive session) the figure is also shown in a live window keyed by
+window_key; the file is written either way. prev_figure is current_figure() from
+before the plot code ran, used to reject a stale fallback (see _as_figure)."""
+function capture(
+    value;
+    path::AbstractString,
+    size = nothing,
+    dpi = nothing,
+    open_window::Bool = false,
+    window_key = "",
+    prev_figure = nothing,
+)
+    fig = _as_figure(value, prev_figure)
+    fig === nothing && error(
+        "julia_plot: the code did not produce a Makie figure. Return a Figure, or " *
+        "call a native plotter that builds one (it may also call display()). If you " *
+        "called a plotter and the output above shows a 'No plottable …' notice, it " *
+        "drew nothing for this model; use a plotter that fits, or build the figure " *
+        "inline with Figure()/Axis().",
+    )
+    is_empty_figure(fig) &&
+        error("julia_plot: the Figure is empty (no axes or scene); nothing was drawn.")
+    if open_window
+        try  # best-effort live window; a failed display must not abort the save
+            _show_window(fig, String(window_key))
+        catch
+        end
+    end
+    return save_figure(fig; path = path, size = size, dpi = dpi)
+end
 
-Verify *fig* is a Makie ``Figure`` and save it. Errors carry the user-visible
-"must evaluate to a Makie Figure" message the Python tool surfaces.
-"""
-function plot_and_save(fig; path, format, size, dpi)
-    if !is_makie_figure(fig)
-        error("julia_plot: code must evaluate to a Makie Figure; got " *
-              string(typeof(fig)))
+"""Show fig in the window for key: refresh it if still open, else open a fresh
+GLMakie Screen. A distinct key is a distinct window; plain display(fig) would
+reuse GLMakie's single main screen. invokelatest bridges the world-age gap to
+methods added by native plotters loaded after this module."""
+function _show_window(fig, key::AbstractString)
+    FIGURES[key] = fig   # register first so recapture/close always find it
+    LAST_KEY[] = key
+    # A native plotter (e.g. plot_reservoir) may open its own window, binding the
+    # scene to a screen. GLMakie forbids one scene in two screens, so adopt it.
+    own = Base.invokelatest(Makie.getscreen, fig.scene)
+    if own !== nothing
+        SCREENS[key] = own
+        return nothing
     end
-    if is_empty_figure(fig)
-        error(
-            "julia_plot: Figure has no content. " *
-            "A simulator plotter may have returned an empty Figure under " *
-            "CairoMakie — build the figure inline (Figure + Axis + lines!) instead."
-        )
+    existing = get(SCREENS, key, nothing)
+    if existing !== nothing && Base.invokelatest(isopen, existing)
+        Base.invokelatest(display, existing, fig)        # refresh in place
+    else
+        screen = Base.invokelatest(GLMakie.Screen)
+        Base.invokelatest(display, screen, fig)          # new window
+        SCREENS[key] = screen
     end
-    return save_figure(fig; path = path, format = format, size = size, dpi = dpi)
+    return nothing
+end
+
+"""Flush the live window for key so a following save captures the user's current
+view, not a stale frame.
+
+A user's rotate (cam3d) or recolor (a Menu) sits in GLFW's queue while the worker
+is blocked between evals, and those controllers only apply on the render tick
+after their event, so a single save renders the previous state. We flush pending
+Makie updates, then render two colorbuffer cycles: the first drains the queued
+events into the controllers, the second renders their applied state. No-op when
+key has no open screen."""
+function _refresh_live_view(key::AbstractString, fig)
+    scr = get(SCREENS, key, nothing)
+    scr === nothing && return nothing
+    try
+        Base.invokelatest(isopen, scr) || return nothing
+    catch
+        return nothing
+    end
+    try
+        Base.invokelatest(Makie.update_state_before_display!, fig)
+    catch
+    end
+    for _ in 1:2
+        try
+            Base.invokelatest(Makie.colorbuffer, scr)
+        catch
+        end
+    end
+    return nothing
+end
+
+"""Re-save an open interactive window at its current camera/zoom/timestep. key
+selects the window (a plot's slot); empty means the most recently opened or
+refreshed one. Errors if there is no such open window."""
+function recapture(; key::AbstractString = "", path, size = nothing, dpi = nothing)
+    k = isempty(key) ? LAST_KEY[] : String(key)
+    fig = get(FIGURES, k, nothing)
+    fig isa Makie.Figure || error(
+        "recapture: no interactive window" * (isempty(k) ? "" : " '$k'") *
+        " is open. Open one first with julia_plot (give it a slot to recapture it later).",
+    )
+    _refresh_live_view(k, fig)   # render queued interactions before saving
+    return save_figure(fig; path = path, size = size, dpi = dpi)
+end
+
+"""Close the interactive window for key, or all of them when key is empty."""
+function close_windows(key::AbstractString = "")
+    if isempty(key)
+        try
+            Base.invokelatest(GLMakie.closeall)
+        catch
+        end
+        empty!(SCREENS)
+        empty!(FIGURES)
+        LAST_KEY[] = ""
+    else
+        scr = get(SCREENS, String(key), nothing)
+        scr === nothing || (try
+            Base.invokelatest(close, scr)
+        catch
+        end)
+        delete!(SCREENS, String(key))
+        delete!(FIGURES, String(key))
+    end
+    return nothing
 end
 
 end # module

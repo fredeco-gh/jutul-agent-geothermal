@@ -25,6 +25,7 @@ dependencies = [
     "markdown-it-py[linkify]>=4.0",
     "pygments>=2.17",
     "textual>=8.2.6",
+    "pillow>=12.2.0",
 ]
 
 [project.scripts]
@@ -89,5 +90,5 @@ testpaths = ["tests"]
 addopts = "-ra --ignore=tests/live"
 asyncio_mode = "auto"
 markers = [
-    "integration: requires Julia and the AgentREPL.jl env template under src/jutul_agent/assets/julia-envs/agentrepl",
+    "integration: requires Julia plus an instantiated env (AgentREPL at src/jutul_agent/julia/agentrepl_env, or a simulator env for the plot tests)",
 ]

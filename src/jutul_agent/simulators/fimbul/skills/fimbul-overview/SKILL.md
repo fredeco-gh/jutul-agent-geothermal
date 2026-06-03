@@ -72,8 +72,15 @@ and `jutuldarcy-wells` for well construction details that apply here too.
 
 ## Plotting
 
-Headless plotting: `julia_plot` with `well_rates_figure(wd)` /
-`cell_field_heatmap(g, field)` from `plots.jl`, or inline Makie against the live
-result object (probe `keys` / `propertynames` first). For interactive reservoir
-viewing, `plot_reservoir(case, result.states; key = :Temperature, …)` requires
-GLMakie — opt-in only.
+Fimbul reuses JutulDarcy's **native plotters** (GLMakie, the default backend),
+captured by `julia_plot` automatically — headless or interactive:
+
+- `plot_reservoir(case.model, result.states)` — 3D reservoir (e.g. `key = :Temperature`)
+- `plot_well_results(result.wells)` — well dashboard
+- `plot_cell_data!` / `plot_mesh_edges!` to compose a custom 3D view
+- Fimbul's own `plot_well_data!` / `plot_mswell_values!` for multi-segment wells
+
+Just call them — no backend juggling. In an interactive session a live window
+opens for the user by default (`window=false` to suppress); pass `view=true` to
+inspect a plot yourself. For a custom 2D view, build inline against the live
+result object (probe `keys` / `propertynames` first).
