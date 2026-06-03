@@ -26,8 +26,7 @@ if TYPE_CHECKING:
 _STALE_LOAD_RE = re.compile(r"restart julia to access the new version", re.IGNORECASE)
 _STALE_LOAD_HINT = (
     "\n\n[harness] The new version won't load until Julia restarts (`reset_julia`), "
-    "which clears all REPL state. Reset clears all REPL state, so do it when you actually "
-    "need the new version."
+    "which clears all REPL state — do it only when you need the new version."
 )
 
 # A just-added package failing to precompile is usually the env holding it at an

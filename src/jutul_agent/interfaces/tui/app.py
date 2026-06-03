@@ -272,7 +272,7 @@ class TUIApp(App[None]):
         self._turn_runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
         self._turn_worker: Any = None
         self._cancel_requested = False
-        self._reset_on_cancel = False
+        self._restart_on_cancel = False
         self._pending_interrupts: list[TurnInterrupt] = []
         self._tool_blocks: list[ToolBlock] = []
         self._active_approval_blocks: list[ApprovalBlock] = []
@@ -528,7 +528,7 @@ class TUIApp(App[None]):
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
-        self._reset_on_cancel = False
+        self._restart_on_cancel = False
 
         await self._mount_welcome_if_empty()
         user_block = MessageBlock("You", "user", text, markdown="\n" in text)
@@ -750,8 +750,8 @@ class TUIApp(App[None]):
         await self._mark_running_tools_cancelled()
         self._reset_approval_state()
         message = (
-            "Turn cancelled. Julia worker reset; loaded packages and variables were cleared."
-            if self._reset_on_cancel
+            "Turn cancelled. Julia was restarted; loaded packages and variables were cleared."
+            if self._restart_on_cancel
             else "Turn cancelled. Julia state preserved."
         )
         await self._log.mount(MessageBlock("System", "system", message))
@@ -761,9 +761,9 @@ class TUIApp(App[None]):
         if not self._busy or self._cancel_requested:
             return
         self._cancel_requested = True
-        self._reset_on_cancel = self._has_running_julia_tool()
+        self._restart_on_cancel = self._has_running_julia_tool()
         self._set_status(
-            "cancelling… (resetting Julia)" if self._reset_on_cancel else "cancelling…"
+            "cancelling… (restarting Julia)" if self._restart_on_cancel else "cancelling…"
         )
         worker = self._turn_worker
         if worker is not None:
@@ -781,11 +781,14 @@ class TUIApp(App[None]):
             if block.status == "running":
                 await block.set_cancelled("turn cancelled")
 
-    async def _reset_julia_worker(self) -> None:
+    async def _restart_julia(self) -> None:
+        # A running eval can't be interrupted and the session may be wedged, so
+        # this force-restarts the subprocess rather than sending a reset over the
+        # (possibly stuck) session.
         try:
-            await self._session.julia.reset()
+            await self._session.julia.restart()
         except Exception as exc:
-            await self._note(f"warning: failed to reset Julia worker: {exc}")
+            await self._note(f"warning: failed to restart Julia: {exc}")
 
     def _reset_approval_state(self) -> None:
         self._pending_interrupts = []
@@ -841,10 +844,10 @@ class TUIApp(App[None]):
         self._schedule_scroll_end()
 
     async def _finish_turn(self) -> None:
-        if self._cancel_requested and self._reset_on_cancel:
-            await self._reset_julia_worker()
+        if self._cancel_requested and self._restart_on_cancel:
+            await self._restart_julia()
         self._cancel_requested = False
-        self._reset_on_cancel = False
+        self._restart_on_cancel = False
         self._busy = False
         self._set_status("approval required" if self._pending_interrupts else "ready")
         if not self._pending_interrupts:
@@ -1133,7 +1136,7 @@ class TUIApp(App[None]):
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
-        self._reset_on_cancel = False
+        self._restart_on_cancel = False
         await self._preview_pending_decision(decision)
         self._set_status("resuming…")
         self._turn_worker = self.run_worker(

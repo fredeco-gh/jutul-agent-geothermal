@@ -653,6 +653,7 @@ class FakeJulia:
         self._eval_handler = eval_handler
         self.calls: list[str] = []
         self.reset_count: int = 0
+        self.restart_count: int = 0
 
     async def __aenter__(self) -> FakeJulia:
         return self
@@ -678,6 +679,9 @@ class FakeJulia:
     async def reset(self) -> EvalResult:
         self.reset_count += 1
         return EvalResult(output="reset")
+
+    async def restart(self) -> None:
+        self.restart_count += 1
 
 
 def make_fake_adapter(
