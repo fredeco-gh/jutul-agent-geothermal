@@ -9,8 +9,7 @@ __pycache__/
 dist/
 build/
 
-# uv
-uv.lock
+# uv.lock is committed for reproducible installs (see [tool.uv] in pyproject.toml).
 
 # Secrets and local editor config
 .env

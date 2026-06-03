@@ -18,7 +18,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Lint
         run: uv run ruff check .
@@ -45,7 +45,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --locked
 
       # The `integration` tests need a live Julia env (AgentREPL.jl, and for the
       # plot tests JutulDarcy/BattMo/CairoMakie precompiled). That's too heavy
@@ -70,7 +70,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Set up Julia
         uses: julia-actions/setup-julia@v2

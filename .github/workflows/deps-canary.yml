@@ -1,0 +1,46 @@
+name: deps-canary
+
+# Resolves the newest dependency stack (ignoring the pin in pyproject.toml) and
+# runs the suite, as an early warning for when the pin can move forward.
+# Schedule + manual only (never push/PR) and the test step is continue-on-error,
+# so it never marks a PR or commit red; the verdict goes to the run summary.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Resolve the newest dependency stack
+        run: |
+          # Drop the exclude-newer pin so the resolver takes the latest releases.
+          python - <<'PY'
+          import pathlib, re
+          p = pathlib.Path("pyproject.toml")
+          p.write_text(re.sub(r'\n\[tool\.uv\][\s\S]*?exclude-newer = "[^"]*"\n', "\n", p.read_text()))
+          PY
+          uv sync --upgrade
+      - name: Resolved versions
+        run: uv run --no-sync python -c "import importlib.metadata as m; [print(p, m.version(p)) for p in ('deepagents','langgraph','langchain','langchain-core')]"
+      - name: Test against latest
+        id: tests
+        continue-on-error: true
+        run: uv run --no-sync pytest -m "not integration"
+      - name: Verdict
+        if: always()
+        run: |
+          if [ "${{ steps.tests.outcome }}" = "success" ]; then
+            echo "✅ Latest dependency stack passes — safe to bump \`exclude-newer\`, run \`uv lock\`, and commit a fresh lock." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⏳ Latest dependency stack still failing — stay on the pinned versions." >> "$GITHUB_STEP_SUMMARY"
+          fi
