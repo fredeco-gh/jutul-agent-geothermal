@@ -38,6 +38,12 @@ looks for a directory at the machine root and will fail.
 To list workspace files, use `glob("**/*")` or `ls` with `"."` or a
 relative path like `"experiments"`, not `"/workspace"`.
 
+Julia stack traces print **full absolute paths**. To open one with a file
+tool, map it back: a workspace file (`.../<workspace>/model.jl`) opens at that
+same path or just `model.jl`, and a package file
+(`.../.julia/packages/<Package>/<hash>/src/foo.jl`) is browsable at
+`/packages/<Package>/src/foo.jl`.
+
 ## When to write a file vs. evaluate in the REPL
 
 - **Real implementation → real file.** If the user is asking you to build
@@ -58,28 +64,28 @@ relative path like `"experiments"`, not `"/workspace"`.
 
 ## Reading installed package source and examples
 
-The simulator's source — and the Jutul-stack packages it builds on — is
-mounted **read-only under `/packages/<Package>/`**, one route per package,
-each pointing where `pkgdir(<Package>)` does. The route is named by the Julia
-package (e.g. `/packages/Sim1/`, `/packages/Sim2/`, `/packages/Jutul/`),
-so it's the same whether the package is a registry install or your own
-`Pkg.develop` checkout. `ls("/packages/")` lists what's mounted this session.
-Browse them with the ordinary file tools, exactly like workspace files:
+Every package the environment resolves — the simulator, the Jutul-stack
+packages it builds on, their dependencies, and anything you `Pkg.add` — is
+browsable **under `/packages/<Package>/`**, each pointing where
+`pkgdir(<Package>)` does. The route is the Julia package name (e.g.
+`/packages/<Package>/`, `/packages/Jutul/`), matching where Julia keeps it on
+disk. Navigate straight to a package by name; `ls("/packages/")` lists them all
+if you need to discover one. Browse with the ordinary file tools, like workspace
+files:
 
 ```text
-glob("/packages/Sim/examples/**/*.jl")        # discover examples
-read_file("/packages/Sim/examples/.../wells_intro.jl")
-grep("setup_well", path="/packages/Sim/src")  # find API uses
+glob("/packages/<Package>/examples/**/*.jl")     # discover examples
+read_file("/packages/<Package>/examples/.../example.jl")
+grep("setup_well", path="/packages/<Package>/src")  # find API uses
 ```
 
-A simulator built on another package mounts both,
-so you can read the base package's examples for primitives the simulator reuses.
+A package you install mid-session shows up here too, so after `Pkg.add(...)`
+you can read its source and examples the same way.
 
-Use these to learn the real API from worked examples and from the source.
-They are **reference only** — don't try to `edit_file` under `/packages/`
-(registry installs are shared across projects). To change a package itself,
-`Pkg.develop` it (see below); then its `/packages/<Package>/` route becomes
-your writable checkout.
+Use these to learn the real API from worked examples and source. Registry
+installs are **read-only** — don't `edit_file` under `/packages/` (they're
+shared across projects). To change a package itself, `Pkg.develop` it (see
+below); its `/packages/<Package>/` route is then your writable checkout.
 
 For exact signatures and docstrings, stay in the REPL — these read the
 installed version directly and are always current:

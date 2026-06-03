@@ -21,7 +21,16 @@ from jutul_agent.julia.backends.agentrepl.text import render_terminal_output
 from jutul_agent.julia.requirements import MIN_JULIA_VERSION, check_julia
 from jutul_agent.julia.session import EvalResult
 
-_START_SERVER_SNIPPET = "using AgentREPL; AgentREPL.start_server()"
+# Worker code that parallelizes over Distributed workers with a progress bar
+# (e.g. GeoStats ensembles) makes this master process participate in the
+# coordination, so ProgressMeter must be loadable here too. Otherwise, the work
+# fails to deserialize on the master. Load it best-effort; envs that don't have
+# it as a direct dependency simply skip it.
+_START_SERVER_SNIPPET = (
+    "using AgentREPL; "
+    "try Core.eval(Main, :(using ProgressMeter)) catch end; "
+    "AgentREPL.start_server()"
+)
 
 
 class JuliaStartupError(RuntimeError):

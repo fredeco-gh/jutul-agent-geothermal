@@ -8,16 +8,49 @@ workspace backend.
 
 from __future__ import annotations
 
+import contextlib
+import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.tools import tool
 
 from jutul_agent.paths import resolve_workspace_path, workspace_root
 from jutul_agent.session import Session
 
+if TYPE_CHECKING:
+    from jutul_agent.agent.packages_backend import PackageMounts
 
-def make_julia_eval_tool(session: Session):
+# Julia can't reload a module already loaded this session, so a new version only
+# takes effect in a fresh process. This is the one case where a restart is unavoidable.
+_STALE_LOAD_RE = re.compile(r"restart julia to access the new version", re.IGNORECASE)
+_STALE_LOAD_HINT = (
+    "\n\n[harness] The new version won't load until Julia restarts (`reset_julia`), "
+    "which clears all REPL state. Reset clears all REPL state, so do it when you actually "
+    "need the new version."
+)
+
+# A just-added package failing to precompile is usually the env holding it at an
+# old version; re-resolving the whole env normally lifts that.
+_PRECOMPILE_FAIL_RE = re.compile(r"failed to precompile", re.IGNORECASE)
+_PRECOMPILE_FAIL_HINT = (
+    "\n\n[harness] If you just added the package, run `Pkg.update()` to re-resolve "
+    "the env to newer compatible versions and retry. Treat it as a real "
+    "incompatibility only if it still fails after that."
+)
+
+# `PkgId(...) not found` means the session's loaded modules no longer match the
+# env, typically after a mid-session package change.
+_MODULE_DESYNC_RE = re.compile(r"PkgId\(.*?\) not found", re.IGNORECASE)
+_MODULE_DESYNC_HINT = (
+    "\n\n[harness] The session's loaded modules are out of sync with the "
+    "environment, usually after a mid-session install/update. `reset_julia` gives "
+    "a fresh session that loads cleanly from the manifest. Reset clears all REPL "
+    "state, so use it deliberately."
+)
+
+
+def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | None = None):
     @tool
     async def julia_eval(code: str) -> str:
         """Evaluate Julia code in a persistent REPL session.
@@ -33,11 +66,48 @@ def make_julia_eval_tool(session: Session):
             error description if the evaluation failed.
         """
         result = await session.julia.eval(code)
-        if result.error:
-            return f"ERROR: {result.error}"
-        return result.output
+        # A `Pkg.add`/`Pkg.develop` here changes the env; keep /packages/ in
+        # sync so the new package is browsable. Cheap unless the
+        # manifest actually changed, and never allowed to break the eval.
+        if package_mounts is not None:
+            with contextlib.suppress(Exception):
+                await package_mounts.refresh()
+        text = result.output if not result.error else f"ERROR: {result.error}"
+        if _STALE_LOAD_RE.search(text):
+            text += _STALE_LOAD_HINT
+        if _PRECOMPILE_FAIL_RE.search(text):
+            text += _PRECOMPILE_FAIL_HINT
+        if _MODULE_DESYNC_RE.search(text):
+            text += _MODULE_DESYNC_HINT
+        return text
 
     return julia_eval
+
+
+def make_reset_julia_tool(session: Session):
+    @tool
+    async def reset_julia() -> str:
+        """Restart Julia with a fresh, empty session.
+
+        A recovery tool, not a routine one. It clears ALL state — loaded packages,
+        variables, and anything you built (models, simulation results) — and the
+        next run pays compilation again. Use it deliberately, mainly when a module
+        must be reloaded (Julia can't swap a module already loaded this session,
+        e.g. after installing or updating one). Prefer installing packages before
+        building up expensive state, and re-run your `using`/setup afterward.
+
+        Returns:
+            Confirmation that the session was restarted, or an error description.
+        """
+        result = await session.julia.reset()
+        if result.error:
+            return f"ERROR: failed to reset Julia: {result.error}"
+        return (
+            "Julia restarted with a fresh session. All previous state "
+            "(loaded packages, variables, results) was cleared."
+        )
+
+    return reset_julia
 
 
 def make_record_attempt_tool(session: Session):
