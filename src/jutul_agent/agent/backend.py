@@ -21,6 +21,21 @@ _READ_ONLY_MSG = (
 )
 
 
+def _is_host_path(key: str) -> bool:
+    """Whether ``key`` is a real host path rather than a virtual workspace path.
+
+    A Windows drive (``C:\\...``) is unambiguous. On POSIX a leading-slash path
+    can still be virtual (``/model.jl`` means a workspace file), so it only counts
+    as a host path when its first segment is a real top-level directory
+    (``/etc``, ``/home``, …).
+    """
+
+    if Path(key).drive:
+        return True
+    first = key.lstrip("/").split("/", 1)[0] if key.startswith("/") else ""
+    return bool(first) and Path("/" + first).is_dir()
+
+
 class ReadOnlyFilesystemBackend(FilesystemBackend):
     """``FilesystemBackend`` that allows reads and search but refuses writes.
 
@@ -58,31 +73,41 @@ class WorkspaceShellBackend(LocalShellBackend):
     """
 
     def _resolve_path(self, key: str) -> Path:
-        if self.virtual_mode and key.startswith("/"):
-            root = str(self.cwd)
-            if key == root:
-                key = "/"
-            elif key.startswith(root + "/"):
-                key = key[len(root) :]  # keep the leading "/" of the remainder
+        if self.virtual_mode:
+            path = Path(key)
+            if path.is_absolute():
+                try:
+                    rel = path.relative_to(self.cwd)
+                except ValueError:
+                    rel = None
+                if rel is not None:
+                    # An absolute path inside the workspace → rewrite it
+                    # workspace-relative so it maps to the real file rather than a
+                    # re-rooted phantom.
+                    key = "/" + rel.as_posix()
         return super()._resolve_path(key)
 
     def _outside_workspace_reason(self, key: str) -> str | None:
         """Corrective message if ``key`` is an absolute host path outside the workspace.
 
-        A leading segment that is itself a real top-level directory (``/root``,
-        ``/tmp``, ``/home``, …) marks a host path; ``/model.jl`` or
-        ``/experiments/`` don't collide with one and map under the workspace.
+        An absolute path inside the workspace is fine (``_resolve_path`` maps it).
+        An absolute path *outside* it is the agent mistaking the file tools for the
+        real filesystem.
         """
 
-        if not (self.virtual_mode and key.startswith("/")):
+        if not self.virtual_mode:
             return None
-        root = str(self.cwd)
-        if key == root or key.startswith(root + "/"):
-            return None  # a real path inside the workspace — _resolve_path handles it
-        first = key.lstrip("/").split("/", 1)[0]
-        if not first or not Path("/" + first).is_dir():
-            return None  # e.g. /model.jl, /experiments/foo.csv — a workspace-relative path
-        name = key.rstrip("/").rsplit("/", 1)[-1] or "file"
+        path = Path(key)
+        if not path.is_absolute():
+            return None  # workspace-relative
+        try:
+            path.relative_to(self.cwd)
+            return None  # inside the workspace — _resolve_path handles it
+        except ValueError:
+            pass
+        if not _is_host_path(key):
+            return None
+        name = key.rstrip("/").rstrip("\\").replace("\\", "/").rsplit("/", 1)[-1] or "file"
         return (
             f"'{key}' is outside the workspace. Write your files with a "
             f"workspace-relative path (e.g. '{name}'); the REPL's working directory "

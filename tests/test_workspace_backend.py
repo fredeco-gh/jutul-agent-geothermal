@@ -65,8 +65,9 @@ def test_workspace_backend_real_absolute_path_resolves_to_real_file(tmp_path: Pa
 
     backend.write(str(ws / "model.jl"), "x = 1\n")
     assert (ws / "model.jl").read_text() == "x = 1\n"
-    # No phantom directory mirroring the absolute path was created.
-    assert not (ws / str(ws).lstrip("/")).exists()
+    # No phantom copy mirroring the absolute path was created: the only model.jl
+    # under the workspace is the one at its root.
+    assert list(ws.rglob("model.jl")) == [ws / "model.jl"]
 
     # Real-absolute, virtual-absolute, and relative paths read the same file.
     for key in (str(ws / "model.jl"), "/model.jl", "model.jl"):
@@ -88,17 +89,19 @@ def test_workspace_backend_rejects_out_of_workspace_absolute(tmp_path: Path) -> 
     ws = tmp_path.resolve()
     backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
 
-    # `/etc` is a real top-level host dir and isn't the workspace.
-    res = backend.write("/etc/model.jl", "x = 1")
+    # A real absolute path outside the workspace (a sibling of it). Cross-platform:
+    # it carries a drive on Windows and a real top-level dir on POSIX.
+    outside = tmp_path.parent / "model.jl"
+    res = backend.write(str(outside), "x = 1")
     assert res.error is not None
     assert "outside the workspace" in res.error
-    assert not (ws / "etc" / "model.jl").exists()  # no phantom created
+    assert not outside.exists()  # nothing written
 
-    ed = backend.edit("/etc/model.jl", "x", "y")
+    ed = backend.edit(str(outside), "x", "y")
     assert ed.error is not None
     assert "outside the workspace" in ed.error
 
-    # A plain virtual path (no real host dir of that name) is still fine.
+    # A plain virtual path (maps under the workspace) is still fine.
     ok = backend.write("/model.jl", "x = 1")
     assert ok.error is None
     assert (ws / "model.jl").exists()
