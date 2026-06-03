@@ -6,6 +6,7 @@ details; everything else talks through the ``JuliaSession`` Protocol.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import re
@@ -21,7 +22,16 @@ from jutul_agent.julia.backends.agentrepl.text import render_terminal_output
 from jutul_agent.julia.requirements import MIN_JULIA_VERSION, check_julia
 from jutul_agent.julia.session import EvalResult
 
-_START_SERVER_SNIPPET = "using AgentREPL; AgentREPL.start_server()"
+# Worker code that parallelizes over Distributed workers with a progress bar
+# (e.g. GeoStats ensembles) makes this master process participate in the
+# coordination, so ProgressMeter must be loadable here too. Otherwise, the work
+# fails to deserialize on the master. Load it best-effort; envs that don't have
+# it as a direct dependency simply skip it.
+_START_SERVER_SNIPPET = (
+    "using AgentREPL; "
+    "try Core.eval(Main, :(using ProgressMeter)) catch end; "
+    "AgentREPL.start_server()"
+)
 
 
 class JuliaStartupError(RuntimeError):
@@ -85,10 +95,17 @@ class AgentREPLBackend:
 
     def __init__(self, config: AgentREPLConfig | None = None) -> None:
         self._config = config or AgentREPLConfig()
-        self._stdio_cm = None
-        self._session_cm = None
         self._session: ClientSession | None = None
         self._errlog: IO[str] | None = None
+        # The MCP session is held open inside a dedicated task (``_run_session``)
+        # so its anyio context is entered and exited on the same task, which
+        # anyio requires. That lets ``restart()`` force the subprocess down and
+        # respawn it from any task. The cancel path runs on a different task
+        # than the one that started the session.
+        self._session_task: asyncio.Task[None] | None = None
+        self._ready = asyncio.Event()
+        self._shutdown = asyncio.Event()
+        self._startup_exc: BaseException | None = None
 
     async def __aenter__(self) -> Self:
         # Fail fast with a clear message before we even spawn a subprocess —
@@ -108,63 +125,98 @@ class AgentREPLBackend:
                 julia_executable=self._config.julia_executable,
                 julia_project=self._config.julia_project,
             )
-
-        errlog = self._open_errlog() or self._default_errlog
-        try:
-            self._stdio_cm = stdio_client(self._make_params(), errlog=errlog)
-            read, write = await self._stdio_cm.__aenter__()
-            self._session_cm = ClientSession(read, write)
-            self._session = await self._session_cm.__aenter__()
-            await self._session.initialize()
-        except BaseException as exc:
-            # Startup crashed. The MCP/anyio exception is noise; the real
-            # cause is in Julia's stderr. Capture it, tear down quietly, and
-            # re-raise something a human can act on.
-            stderr_tail = self._read_stderr_tail()
-            await self._quiet_cleanup()
-            if isinstance(exc, JuliaStartupError):
-                raise
-            raise JuliaStartupError(
-                _summarize_startup_failure(exc),
-                julia_executable=self._config.julia_executable,
-                julia_project=self._config.julia_project,
-                stderr_tail=stderr_tail,
-                log_file=self._config.stderr_file or self._config.log_file,
-            ) from exc
+        await self._spawn()
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
-        # Tearing down the MCP stdio transport routinely raises noise once the
-        # Julia subprocess has gone away: anyio's "cancel scope in a different
-        # task" RuntimeError, a BrokenResourceError from the stdout reader, or
-        # an ExceptionGroup wrapping either. None of it is actionable — the
-        # session is already over — and letting it escape dumps a frightening
-        # traceback on an otherwise-clean exit (and would mask any real error
-        # from the `async with` body). So we swallow teardown exceptions here.
+        await self._teardown()
+
+    async def restart(self) -> None:
+        """Force the subprocess down and start a fresh session.
+
+        Unlike ``reset`` (an MCP call that respawns AgentREPL's worker), this
+        does not rely on the existing session responding — it tears the whole
+        subprocess down (SIGTERM→SIGKILL) and spawns a new one. It is the
+        recovery path when an eval can't be interrupted and the session is
+        wedged, e.g. the cancel path while a long Julia call is running.
+        """
+
+        await self._teardown()
+        await self._spawn()
+
+    async def _spawn(self) -> None:
+        """Start the session task and wait until it's ready (or failed)."""
+
+        self._ready = asyncio.Event()
+        self._shutdown = asyncio.Event()
+        self._startup_exc = None
+        self._session_task = asyncio.create_task(self._run_session())
+        await self._ready.wait()
+
+        exc = self._startup_exc
+        if exc is None:
+            return
+        # Startup crashed. The MCP/anyio exception is noise; the real cause is
+        # in Julia's stderr. Join the dead task, then re-raise something a human
+        # can act on.
+        task, self._session_task = self._session_task, None
+        if task is not None:
+            with contextlib.suppress(BaseException):
+                await task
+        if isinstance(exc, JuliaStartupError):
+            raise exc
+        raise JuliaStartupError(
+            _summarize_startup_failure(exc),
+            julia_executable=self._config.julia_executable,
+            julia_project=self._config.julia_project,
+            stderr_tail=self._read_stderr_tail(),
+            log_file=self._config.stderr_file or self._config.log_file,
+        ) from exc
+
+    async def _run_session(self) -> None:
+        """Own the MCP session's lifecycle on a single task.
+
+        Holds the stdio transport and ``ClientSession`` open until ``_shutdown``
+        is set, so both contexts are entered and exited on this task. On exit,
+        ``stdio_client`` terminates the subprocess tree (SIGTERM→SIGKILL after a
+        short grace period), which is what makes ``restart`` reliable even when
+        the process is stuck in a runaway computation.
+        """
+
+        errlog = self._open_errlog() or self._default_errlog
         try:
-            if self._session_cm is not None:
-                with contextlib.suppress(Exception):
-                    await self._session_cm.__aexit__(*exc_info)
-            if self._stdio_cm is not None:
-                with contextlib.suppress(Exception):
-                    await self._stdio_cm.__aexit__(*exc_info)
+            async with (
+                stdio_client(self._make_params(), errlog=errlog) as (read, write),
+                ClientSession(read, write) as session,
+            ):
+                await session.initialize()
+                self._session = session
+                self._ready.set()
+                await self._shutdown.wait()
+        except BaseException as exc:
+            # A failure before we signalled ready is a startup error for _spawn
+            # to surface; anything after is just teardown (expected on shutdown
+            # or a killed subprocess) and not actionable.
+            if not self._ready.is_set():
+                self._startup_exc = exc
+                self._ready.set()
         finally:
+            self._session = None
             if self._errlog is not None:
                 with contextlib.suppress(Exception):
                     self._errlog.close()
-            self._session = None
-            self._session_cm = None
-            self._stdio_cm = None
-            self._errlog = None
+                self._errlog = None
 
-    async def _quiet_cleanup(self) -> None:
-        """Unwind partially-entered context managers after a failed startup.
+    async def _teardown(self) -> None:
+        """Signal the session task to exit and wait for the subprocess to die."""
 
-        ``__aexit__`` already swallows teardown noise; this is just the
-        explicit unwind we trigger before re-raising a ``JuliaStartupError``.
-        """
-
-        await self.__aexit__(None, None, None)
+        task, self._session_task = self._session_task, None
+        if task is None:
+            return
+        self._shutdown.set()
+        with contextlib.suppress(BaseException):
+            await task
+        self._session = None
 
     @property
     def _default_errlog(self) -> IO[str]:

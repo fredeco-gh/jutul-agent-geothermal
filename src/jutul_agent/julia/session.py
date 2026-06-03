@@ -1,8 +1,7 @@
 """Backend-agnostic abstraction over a persistent Julia runtime.
 
-The Protocol stays minimal: ``eval`` and ``reset`` plus the async
-context-manager lifecycle. Add methods only when a concrete caller needs
-them.
+The Protocol stays minimal: ``eval``, ``reset``, and ``restart`` plus the async
+context-manager lifecycle. Add methods only when a concrete caller needs them.
 """
 
 from __future__ import annotations
@@ -31,9 +30,18 @@ class JuliaSession(Protocol):
         ...
 
     async def reset(self) -> EvalResult:
-        """Kill any in-flight evaluation and respawn a fresh Julia worker.
+        """Respawn a fresh Julia worker, clearing all state.
 
-        Used by the TUI's Ctrl+G cancel path. Backends that can't interrupt
-        should still return an ``EvalResult`` rather than raising.
+        A cooperative reset that talks to the running runtime; backends that
+        can't reset should still return an ``EvalResult`` rather than raising.
+        """
+        ...
+
+    async def restart(self) -> None:
+        """Force the runtime down and start fresh, without relying on it responding.
+
+        The hard recovery for when an evaluation can't be interrupted and the
+        runtime is wedged (the TUI's cancel path). Unlike ``reset``, it must not
+        depend on the current session being responsive.
         """
         ...

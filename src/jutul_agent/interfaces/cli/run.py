@@ -340,18 +340,32 @@ def _ensure_simulator_installed(
 
 
 async def _resolve_package_sources(adapter: Any, julia_project: Path, config: Any) -> list[Any]:
-    """Resolve the source dirs to mount under ``/packages/`` for this simulator.
+    """Resolve the source dirs to mount under ``/packages/`` for this session.
 
-    Mounts every package in ``adapter.package_imports`` (the simulator plus the
-    Jutul-stack packages it builds on, e.g. JutulDarcy for Fimbul), so the agent
-    can read each one's examples and source. The primary package is writable
-    only when the user ``Pkg.develop``-ed it (config ``source_path`` set) — then
-    editing the mount edits their own checkout; everything else stays read-only.
-    Resolution is one fast, no-compile Julia call run off the event loop.
+    Enumerates every package the environment resolves so the agent can browse
+    the simulator, its dependencies, and anything it installs at
+    ``/packages/<Package>/``. It is fully populated before the first turn. A
+    ``Pkg.develop`` checkout is mounted writable (the agent can edit it);
+    registry installs stay read-only. Resolution is one fast, no-compile Julia
+    call run off the event loop.
+
+    Falls back to just the simulator's key packages if the full enumeration
+    can't run (e.g. an unresolved manifest); ``PackageMounts`` then fills in the
+    rest after the first REPL call.
     """
 
     from jutul_agent.agent.builder import PackageSource
-    from jutul_agent.simulators.env_setup import resolve_package_sources
+    from jutul_agent.simulators.env_setup import (
+        resolve_env_package_sources,
+        resolve_package_sources,
+    )
+
+    env = await asyncio.to_thread(resolve_env_package_sources, julia_project)
+    if env:
+        return [
+            PackageSource(name=name, path=path, writable=is_dev)
+            for name, (path, is_dev) in sorted(env.items())
+        ]
 
     sources = await asyncio.to_thread(
         resolve_package_sources, julia_project, adapter.package_imports
@@ -430,12 +444,12 @@ async def _run_with_backend(
                     package_sources=package_sources,
                     mounted_dirs=extra_dirs,
                 )
-                for src in package_sources:
-                    access = "writable" if src.writable else "read-only"
-                    print(
-                        f"Package source: /packages/{src.name}/ -> {src.path} ({access})",
-                        file=sys.stderr,
-                    )
+                if package_sources:
+                    writable = [src.name for src in package_sources if src.writable]
+                    summary = f"Packages: {len(package_sources)} mounted under /packages/"
+                    if writable:
+                        summary += f" ({len(writable)} writable dev: {', '.join(writable)})"
+                    print(summary, file=sys.stderr)
                 for mount in mounted_dirs(backend):
                     print(f"Added folder:  {mount.path} -> {mount.route}", file=sys.stderr)
                 if args.prompt:

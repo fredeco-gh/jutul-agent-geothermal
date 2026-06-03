@@ -12,11 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from deepagents.backends import FilesystemBackend
 
 from fakes import make_fake_adapter
-from jutul_agent.agent.backend import ReadOnlyFilesystemBackend
+from jutul_agent.agent.backend import ReadOnlyFilesystemBackend, WorkspaceShellBackend
 from jutul_agent.agent.builder import PackageSource, build_backend
+from jutul_agent.agent.packages_backend import PackagesBackend
 
 
 @pytest.fixture
@@ -56,6 +56,57 @@ async def test_read_only_backend_async_write_also_refused(source_dir: Path) -> N
     assert result.error is not None
 
 
+def test_workspace_backend_real_absolute_path_resolves_to_real_file(tmp_path: Path) -> None:
+    # The agent often reuses a file's real absolute path (e.g. from pwd()/Julia).
+    # Plain virtual_mode would re-root it into a phantom <ws>/<abs> tree; here it
+    # must map to the real file so the file tools and the REPL agree.
+    ws = tmp_path.resolve()
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
+
+    backend.write(str(ws / "model.jl"), "x = 1\n")
+    assert (ws / "model.jl").read_text() == "x = 1\n"
+    # No phantom copy mirroring the absolute path was created: the only model.jl
+    # under the workspace is the one at its root.
+    assert list(ws.rglob("model.jl")) == [ws / "model.jl"]
+
+    # Real-absolute, virtual-absolute, and relative paths read the same file.
+    for key in (str(ws / "model.jl"), "/model.jl", "model.jl"):
+        result = backend.read(key)
+        assert result.error is None
+        assert "x = 1" in result.file_data["content"]
+
+
+def test_workspace_backend_virtual_paths_still_nest(tmp_path: Path) -> None:
+    ws = tmp_path.resolve()
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
+    backend.write("/sub/dir/a.jl", "y = 2\n")
+    assert (ws / "sub" / "dir" / "a.jl").read_text() == "y = 2\n"
+
+
+def test_workspace_backend_rejects_out_of_workspace_absolute(tmp_path: Path) -> None:
+    # The agent sometimes writes to a real host path thinking the file tools see
+    # the real filesystem; that must error, not silently make a phantom tree.
+    ws = tmp_path.resolve()
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
+
+    # A real absolute path outside the workspace (a sibling of it). Cross-platform:
+    # it carries a drive on Windows and a real top-level dir on POSIX.
+    outside = tmp_path.parent / "model.jl"
+    res = backend.write(str(outside), "x = 1")
+    assert res.error is not None
+    assert "outside the workspace" in res.error
+    assert not outside.exists()  # nothing written
+
+    ed = backend.edit(str(outside), "x", "y")
+    assert ed.error is not None
+    assert "outside the workspace" in ed.error
+
+    # A plain virtual path (maps under the workspace) is still fine.
+    ok = backend.write("/model.jl", "x = 1")
+    assert ok.error is None
+    assert (ws / "model.jl").exists()
+
+
 def test_build_backend_mounts_package_source_read_only(tmp_path: Path, source_dir: Path) -> None:
     adapter = make_fake_adapter(tmp_path)
     backend = build_backend(
@@ -64,11 +115,12 @@ def test_build_backend_mounts_package_source_read_only(tmp_path: Path, source_di
         package_sources=[PackageSource(name="BattMo", path=source_dir)],
     )
 
-    assert "/packages/BattMo/" in backend.routes
-    assert isinstance(backend.routes["/packages/BattMo/"], ReadOnlyFilesystemBackend)
+    pkgs = backend.routes["/packages/"]
+    assert isinstance(pkgs, PackagesBackend)
+    assert pkgs.package_names() == ["BattMo"]
     # readable through the composite
     assert backend.read("/packages/BattMo/examples/demo.jl").error is None
-    # not writable through the composite
+    # not writable (registry install)
     assert backend.write("/packages/BattMo/examples/x.jl", "y").error is not None
 
 
@@ -79,9 +131,10 @@ def test_build_backend_mounts_developed_source_writable(tmp_path: Path, source_d
         workspace=tmp_path,
         package_sources=[PackageSource(name="BattMo", path=source_dir, writable=True)],
     )
-    route = backend.routes["/packages/BattMo/"]
-    assert isinstance(route, FilesystemBackend)
-    assert not isinstance(route, ReadOnlyFilesystemBackend)
+    # A developed checkout is writable through the composite.
+    result = backend.write("/packages/BattMo/examples/x.jl", "y = 1")
+    assert result.error is None
+    assert (source_dir / "examples" / "x.jl").exists()
 
 
 def test_build_backend_mounts_multiple_packages_by_name(tmp_path: Path) -> None:
@@ -99,20 +152,22 @@ def test_build_backend_mounts_multiple_packages_by_name(tmp_path: Path) -> None:
             PackageSource(name="JutulDarcy", path=jutuldarcy),
         ],
     )
-    assert "/packages/Fimbul/" in backend.routes
-    assert "/packages/JutulDarcy/" in backend.routes
+    pkgs = backend.routes["/packages/"]
+    assert isinstance(pkgs, PackagesBackend)
+    assert pkgs.package_names() == ["Fimbul", "JutulDarcy"]
 
 
 def test_build_backend_skips_missing_and_absent_sources(tmp_path: Path) -> None:
     adapter = make_fake_adapter(tmp_path)
-    # No package sources at all.
+    # No package sources at all: no /packages/ route is created.
     backend = build_backend(adapter, workspace=tmp_path, package_sources=None)
     assert not any(route.startswith("/packages/") for route in backend.routes)
 
-    # A declared source whose path doesn't exist is silently skipped.
+    # A declared source whose path doesn't exist is silently skipped, leaving the
+    # /packages/ route present but empty.
     backend = build_backend(
         adapter,
         workspace=tmp_path,
         package_sources=[PackageSource(name="Ghost", path=tmp_path / "nope")],
     )
-    assert "/packages/Ghost/" not in backend.routes
+    assert backend.routes["/packages/"].package_names() == []

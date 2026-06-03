@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +25,10 @@ from deepagents import (
     create_deep_agent,
     register_harness_profile,
 )
-from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend
 
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
-from jutul_agent.agent.backend import ReadOnlyFilesystemBackend
+from jutul_agent.agent.backend import WorkspaceShellBackend
 from jutul_agent.agent.julia_plot import make_julia_plot_tool
 from jutul_agent.agent.memory import (
     build_memory_middleware,
@@ -38,16 +37,21 @@ from jutul_agent.agent.memory import (
     memory_backend_route,
 )
 from jutul_agent.agent.mounts import mount_dir
+from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
 from jutul_agent.agent.tools import (
     make_julia_eval_tool,
     make_record_attempt_tool,
+    make_reset_julia_tool,
     make_write_report_tool,
 )
 from jutul_agent.paths import SHARED_SKILLS_DIR, workspace_memory_dir, workspace_root
 from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import TraceRecorder
+from jutul_agent.workspace import resolve_julia_project
+
+__all__ = ["PackageSource", "build_agent", "build_backend", "resolve_model"]
 
 DEFAULT_MODEL = "openai:gpt-5.4-mini"
 MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
@@ -58,21 +62,6 @@ _SESSION_ROUTE = "/session/"
 _PACKAGES_ROUTE = "/packages/"
 
 
-@dataclass(frozen=True)
-class PackageSource:
-    """An installed Julia package's source dir, to mount under ``/packages/``.
-
-    ``name`` is the Julia package name (``JutulDarcy``, ``Fimbul``, ``Jutul``),
-    so the route is identical whether the package is a registry install or a
-    local ``Pkg.develop`` checkout. ``writable`` is set only for a developed
-    package the user owns; registry installs stay read-only.
-    """
-
-    name: str
-    path: Path
-    writable: bool = False
-
-
 # Appended to the base deepagents prompt closest to the conversation. Keep
 # provider-specific divergence here; the static prompt assembled in
 # ``agent.prompts`` stays simulator-bound.
@@ -80,11 +69,15 @@ _PROMPT_SUFFIX = (
     "When any tool or Julia call fails, read the full error output before continuing. "
     "Diagnose the root cause (wrong path, missing package, API mismatch, stale REPL "
     "state) and retry with a concrete fix — do not repeat the same failing call. "
-    "Virtual file-tool paths (e.g. `/experiments/foo.csv`) are not valid in "
-    "`julia_eval`, `julia_plot`, or `execute`; use workspace-relative paths "
-    "(`experiments/foo.csv`). The installed source of the simulator and its key "
-    "Julia packages is mounted read-only under `/packages/<Package>/` (e.g. "
-    "`/packages/JutulDarcy/`) — `read_file`, `glob`, and `grep` it to study "
+    "The REPL's working directory is the workspace, so refer to files you create "
+    "by a plain workspace-relative path (`model.jl`, `experiments/foo.csv`) — it "
+    "resolves to the same file in the file tools and in `julia_eval` / `execute` "
+    '(`include("model.jl")`); the file\'s real absolute path works in both too. '
+    "Don't pass a leading-slash virtual path like `/model.jl` to Julia, and don't "
+    "invent a `/workspace/` subfolder. The installed source of every package the "
+    "environment resolves — the simulator, what it builds on, and anything you "
+    "`Pkg.add` — is browsable under `/packages/<Package>/` (e.g. "
+    "`/packages/JutulDarcy/`); `read_file`, `glob`, and `grep` it to study "
     "examples (`/packages/<Package>/examples/`) and source "
     "(`/packages/<Package>/src/`) with the same tools you use for workspace files. "
     "Folders the user adds to the session "
@@ -92,8 +85,8 @@ _PROMPT_SUFFIX = (
     "the file tools (in `julia_eval` / `execute` use their absolute on-disk paths, "
     "not the `/dirs/` virtual path). Use `julia_eval` `@doc` / `methods` / "
     "`names` for exact signatures and docstrings. If a Julia package is missing, "
-    "check what is already in the workspace env, use a stdlib alternative "
-    "or install only when necessary. Prefer reading "
+    "check what is already in the workspace env, use a stdlib alternative, "
+    "or `Pkg.add` it when the task needs it. Prefer reading "
     "`/packages/`, probing the REPL, or reading skills over guessing. "
     "Never invoke `julia` (or `julia --project ...`, `julia -e ...`) through "
     "`execute`; use `julia_eval` / `julia_plot` for all Julia code. `execute` "
@@ -143,16 +136,15 @@ def build_backend(
     package_sources: Sequence[PackageSource] | None = None,
     mounted_dirs: Sequence[str | Path] | None = None,
 ) -> CompositeBackend:
-    """Mount the workspace plus stable skill, memory, session, and source routes.
+    """Mount the workspace plus the skill, memory, session, and package routes.
 
-    The shell + filesystem default is rooted at ``workspace`` (defaults to
-    the current ``workspace_root()``). Skill markdown is mounted under
-    ``/skills/shared/`` and ``/skills/simulator/``; the per-workspace
-    memory dir at ``/memory/``; the live session state read-only at
-    ``/session/`` when ``session_dir`` is set. Each ``package_sources`` entry is
-    mounted at ``/packages/<name>/`` — read-only for registry installs, writable
-    for a ``Pkg.develop`` checkout the user owns. Any ``mounted_dirs`` are added
-    writable under ``/dirs/<name>/`` (see ``agent.mounts``).
+    The shell default is rooted at ``workspace`` (defaults to
+    ``workspace_root()``). Skill markdown is mounted under ``/skills/shared/`` and
+    ``/skills/simulator/``, the per-workspace memory dir at ``/memory/``, and the
+    live session state read-only at ``/session/`` when ``session_dir`` is set.
+    When ``package_sources`` is given, a ``/packages/`` :class:`PackagesBackend`
+    exposes one ``/packages/<name>/`` sub-route per package. Any ``mounted_dirs``
+    are added writable under ``/dirs/<name>/`` (see ``agent.mounts``).
     """
 
     routes: dict[str, Any] = {}
@@ -169,17 +161,16 @@ def build_backend(
         routes[route] = backend
     if session_dir is not None:
         routes[_SESSION_ROUTE] = FilesystemBackend(root_dir=session_dir, virtual_mode=True)
-    for source in package_sources or ():
-        if not source.path.is_dir():
-            continue
-        source_cls = FilesystemBackend if source.writable else ReadOnlyFilesystemBackend
-        routes[f"{_PACKAGES_ROUTE}{source.name}/"] = source_cls(
-            root_dir=source.path, virtual_mode=True
-        )
+    if package_sources is not None:
+        # One /packages/ route whose sub-routes mirror the active env; seeded
+        # with the simulator packages here and refreshed by PackageMounts when the env changes.
+        packages_backend = PackagesBackend()
+        packages_backend.set_packages(package_sources)
+        routes[_PACKAGES_ROUTE] = packages_backend
 
     ws = workspace or workspace_root()
     backend = CompositeBackend(
-        default=LocalShellBackend(
+        default=WorkspaceShellBackend(
             root_dir=ws,
             virtual_mode=True,
             inherit_env=True,
@@ -231,8 +222,21 @@ def build_agent(
         mounted_dirs=mounted_dirs,
     )
 
+    # Keep /packages/ in sync with the env: refreshed after each julia_eval so a
+    # package installed via `Pkg.add` becomes browsable under /packages/<Pkg>/.
+    package_mounts: PackageMounts | None = None
+    packages_backend = backend.routes.get(_PACKAGES_ROUTE)
+    if isinstance(packages_backend, PackagesBackend):
+        package_mounts = PackageMounts(
+            packages_backend,
+            session.julia,
+            resolve_julia_project(workspace_root()),
+            seed=package_sources or (),
+        )
+
     tools = [
-        make_julia_eval_tool(session),
+        make_julia_eval_tool(session, package_mounts=package_mounts),
+        make_reset_julia_tool(session),
         make_julia_plot_tool(session),
         make_record_attempt_tool(session),
         make_write_report_tool(session),

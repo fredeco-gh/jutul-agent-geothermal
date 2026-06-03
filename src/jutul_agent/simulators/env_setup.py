@@ -123,6 +123,51 @@ def resolve_package_sources(julia_project: Path, packages: Sequence[str]) -> dic
     return sources
 
 
+def resolve_env_package_sources(julia_project: Path) -> dict[str, tuple[Path, bool]]:
+    """Source dir + dev flag of every package the env resolves.
+
+    Enumerates ``Pkg.dependencies()`` (reads the manifest, no loading/compiling)
+    so the agent can browse the simulator, its dependencies, and anything it
+    later installs under ``/packages/<Package>/``. Returns ``{name: (source_dir,
+    is_dev)}`` where ``is_dev`` marks a ``Pkg.develop`` checkout (mounted
+    writable). Best-effort: an unresolved manifest, missing Julia, or a vanished
+    path yields ``{}`` so the caller can fall back to the simulator packages.
+    """
+
+    if shutil.which("julia") is None:
+        return {}
+    code = (
+        "import Pkg; "
+        "for (_u, _i) in Pkg.dependencies(); "
+        "_i.source === nothing && continue; "
+        'println(_i.name, "\\t", _i.source, "\\t", _i.is_tracking_path ? 1 : 0); '
+        "end"
+    )
+    try:
+        result = subprocess.run(
+            ["julia", f"--project={julia_project}", "--startup-file=no", "-e", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+
+    sources: dict[str, tuple[Path, bool]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        name, path, is_dev = (p.strip() for p in parts)
+        candidate = Path(path)
+        if name and candidate.is_dir():
+            sources[name] = (candidate, is_dev == "1")
+    return sources
+
+
 _PLOT_WARMUP = (
     "using CairoMakie; "
     "fig = Figure(size = (64, 64)); "

@@ -66,6 +66,13 @@ include = [
     "AGENTS.md",
 ]
 
+[tool.uv]
+# Pin resolution to a snapshot date so the committed uv.lock is the canonical,
+# reproducible result for the loose ranges above (CI installs it with
+# `uv sync --locked`). To move forward: bump the date, run `uv lock`, run the
+# tests, and commit the updated lock.
+exclude-newer = "2026-05-19T00:00:00Z"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

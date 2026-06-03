@@ -51,10 +51,27 @@ Read the full stack trace. Common fixes:
 - **File not found** — you probably used a virtual path (`/experiments/...`).
   Retry with a workspace-relative path (`experiments/...`) or `isfile("...")`
   in the REPL to confirm.
-- **Package not found** — check `using Pkg; Pkg.status()` in the workspace env,
-  use stdlib (`DelimitedFiles.readdlm`) if appropriate, or install only when
-  the task truly needs it.
+- **Package not found** — confirm with `using Pkg; Pkg.status()`. If a Julia
+  standard library already covers the need, prefer it over adding a dependency.
+  Otherwise `Pkg.add` it when the task needs it; the added package is then
+  browsable under `/packages/<Package>/`.
 - **Method/API error** — probe with `@doc`, `methods`, and a smaller snippet
   before retrying the full script.
+- **Old version installed, or a just-added package won't precompile** — a
+  long-lived env holds shared dependencies at their pinned versions, so a plain
+  `Pkg.add` may only fit an old one. Inspect with `Pkg.status(outdated = true)`
+  (`⌃`/`⌅` flag held-back packages) and `Pkg.why("Dep")`, then `Pkg.update()` to
+  re-resolve the whole env and retry. Only a package still held back after a full
+  update is a genuine compatibility limit.
+- **A loaded module won't resolve (`PkgId(...) not found`)** — the session's
+  loaded modules are out of sync with the env, usually after a mid-session
+  package change. Julia can't reload a module from inside the REPL, so this needs
+  `reset_julia` (see below).
+
+`reset_julia` restarts Julia with an empty session. It is the right fix when a
+module must be reloaded, but it clears **all** state — loaded packages, values,
+and results — and recompiles on the next run. Use it deliberately, not as a
+default; install the packages you need *before* building up expensive state so a
+reset stays cheap.
 
 Do not repeat the same failing expression unchanged.
