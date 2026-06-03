@@ -64,7 +64,17 @@ def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | No
             REPL-style output: printed output plus the return value, or an
             error description if the evaluation failed.
         """
-        result = await session.julia.eval(code)
+        try:
+            result = await session.julia.eval(code)
+        except Exception as exc:
+            # A transport-level failure (not a Julia error): the session died,
+            # e.g. the process was killed or crashed. Surface it as a recoverable
+            # error rather than a raw traceback, and point at the way out.
+            return (
+                f"ERROR: the Julia session is unavailable ({type(exc).__name__}: {exc}). "
+                "The process may have been killed or crashed — call `reset_julia` to "
+                "start a fresh session."
+            )
         # A `Pkg.add`/`Pkg.develop` here changes the env; keep /packages/ in
         # sync so the new package is browsable. Cheap unless the
         # manifest actually changed, and never allowed to break the eval.
@@ -92,15 +102,25 @@ def make_reset_julia_tool(session: Session):
         variables, and anything you built (models, simulation results) — and the
         next run pays compilation again. Use it deliberately, mainly when a module
         must be reloaded (Julia can't swap a module already loaded this session,
-        e.g. after installing or updating one). Prefer installing packages before
-        building up expensive state, and re-run your `using`/setup afterward.
+        e.g. after installing or updating one), or to recover when the session has
+        died (a killed or crashed process). Prefer installing packages before
+        building up expensive state.
 
         Returns:
             Confirmation that the session was restarted, or an error description.
         """
-        result = await session.julia.reset()
-        if result.error:
-            return f"ERROR: failed to reset Julia: {result.error}"
+        # Try the cheap cooperative reset first. If the session is unresponsive or
+        # already gone (e.g. the process was killed), fall back to a full restart
+        # of the subprocess, which doesn't depend on the old session at all.
+        try:
+            reset_ok = not (await session.julia.reset()).error
+        except Exception:
+            reset_ok = False
+        if not reset_ok:
+            try:
+                await session.julia.restart()
+            except Exception as exc:
+                return f"ERROR: failed to restart Julia: {exc}"
         return (
             "Julia restarted with a fresh session. All previous state "
             "(loaded packages, variables, results) was cleared."

@@ -24,12 +24,39 @@ async def _call(tool, name: str, **args) -> str:
     return str(getattr(msg, "content", msg))
 
 
-async def test_reset_julia_restarts_backend(tmp_path: Path) -> None:
+async def test_reset_julia_uses_cooperative_reset_when_healthy(tmp_path: Path) -> None:
     julia = FakeJulia()
     tool = make_reset_julia_tool(_session(julia, tmp_path))
     out = await _call(tool, "reset_julia")
     assert julia.reset_count == 1
+    assert julia.restart_count == 0  # healthy session: no full restart needed
     assert "restarted" in out.lower()
+
+
+async def test_reset_julia_falls_back_to_restart_when_session_dead(tmp_path: Path) -> None:
+    # A killed/crashed process makes the cooperative reset raise; the tool must
+    # still recover by force-restarting the subprocess.
+    julia = FakeJulia()
+
+    async def _dead_reset() -> EvalResult:
+        raise RuntimeError("Connection closed")
+
+    julia.reset = _dead_reset  # type: ignore[method-assign]
+    tool = make_reset_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "reset_julia")
+    assert julia.restart_count == 1
+    assert "restarted" in out.lower()
+
+
+async def test_julia_eval_reports_recoverable_error_on_dead_session(tmp_path: Path) -> None:
+    def _boom(code: str) -> EvalResult:
+        raise RuntimeError("Connection closed")
+
+    julia = FakeJulia(eval_handler=_boom)
+    tool = make_julia_eval_tool(_session(julia, tmp_path))
+    out = await _call(tool, "julia_eval", code="1 + 1")
+    assert "reset_julia" in out
+    assert "unavailable" in out.lower()
 
 
 async def test_julia_eval_appends_reset_hint_on_stale_load(tmp_path: Path) -> None:
