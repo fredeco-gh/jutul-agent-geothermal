@@ -8,7 +8,11 @@ AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+LayeredLayouts = "f4a74d36-062a-4d48-97cd-1356bad1de4e"
+NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
 Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 
 # AgentREPL.jl is not in the General registry yet.

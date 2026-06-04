@@ -23,6 +23,12 @@ FIMBUL = SimulatorAdapter(
             "Statistics",
             "Interpolations",
         ),
+        native_plot_block=(
+            "g = CartesianMesh((2, 2, 1), (1.0, 1.0, 1.0))\n"
+            "dom = reservoir_domain(g, permeability = 1e-13, porosity = 0.2)\n"
+            "fig, ax, plt = plot_cell_data(physical_representation(dom), dom[:porosity])\n"
+            'save(joinpath(tempdir(), "jutul_agent_native_warmup.png"), fig)'
+        ),
     ),
     domain_hints=(
         "Fimbul is a geothermal reservoir simulator built on top of JutulDarcy. "

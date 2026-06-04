@@ -124,6 +124,34 @@ def test_build_backend_mounts_package_source_read_only(tmp_path: Path, source_di
     assert backend.write("/packages/BattMo/examples/x.jl", "y").error is not None
 
 
+def test_recursive_glob_normalizes_bare_extension() -> None:
+    from jutul_agent.agent.backend import _recursive_glob
+
+    assert _recursive_glob("*.jl") == "**/*.jl"
+    assert _recursive_glob("foo.jl") == "**/foo.jl"
+    assert _recursive_glob("**/*.jl") == "**/*.jl"  # already recursive
+    assert _recursive_glob("src/*.jl") == "src/*.jl"  # carries a path, left alone
+    assert _recursive_glob(None) is None
+
+
+def test_grep_with_extension_filter_recurses_into_subdirs(tmp_path: Path, source_dir: Path) -> None:
+    # A type-filtered grep (glob="*.jl") must find matches in subdirectories. The
+    # deepagents default treats a bare glob as non-recursive, which silently hid
+    # package-extension code (e.g. plot_variable_graph in Jutul's src/ext/).
+    deep = source_dir / "src" / "ext" / "graphmakie_ext.jl"
+    deep.parent.mkdir(parents=True)
+    deep.write_text("function plot_variable_graph(x) end\n", encoding="utf-8")
+
+    backend = build_backend(
+        make_fake_adapter(tmp_path),
+        workspace=tmp_path,
+        package_sources=[PackageSource(name="BattMo", path=source_dir)],
+    )
+    hit = backend.grep("plot_variable_graph", path="/packages/BattMo", glob="*.jl")
+    matches = getattr(hit, "matches", hit)
+    assert matches, "grep with glob='*.jl' must recurse into src/ext/"
+
+
 def test_build_backend_mounts_developed_source_writable(tmp_path: Path, source_dir: Path) -> None:
     adapter = make_fake_adapter(tmp_path)
     backend = build_backend(

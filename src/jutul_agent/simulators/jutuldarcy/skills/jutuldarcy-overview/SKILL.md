@@ -54,7 +54,45 @@ etc. `keys(wd[:Producer])` lists what is available.
 
 ## Plotting
 
-Headless plotting: `julia_plot` with `well_rates_figure(wd)` /
-`cell_field_heatmap(g, field)` from `plots.jl`, `plot_co2_inventory(t, inv)` (Makie
-ext, reachable headlessly), or inline Makie. Interactive viewers (`plot_well_results`,
-`plot_reservoir`) require GLMakie and are opt-in.
+Use the **native plotters** through `julia_plot` — they run on GLMakie (the
+default backend) and are captured to an image automatically, headless or not:
+
+- `plot_reservoir(model)` — 3D reservoir mesh + well trajectories
+- `plot_reservoir(model, states[end])` — a state colored on the 3D mesh. Pass the
+  whole state dict, or a per-cell **vector** like `states[end][:Saturations][2, :]`
+  — not a scalar slice, which raises "No plottable properties found".
+- `plot_well_results(wd)` — well rate / BHP dashboard
+- `plot_cell_data(physical_representation(domain), field)` — a scalar field on the mesh
+- `plot_co2_inventory(t, inv)` — CO2 inventory over time (2D)
+- `plot_model_graph(model)` / `plot_variable_graph(reservoir_model(model))` —
+  model / variable dependency graphs. These live in a Jutul package **extension**,
+  so run `using GraphMakie, NetworkLayout, LayeredLayouts` first to activate them
+  (the packages are already in the env). Use the real plotter; don't hand-draw a
+  graph.
+
+Just call them — no backend juggling, no need to return a `Figure`. In an
+interactive session a live window opens for the user by default (`window=false` to
+suppress); pass `view=true` to inspect a plot yourself.
+
+**Plot from the live REPL bindings.** Your run already left `model`, `states`,
+`wd` in the REPL — call the plotter straight on them. Do **not** rebuild the case
+and re-run `simulate_reservoir` inside `julia_plot`; that re-simulates on every
+plot. Re-run only if you changed the setup.
+
+For a **chrome-free static artifact** (3D field + wells without `plot_reservoir`'s
+GUI menus), compose the native pieces into a plain `Axis3`. Note `plot_well!` wants
+the `Axis3`'s `scene` in this non-GUI path:
+
+```julia
+rmodel = reservoir_model(model)
+g = physical_representation(rmodel.data_domain)
+fig = Figure(size = (900, 600))
+ax = Axis3(fig[1, 1]; zreversed = true, title = "Reservoir")
+plt = plot_cell_data!(ax, g, collect(rmodel.data_domain[:porosity]); colormap = :viridis)
+Colorbar(fig[1, 2], plt)
+for (_, m) in pairs(model.models)              # overlay wells (MultiModel)
+    w = physical_representation(m.data_domain)
+    w isa WellDomain && plot_well!(ax.scene, g, w)
+end
+fig
+```

@@ -1,6 +1,6 @@
 ---
 name: plotting-basics
-description: Headless Makie plotting contract and session artifact capture via julia_plot
+description: How to plot with julia_plot: native plotters, live windows, and seeing your own plots
 ---
 
 # Plotting basics
@@ -10,81 +10,111 @@ description: Headless Makie plotting contract and session artifact capture via j
 Use this skill whenever the user asks for a plot, chart, figure, or visualization,
 or when a plot would make simulation results easier to understand.
 
-## Headless contract
+## The model: `julia_plot` captures whatever you draw
 
-- Use `julia_plot` — not `julia_eval` — to produce plots that appear in the transcript.
-- Code must evaluate to a **Makie `Figure`**. The last expression should be `fig`.
-- Do **not** call `display(fig)` or any plotter that opens an interactive
-  window unless the user explicitly asks for one.
-- Prefer **CairoMakie** (loaded automatically by `julia_plot`). Do not `using GLMakie`
-  in routine agent plots.
+Use `julia_plot` for **anything that produces a figure** — never build a `Figure`
+in `julia_eval` (that saves no artifact and the user can't see it). `julia_plot`:
 
-## Formats and sizing
+- activates the right Makie backend for this session (you don't manage backends),
+- evaluates your code, and
+- captures the resulting figure to an image file — whether your code **returns** a
+  `Figure`, returns a `(fig, ax, plot)` tuple, or calls a native plotter that opens
+  a window / calls `display` internally.
 
-- Default format is **PNG** (`format="png"`).
-- Use **SVG** (`format="svg"`) for simple line plots when vector output is useful.
-- Pass `size=(width, height)` when you need a specific resolution.
-- Use `slot="name"` to overwrite the same artifact path when comparing iterations
-  (e.g. `slot="saturation_final"`).
+So you do **not** need to end on `fig`, and you do **not** need to avoid `display`.
+Just call the plotter.
 
-## Raw Makie example
+## Prefer native plotters
+
+Call your simulator's own documented plotters first — they are the canonical,
+best-looking views, they run on GLMakie, and `julia_plot` captures them
+automatically. The `<sim>-overview` skill lists the plotters for your simulator.
+
+Build a `Figure` inline when no native plotter fits, or when you want a specific
+custom view:
 
 ```julia
-using CairoMakie
 fig = Figure(size = (600, 400))
-ax = Axis(fig[1, 1], title = "Example", xlabel = "x", ylabel = "y")
-x = range(0, 2pi, length = 100)
-lines!(ax, x, sin.(x))
+ax = Axis(fig[1, 1], title = "History match", xlabel = "t", ylabel = "rate")
+lines!(ax, t, sim); scatter!(ax, t, obs)
 fig
 ```
 
-Then call `julia_plot` with that code (or paste the body into `julia_plot`'s `code` arg).
+## Seeing your own plot: `view=true`
+
+Pass `view=true` to get the (downscaled) image back so **you** can look at it —
+to verify a curve overlays the data, spot an anomaly, or check a 3D view. Use it
+deliberately, not on every plot (each image costs tokens). The user always sees
+the saved artifact regardless of `view`.
+
+```text
+julia_plot(code="<your plot code>", view=true)   # then reason about what you see
+```
+
+## How the user sees a plot
+
+In an interactive session `julia_plot` **opens a live Makie window** for the user,
+a real plot window they can rotate, zoom, and step; a PNG is saved too. There's no
+separate "interactive" mode, just plot. (Headless and one-shot runs can't show a
+window and only save the PNG.)
+
+- `view` is for **you**, not the user — it returns the image to you; it opens
+  nothing for them.
+- Pass `window=false` only to compute/inspect a plot without opening a window.
+- If the user says they can't see a plot, you probably built it in `julia_eval`
+  (use `julia_plot`) or set `window=false` — fix that, don't just re-describe it.
+
+## Windows: slots, recapture, close
+
+Each plot opens a window keyed by its `slot`:
+
+- **Reuse** a window: the same `slot` refreshes that one window in place — use this
+  when iterating so you don't spawn a window per attempt.
+- **Separate** windows: give distinct plots distinct slots (`slot="reservoir"`,
+  `slot="wells"`) so they open as separate windows you can address individually.
+- **Recapture** after the user rotates/zooms/steps a window:
+  `recapture_plot(slot="reservoir")` re-renders that plot's figure at its current
+  state and returns the image. Omit `slot` for the most recent. It renders the
+  figure jutul-agent still holds, so it works even if the user closed the window
+  (you get its last state); only `close_plots` discards it. You can't advance the
+  timestep yourself — ask the user to step the window, then recapture.
+- **Close** windows with `close_plots(slot="reservoir")` (one) or `close_plots()` (all).
+
+## Diagnostics & model structure
+
+- **Solver performance/convergence**: build these **inline** from the result's
+  reports (the native `plot_solve_breakdown`/`plot_cumulative_solve` family is
+  finicky about argument types — prefer this). `reports = result.result.reports`,
+  then per report step `r`: `length(r[:ministeps])`, `r[:total_time]`, and per
+  ministep `m`: `m[:linear_iterations]`, `m[:convergence_time]`. Plot vs report
+  step with `Figure`/`Axis`/`lines!` through `julia_plot`.
+- **Model structure** (Jutul-based simulators): the dependency graph is drawn by a
+  Jutul package extension that only activates once the GraphMakie stack is loaded.
+  Load all three first, in the same `julia_plot` call, then call the plotter:
+  ```julia
+  using GraphMakie, NetworkLayout, LayeredLayouts
+  plot_variable_graph(reservoir_model(model))   # per-variable dependencies
+  # or: plot_model_graph(model)
+  ```
+  If it errors with "no method matching plot_variable_graph", the extension hasn't
+  loaded yet — re-run the `using` line and the plotter together in one call.
+
+## Sizing and slots
+
+- Output is **PNG**. `size=(width, height)` sets a specific resolution.
+- `slot="name"` overwrites the same artifact path when refreshing a comparison
+  during calibration (e.g. `slot="saturation_final"`).
 
 ## Loading tabular data
 
-Observations and metrics often live in CSV files under `experiments/`.
-Use workspace-relative paths in Julia (no leading slash):
-
 ```julia
 using CSV, DataFrames
-obs = CSV.read("experiments/observations/data.csv", DataFrame)
+obs = CSV.read("experiments/observations/data.csv", DataFrame)   # workspace-relative, no leading slash
 ```
-
-Prefer `CSV` + `DataFrames` (when available in the simulator's Julia env)
-over shelling out to read files.
-
-## Decision rule
-
-Prefer in order:
-
-1. **Inline Makie** built against the live result object — probe with `keys(...)` /
-   `propertynames(...)`, then draw with `Figure` / `Axis` / `lines!` / `heatmap!`.
-   Guaranteed to work headlessly under CairoMakie.
-2. A **native simulator plotter** that returns a populated `Figure` and is
-   documented as CairoMakie-compatible. Verify it isn't a GLMakie-only plotter
-   (see the empty-figure trap below).
-3. **Thin helpers** from `plots.jl` when the simulator provides them.
-
-See each simulator's `<sim>-overview` skill for the native plotter names.
-
-## The empty-figure trap
-
-Some simulator plotters are wired to GLMakie and silently return an empty
-`Figure()` under CairoMakie (Julia log shows a warning like
-`Warning: Independent figure creation not implemented for backend CairoMakie`).
-`julia_plot` detects this and errors with "Figure has no content". When you
-see that error, **do not retry the same call** — switch to inline Makie.
-
-## Interactive opt-in
-
-Only when the user explicitly asks for an interactive viewer, load `GLMakie`
-and call the simulator's interactive plotter. Interactive plots open a window
-but are not captured as artifacts — pair them with a static `julia_plot` if
-the user also wants something in the transcript.
 
 ## Performance
 
-- **Do not re-run full simulations inside `julia_plot`** if the REPL already has
-  `t`, `V`, and observed arrays from a recent `julia_eval`. Build the figure from
-  cached vectors instead — plotting should take seconds, not minutes.
+- **Do not re-run a full simulation inside `julia_plot`** if the REPL already holds
+  the result/arrays from a recent `julia_eval` — plot from the cached objects.
+  Plotting should take seconds, not minutes.
 - Reuse `slot=` for comparison plots you refresh during calibration.

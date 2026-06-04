@@ -48,16 +48,15 @@ jobs:
         run: uv sync --locked
 
       # The `integration` tests need a live Julia env (AgentREPL.jl, and for the
-      # plot tests JutulDarcy/BattMo/CairoMakie precompiled). That's too heavy
-      # for the cross-OS lane and isn't provisioned here, so skip it. The
-      # `julia-integration` job below covers the AgentREPL backend on Linux.
+      # plot tests a GLMakie-instantiated JutulDarcy env). That's too heavy for
+      # the cross-OS lane and isn't provisioned here, so skip it. The
+      # `julia-integration` and `plot-integration` jobs cover them on Linux.
       - name: Test
         run: uv run pytest -m "not integration"
 
-  # Lightweight Julia coverage: exercises the Python <-> AgentREPL.jl MCP
-  # backend against the bare `agentrepl_env`. Deliberately does not instantiate
-  # the simulator envs to avoid spending a lot of time precompiling, so the CairoMakie
-  # plot integration tests are local-only.
+  # Lightweight Julia coverage: exercises the Python <-> AgentREPL.jl MCP backend
+  # against the bare `agentrepl_env`. The heavier plot tests (which need a
+  # GLMakie-instantiated simulator env) run in the `plot-integration` job below.
   julia-integration:
     runs-on: ubuntu-latest
     steps:
@@ -90,3 +89,49 @@ jobs:
 
       - name: Test (AgentREPL backend)
         run: uv run pytest tests/test_julia_session.py
+
+  # Real plotting coverage: instantiate a GLMakie-enabled JutulDarcy env and run
+  # the julia_plot integration tests (our capture/window/view machinery and the
+  # native plotters, incl. the variable graph). Heavy on a cold cache; the Julia
+  # artifact cache makes reruns cheaper. The BattMo plot test skips here (its env
+  # isn't instantiated) — JutulDarcy is the meaningful native-plotter coverage.
+  plot-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12"
+
+      - name: Cache Julia artifacts
+        uses: julia-actions/cache@v2
+
+      # GLMakie needs an OpenGL context; the runner is headless, so provide a
+      # virtual X server (xvfb) plus Mesa software GL. jutul-agent auto-wraps the
+      # Julia worker in xvfb-run at runtime, and we wrap the precompile below.
+      - name: Install headless OpenGL (xvfb + Mesa)
+        run: sudo apt-get update && sudo apt-get install -y xvfb xorg-dev mesa-utils libgl1 libgl1-mesa-dri
+
+      # Registry.update() bootstraps the General registry on a fresh depot; then
+      # instantiate resolves AgentREPL (from [sources]) + JutulDarcy + GLMakie +
+      # the GraphMakie stack. Wrapped in xvfb-run so GLMakie can precompile with a
+      # GL context.
+      - name: Instantiate JutulDarcy env
+        run: >
+          xvfb-run -a julia
+          --project=src/jutul_agent/simulators/jutuldarcy/julia_env --startup-file=no
+          -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'
+
+      - name: Test (plot integration)
+        run: uv run pytest tests/integration/test_julia_plot_integration.py -v

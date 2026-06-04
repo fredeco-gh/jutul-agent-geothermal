@@ -3,15 +3,16 @@
 ``ReadOnlyFilesystemBackend`` serves reads and search but rejects writes; it
 backs the read-only ``/packages/<Package>/`` mounts (editing the shared Julia
 depot would corrupt it for every project). ``WorkspaceShellBackend`` is the
-writable default at ``/``.
+writable default at ``/``. ``RecursiveGrepBackend`` is the top-level composite,
+fixing a grep glob that otherwise silently skips subdirectories.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from deepagents.backends import FilesystemBackend, LocalShellBackend
-from deepagents.backends.protocol import EditResult, WriteResult
+from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.backends.protocol import EditResult, GrepResult, WriteResult
 
 _READ_ONLY_MSG = (
     "Error: '{path}' is read-only package source mounted under /packages/. "
@@ -34,6 +35,39 @@ def _is_host_path(key: str) -> bool:
         return True
     first = key.lstrip("/").split("/", 1)[0] if key.startswith("/") else ""
     return bool(first) and Path("/" + first).is_dir()
+
+
+def _recursive_glob(glob: str | None) -> str | None:
+    """Make a slash-free grep filter recursive.
+
+    deepagents matches a bare ``*.jl`` glob only against files directly in the
+    searched directory, so a type-filtered grep silently skips subdirectories
+    (e.g. a package's ``src/ext/``, where Julia keeps extension code). ripgrep and
+    the agent's expectation treat it as recursive, so rewrite ``*.jl`` to
+    ``**/*.jl``. Patterns that already carry a path (``src/*.jl``, ``**/*.jl``)
+    are left alone.
+    """
+
+    if glob and "/" not in glob:
+        return f"**/{glob}"
+    return glob
+
+
+class RecursiveGrepBackend(CompositeBackend):
+    """Top-level composite whose grep recurses on a bare ``*.ext`` filter.
+
+    See :func:`_recursive_glob`. Normalizing here, the one backend the grep tool
+    calls, fixes every route, including the nested ``/packages/`` composite, since
+    the composite forwards the same glob to the sub-backend it resolves to.
+    """
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
+        return super().grep(pattern, path=path, glob=_recursive_glob(glob))
+
+    async def agrep(
+        self, pattern: str, path: str | None = None, glob: str | None = None
+    ) -> GrepResult:
+        return await super().agrep(pattern, path=path, glob=_recursive_glob(glob))
 
 
 class ReadOnlyFilesystemBackend(FilesystemBackend):

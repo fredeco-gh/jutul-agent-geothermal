@@ -71,9 +71,14 @@ Mocca.export_cell_results(
 
 ## Plotting
 
-Headless plotting: `julia_plot` with `Mocca.plot_outlet(case, states, timesteps)`
-(outlet concentrations / breakthrough; returns a CairoMakie `Figure`). Also
-`plot_cell`, `plot_state` for other views. Do not call `display(fig)`.
+Call Mocca's native plotters through `julia_plot` — they are backend-agnostic
+and captured automatically:
+
+- `plot_outlet(case, states, timesteps)` — outlet concentrations / breakthrough
+- `plot_state(state, model)`, `plot_cell(states, model, timesteps, cell)` — field/cell views
+- `plot_optimization_history(dict_parameters)` — calibration history
+
+No need to avoid `display`. Pass `view=true` to inspect a plot yourself.
 
 ## Notes
 

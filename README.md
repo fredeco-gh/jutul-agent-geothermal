@@ -16,6 +16,8 @@ Works on Linux, macOS, and Windows. You need three things on PATH:
 - **Julia 1.12+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
 - **uv** — Astral's Python project manager (handles the venv and entry points)
 
+On a **headless Linux** server, plotting also needs `xvfb` (`sudo apt-get install -y xvfb`); without it, simulation still works but plot calls error.
+
 ### 1. Install `uv`
 
 If `uv` is not already on your PATH, use Astral's standalone installer
@@ -176,6 +178,8 @@ It checks, with a one-line fix for each problem:
 - that project has a `Project.toml` containing `AgentREPL`
 - the simulator's package is actually resolved in the env's `Manifest.toml`
   (catches a `Project.toml` that lists it but was never instantiated)
+- a display is available for plotting — and on a headless Linux box, that
+  `xvfb` is installed so GLMakie can render (warns, doesn't fail)
 - `using AgentREPL` actually loads in that project
 
 **Gotcha — workspace vs. launch directory.** `jutul-agent` uses the

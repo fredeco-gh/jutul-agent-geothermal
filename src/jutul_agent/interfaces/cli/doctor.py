@@ -14,6 +14,11 @@ import sys
 import tomllib
 from pathlib import Path
 
+from jutul_agent.agent.render_profile import (
+    has_display,
+    plotting_display_available,
+    xvfb_opted_out,
+)
 from jutul_agent.interfaces.cli._helpers import (
     add_workspace_flags,
     known_packages_map,
@@ -81,6 +86,7 @@ def run(args: argparse.Namespace) -> int:
     project = _check_julia_project(report, ws)
     has_agentrepl = _check_agentrepl_dep(report, project)
     _check_simulator_installed(report, project, sim_name)
+    _check_plotting_display(report)
 
     # Only attempt the (slow) load if the cheap checks passed — otherwise the
     # error would just restate what we already reported.
@@ -210,6 +216,41 @@ def _check_simulator_installed(report: _Report, project: Path | None, sim_name: 
         f"{pkg} resolved in env",
         f"{pkg} is in Project.toml but not in Manifest.toml (env not instantiated)",
         f"Run `jutul-agent init --sim {sim_name} --precompile` to install it.",
+    )
+
+
+def _check_plotting_display(report: _Report) -> None:
+    """Warn when GLMakie has no display here, so plotting will be unavailable.
+
+    Plotting is optional: simulation, eval, and the file tools work without it.
+    So this only ever WARNs — a real display (any desktop OS, or X/Wayland on
+    Linux) passes; headless Linux passes when ``xvfb-run`` is on PATH (the backend
+    wraps the worker in it). It warns when headless Linux has neither, with the
+    one command that fixes it.
+    """
+
+    if plotting_display_available():
+        detail = (
+            "display detected" if has_display() else "headless; xvfb-run found (renders to file)"
+        )
+        report.line(PASS, "Plotting display (GLMakie)", detail)
+        return
+    # Only reachable on headless Linux (desktop OSes always report a display).
+    if xvfb_opted_out():
+        report.line(
+            WARN,
+            "Plotting display (GLMakie)",
+            "headless and JUTUL_AGENT_NO_XVFB is set, so GLMakie plotting is disabled",
+            "Unset JUTUL_AGENT_NO_XVFB (and install xvfb) to enable plotting; "
+            "simulation works without it.",
+        )
+        return
+    report.line(
+        WARN,
+        "Plotting display (GLMakie)",
+        "headless (no display) and xvfb-run not found, so GLMakie plotting is unavailable",
+        "Install xvfb (e.g. `sudo apt-get install -y xvfb`) to enable plotting; "
+        "simulation works without it.",
     )
 
 

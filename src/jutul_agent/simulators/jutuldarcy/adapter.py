@@ -15,6 +15,12 @@ JUTULDARCY = SimulatorAdapter(
     primary_package="JutulDarcy",
     warmup_code=warmup_script(
         packages=("Jutul", "JutulDarcy", "CSV", "DataFrames", "Statistics", "Interpolations"),
+        native_plot_block=(
+            "g = CartesianMesh((2, 2, 1), (1.0, 1.0, 1.0))\n"
+            "dom = reservoir_domain(g, permeability = 1e-13, porosity = 0.2)\n"
+            "fig, ax, plt = plot_cell_data(physical_representation(dom), dom[:porosity])\n"
+            'save(joinpath(tempdir(), "jutul_agent_native_warmup.png"), fig)'
+        ),
     ),
     domain_hints=(
         "JutulDarcy is a fully-differentiable porous-media reservoir simulator "

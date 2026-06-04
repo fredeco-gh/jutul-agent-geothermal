@@ -81,7 +81,7 @@ async def test_all_real_adapters_warm_their_primary_package() -> None:
 
 
 async def test_all_real_adapters_warm_the_plotting_path() -> None:
-    """Warm-up must compile the CairoMakie save path so the first plot is fast."""
+    """Warm-up must compile the GLMakie save path so the first plot is fast."""
 
     from jutul_agent.simulators import registry
 
@@ -89,23 +89,23 @@ async def test_all_real_adapters_warm_the_plotting_path() -> None:
         if name == "vocsim":
             continue
         adapter = registry.get(name)
-        assert "CairoMakie.save" in adapter.warmup_code, (
+        assert "GLMakie.activate!(visible = false)" in adapter.warmup_code, (
             f"adapter {name!r} does not warm the plotting path"
         )
 
 
-def test_warmup_loads_cairomakie_before_solving() -> None:
-    """CairoMakie must load before the solve.
+def test_warmup_loads_glmakie_before_solving() -> None:
+    """GLMakie must load before the solve.
 
     Loading a package after warming the solve invalidates the solve's compiled
-    code, so the agent's first real solve recompiles from scratch (~35 s vs
-    ~0.6 s). CairoMakie therefore has to be in the up-front `using`.
+    code, so the agent's first real solve recompiles from scratch. GLMakie
+    therefore has to be in the up-front `using`.
     """
     from jutul_agent.simulators.warmup import warmup_script
 
     script = warmup_script(packages=("BattMo",), solve_block="solve(sim)")
-    assert "CairoMakie" in script.split("solve(", 1)[0], (
-        "CairoMakie must be loaded before the warm-up solve to avoid invalidation"
+    assert "GLMakie" in script.split("solve(", 1)[0], (
+        "GLMakie must be loaded before the warm-up solve to avoid invalidation"
     )
 
 
@@ -115,11 +115,18 @@ def test_warmup_script_stages_are_independent_try_blocks() -> None:
     from jutul_agent.simulators.warmup import warmup_script
 
     script = warmup_script(packages=("Foo",), solve_block="error_here()")
-    # using, solve, and plotting are each their own try/catch.
+    # using(Foo, GLMakie), solve, GLMakie save: each its own try/catch so one
+    # failure can't abort the rest.
     assert script.count("try") == 3
     assert script.count("catch") == 3
-    assert "using Foo" in script
+    assert "using Foo, GLMakie" in script
     assert "error_here()" in script
+    assert "GLMakie.activate!(visible = false)" in script
+
+    # Opting out of plotting drops the GLMakie stages (down to the solve only).
+    no_plot = warmup_script(packages=("Foo",), solve_block="x()", warm_plotting=False)
+    assert no_plot.count("try") == 2
+    assert "GLMakie" not in no_plot
 
 
 def test_battmo_warmup_runs_a_real_solve() -> None:

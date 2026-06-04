@@ -18,6 +18,7 @@ from typing import IO, Self
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from jutul_agent.agent.render_profile import should_wrap_xvfb
 from jutul_agent.julia.backends.agentrepl.text import render_terminal_output
 from jutul_agent.julia.requirements import MIN_JULIA_VERSION, check_julia
 from jutul_agent.julia.session import EvalResult
@@ -277,8 +278,14 @@ class AgentREPLBackend:
             env = dict(os.environ)
             env["JULIA_REPL_LOG"] = str(self._config.log_file.resolve())
             env["JULIA_REPL_VIEWER"] = "file"
+        command = self._config.julia_executable
+        if should_wrap_xvfb():
+            # `xvfb-run -a` picks a free display and runs Julia (+ its inherited
+            # Distributed worker) under a virtual X server for headless GLMakie.
+            args = ["-a", "-s", "-screen 0 1280x1024x24", command, *args]
+            command = "xvfb-run"
         return StdioServerParameters(
-            command=self._config.julia_executable,
+            command=command,
             args=args,
             env=env,
             cwd=str(self._config.cwd) if self._config.cwd is not None else None,
