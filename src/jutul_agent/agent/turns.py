@@ -23,6 +23,16 @@ from jutul_agent.trace import TraceLog
 MessageCallback = Callable[[Any], Awaitable[None] | None]
 ResumePayload = dict[str, dict[str, list[dict[str, str]]]]
 
+# langchain's ``create_agent`` (which deepagents builds on) runs the model in a
+# graph node named ``"model"``. Tool results come from the ``"tools"`` node, and
+# middleware hooks from ``"{name}.before_model"`` / ``".after_model"``. The v3
+# ``run.messages`` projection surfaces a per-message stream for *every* node —
+# including whole ``ToolMessage``s, whose ``.text`` is the full tool result. Only
+# the model node's stream is the assistant's visible turn, so we render text and
+# reasoning from that node alone; otherwise tool output (file reads, skill and
+# memory text) leaks into the chat as if the assistant had typed it.
+_MODEL_NODE = "model"
+
 
 @dataclass(frozen=True)
 class TurnInterrupt:
@@ -129,15 +139,23 @@ class TurnRunner:
 
 
 async def _drain_messages(run: Any, on_message: MessageCallback | None) -> None:
-    """Stream text + reasoning + tool-call deltas from ``run.messages``."""
+    """Stream text + reasoning + tool-call deltas from ``run.messages``.
+
+    Each ``run.messages`` item is one node's message stream. Only the model
+    node carries the assistant's visible turn; for every other stream (tool
+    results, summarization/memory middleware) we still drain the projections
+    so the caller-driven pump advances, but emit nothing. See ``_MODEL_NODE``.
+    """
 
     async for message_stream in run.messages:
+        is_model = getattr(message_stream, "node", None) == _MODEL_NODE
+        emit = on_message if is_model else None
         await asyncio.gather(
-            _drain_text(message_stream, on_message),
-            _drain_reasoning(message_stream, on_message),
-            _drain_tool_call_chunks(message_stream, on_message),
+            _drain_text(message_stream, emit),
+            _drain_reasoning(message_stream, emit),
+            _drain_tool_call_chunks(message_stream, emit),
         )
-        if on_message is not None:
+        if on_message is not None and is_model:
             await _emit(on_message, AIMessageChunk(content="", chunk_position="last"))
 
 

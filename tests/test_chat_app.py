@@ -413,20 +413,6 @@ async def test_copy_command_copies_last_assistant_message(session: Session, monk
         assert copied[0].strip()  # the assistant reply text, non-empty
 
 
-async def test_streamed_memory_dump_is_suppressed(session: Session) -> None:
-    # Regression: per-chunk filtering used to drop the chunk holding the
-    # `# Memory index` marker but keep the rest, leaking the dump. The filter
-    # must see the accumulated buffer and suppress the whole block.
-    app = TUIApp(agent=_stub_agent(), session=session)
-    async with app.run_test():
-        await wait_until_ready(app)
-        chunks = ["```\n# Memory index\n", "\nThis file is the always-loaded index.\n", "```"]
-        for chunk in chunks:
-            await app._stream.append_prose(app._log, chunk, filter_text=app._filter_assistant_text)
-        assert app._stream.prose is None  # nothing surfaced
-        assert not [b for b in app.query(MessageBlock) if b.has_class("assistant")]
-
-
 async def test_warming_indicator_coexists_with_turn_status(session: Session) -> None:
     # The warm-up indicator must stay visible while a turn runs (it used to be
     # replaced by "thinking…" / the Ctrl+G hint), and it lives in the bottom bar.
@@ -448,9 +434,9 @@ async def test_streamed_normal_prose_is_shown(session: Session) -> None:
     async with app.run_test():
         await wait_until_ready(app)
         for chunk in ["The cell uses ", "the chen_2020 set."]:
-            await app._stream.append_prose(app._log, chunk, filter_text=app._filter_assistant_text)
+            await app._stream.append_prose(app._log, chunk)
         assert app._stream.prose is not None
-        assert app._stream._prose_buffer == "The cell uses the chen_2020 set."
+        assert app._stream.prose._content == "The cell uses the chen_2020 set."
 
 
 async def test_tui_does_not_mount_footer_shortcuts(session: Session) -> None:

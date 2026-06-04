@@ -45,6 +45,7 @@ async def test_multi_tool_turn_renders_full_block_sequence(
         titles = [b.border_title for b in blocks]
         tool_blocks = list(app.query(ToolBlock))
         markdown_count = len(list(app.query(Markdown)))
+        assistant_text = "\n".join(b._content for b in blocks if b.has_class("assistant"))
 
     assert "Session" in titles
     assert "You" in titles
@@ -55,6 +56,14 @@ async def test_multi_tool_turn_renders_full_block_sequence(
     ]
     assert markdown_count >= 4
     assert "2 + 2" in julia.calls
+
+    # The pkgdir path is a distinctive tool result the assistant never echoes;
+    # it must surface only in the tool cards, never dumped into an Assistant
+    # block. (The "2 + 2" -> "4" result is intentionally not checked here: the
+    # assistant legitimately *says* "Result is 4" in its own prose.)
+    pkg_path = str(julia._pkgdir["FakePkg"])
+    assert any(pkg_path in block._output for block in tool_blocks)
+    assert pkg_path not in assistant_text
 
     session.finalize()
     trace_text = _trace_payloads_concat(session)

@@ -94,14 +94,7 @@ _PROMPT_SUFFIX = (
     "`/packages/`, probing the REPL, or reading skills over guessing. "
     "Never invoke `julia` (or `julia --project ...`, `julia -e ...`) through "
     "`execute`; use `julia_eval` / `julia_plot` for all Julia code. `execute` "
-    "is for non-Julia shell work only (grep, find, ls, git). "
-    "The user already sees every tool result in the UI — file contents you "
-    "read, `grep`/`glob` results, REPL output, your MEMORY.md index, and skill "
-    "text. Never paste any of that back into a reply or wrap it in a code "
-    "fence. Refer to files and findings by path, summarise the relevant part in "
-    "your own words, and quote at most a line or two when it's genuinely "
-    "necessary. Your replies are for conclusions and next steps, not for "
-    "echoing what a tool just returned."
+    "is for non-Julia shell work only (grep, find, ls, git)."
 )
 
 _SUPPORTED_PROVIDERS: tuple[str, ...] = ("openai", "anthropic")

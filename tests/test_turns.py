@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from fakes import (
     ScriptedV3Agent,
     interrupt_agent,
+    tool_call_events,
     v3_message_event,
     v3_tool_event,
     v3_values_event,
@@ -140,6 +141,38 @@ async def test_turn_runner_streams_v3_reasoning_and_tool_events() -> None:
     assert finished.content == '["a", "b"]'
 
     assert result.messages[-1].content == "hello"
+
+
+async def test_tool_result_does_not_leak_into_assistant_text() -> None:
+    """A ToolMessage rides ``run.messages`` (node='tools') with its full content
+    as ``.text``. The turn runner must render it only through tool events — never
+    as assistant prose — so file reads / skill / memory text don't get dumped."""
+
+    tool_output = "---\nname: battmo-overview\ndescription: workflow\n---\nLOTS OF SKILL TEXT"
+    agent = ScriptedV3Agent(
+        tool_call_events(
+            tool_name="read_file",
+            tool_call_id="call_read_1",
+            args={"file_path": "/skills/shared/battmo-overview/SKILL.md"},
+            output=tool_output,
+            final_text="Read the overview skill; ready to proceed.",
+        )
+    )
+    runner = TurnRunner(agent, thread_id="thread-1")
+    seen: list[object] = []
+
+    await runner.run_prompt("read the skill", on_message=lambda msg: seen.append(msg))
+
+    streamed_text = "".join(
+        str(m.content) for m in seen if isinstance(m, AIMessageChunk) and m.content
+    )
+    assert streamed_text == "Read the overview skill; ready to proceed."
+    assert tool_output not in streamed_text
+    assert "SKILL TEXT" not in streamed_text
+
+    # The result still reaches the UI as a tool event (the tool card), not prose.
+    finished = [m for m in seen if isinstance(m, TurnToolEvent) and m.event == "finished"]
+    assert any(tool_output in (e.content or "") for e in finished)
 
 
 async def test_turn_runner_parses_server_tool_call() -> None:

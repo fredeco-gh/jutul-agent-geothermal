@@ -210,7 +210,13 @@ class _AsyncDeltaIter:
 
 
 class FakeMessageStream:
-    """Per-message typed-projection mock (text/reasoning/tool_calls/output)."""
+    """Per-message typed-projection mock (text/reasoning/tool_calls/output).
+
+    ``node`` mirrors ``langgraph_node`` on the real ``ChatModelStream``: the
+    model node (``"model"``) carries the assistant's visible turn, while tool
+    results surface under ``"tools"``. The turn runner keys on it to avoid
+    dumping tool output into the chat as prose.
+    """
 
     def __init__(
         self,
@@ -220,10 +226,12 @@ class FakeMessageStream:
         tool_call_chunks: list[dict[str, Any]],
         tool_calls_final: list[dict[str, Any]],
         output: AIMessage | AIMessageChunk,
+        node: str = "model",
     ) -> None:
         self.text = _AsyncDeltaIter(text_deltas, join=True)
         self.reasoning = _AsyncDeltaIter(reasoning_deltas, join=True)
         self.tool_calls = _AsyncToolCallChunks(tool_call_chunks, tool_calls_final)
+        self.node = node
         self._output = output
 
     def __await__(self):
@@ -387,7 +395,26 @@ def _build_typed_run(events: Iterable[dict[str, Any]]) -> FakeTypedRun:
         if kind == "message":
             payload = event.get("payload")
 
-            if isinstance(payload, HumanMessage | ToolMessage):
+            if isinstance(payload, ToolMessage):
+                # The real ``run.messages`` projection surfaces a ToolMessage as
+                # its own stream (``node="tools"``) whose ``.text`` is the full
+                # tool result. Reproduce that so the turn runner's node filter is
+                # exercised — the result must render as a tool card, never prose.
+                _flush_open()
+                content = payload.content if isinstance(payload.content, str) else ""
+                messages.append(
+                    FakeMessageStream(
+                        text_deltas=[content] if content else [],
+                        reasoning_deltas=[],
+                        tool_call_chunks=[],
+                        tool_calls_final=[],
+                        output=AIMessage(content=content),
+                        node="tools",
+                    )
+                )
+                continue
+
+            if isinstance(payload, HumanMessage):
                 _flush_open()
                 continue
 

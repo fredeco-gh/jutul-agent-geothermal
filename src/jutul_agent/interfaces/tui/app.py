@@ -25,8 +25,6 @@ import contextlib
 import json
 import urllib.parse
 import urllib.request
-from collections import deque
-from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,10 +63,6 @@ from jutul_agent.interfaces.tui.approval import (
     render_interrupt_cards,
 )
 from jutul_agent.interfaces.tui.approval_menu import ApprovalMenu, build_approval_options
-from jutul_agent.interfaces.tui.assistant_filter import (
-    filter_assistant_text,
-    remember_tool_output,
-)
 from jutul_agent.interfaces.tui.commands import (
     InputHistory,
     SlashCommandSpec,
@@ -107,47 +101,29 @@ class _AssistantStream:
     streaming-eligible regions (e.g. before a tool call is mounted, after a
     ``message-finish`` event) to close the markdown stream and let a fresh
     block be mounted on the next chunk.
+
+    Only genuine assistant text reaches here: the turn runner streams
+    text/reasoning from the model node alone, so tool results and
+    middleware-injected messages never arrive as prose (no content filtering
+    is needed — see ``jutul_agent.agent.turns``).
     """
 
     prose: MessageBlock | None = None
     reasoning: MessageBlock | None = None
-    _prose_buffer: str = ""
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    async def append_prose(
-        self,
-        log: VerticalScroll,
-        text: str,
-        *,
-        filter_text: Callable[[str], str | None] | None = None,
-    ) -> None:
+    async def append_prose(self, log: VerticalScroll, text: str) -> None:
         if not text:
             return
         async with self._lock:
-            self._prose_buffer += text
-            # Filter the accumulated buffer, not the incoming chunk. Filtering
-            # per-chunk drops whichever chunk holds the tell-tale marker (a
-            # ``# Memory index`` heading, skill frontmatter, the start of an
-            # echoed file) while keeping the rest, so the dump leaks. Checking
-            # the whole buffer lets the suppression fire as soon as the message
-            # *becomes* a dump; we then drop any block already mounted.
-            if filter_text is not None and filter_text(self._prose_buffer) is None:
-                if self.prose is not None:
-                    await self.prose.remove()
-                    self.prose = None
-                return
             block = self.prose
             if block is None:
                 block = MessageBlock("Assistant", "assistant", "", markdown=True)
                 self.prose = block
                 await log.mount(block)
-                # Render the whole buffer — covers a fresh block and a re-mount
-                # after an earlier chunk was (transiently) suppressed.
-                await block.append_content(self._prose_buffer)
-            else:
-                if not block.is_mounted:
-                    await block._mounted_event.wait()
-                await block.append_content(text)
+            elif not block.is_mounted:
+                await block._mounted_event.wait()
+            await block.append_content(text)
 
     async def append_reasoning(self, log: VerticalScroll, text: str) -> None:
         if not text:
@@ -162,29 +138,14 @@ class _AssistantStream:
                 await block._mounted_event.wait()
             await block.append_content(text)
 
-    async def flush(
-        self,
-        *,
-        filter_text: Callable[[str], str | None] | None = None,
-    ) -> None:
+    async def flush(self) -> None:
         async with self._lock:
             if self.prose is not None:
-                if filter_text is not None:
-                    filtered = filter_text(self._prose_buffer)
-                    if filtered is None:
-                        await self.prose.remove()
-                        self.prose = None
-                    else:
-                        if filtered != self._prose_buffer.strip():
-                            await self.prose.set_content(filtered)
-                        await self.prose.stop_stream()
-                else:
-                    await self.prose.stop_stream()
+                await self.prose.stop_stream()
             if self.reasoning is not None:
                 await self.reasoning.stop_stream()
             self.prose = None
             self.reasoning = None
-            self._prose_buffer = ""
 
 
 class TUIApp(App[None]):
@@ -277,7 +238,6 @@ class TUIApp(App[None]):
         self._tool_blocks: list[ToolBlock] = []
         self._active_approval_blocks: list[ApprovalBlock] = []
         self._history = InputHistory()
-        self._recent_tool_outputs: deque[str] = deque(maxlen=8)
         self._setting_prompt_value = False
         self._busy = False
         self._status_text = "ready"
@@ -917,7 +877,7 @@ class TUIApp(App[None]):
             reasoning = reasoning_to_str(msg.content).strip()
             if reasoning:
                 await self._log.mount(MessageBlock("Reasoning", "reasoning", reasoning))
-            content = self._filter_assistant_text(content_to_str(msg.content).strip())
+            content = content_to_str(msg.content).strip()
             if content:
                 await self._log.mount(
                     MessageBlock("Assistant", "assistant", content, markdown=True)
@@ -983,19 +943,13 @@ class TUIApp(App[None]):
             await self._log.mount(block)
             self._tool_blocks.append(block)
         await block.set_result(msg.content, is_error=msg.event == "error")
-        if msg.event == "finished" and msg.content:
-            remember_tool_output(self._recent_tool_outputs, msg.content)
         self._schedule_scroll_end()
         self._set_status("thinking…")
 
     async def _render_message_chunk(self, msg: AIMessageChunk) -> None:
         text = self._extract_chunk_text(msg)
         if text:
-            await self._stream.append_prose(
-                self._log,
-                text,
-                filter_text=self._filter_assistant_text,
-            )
+            await self._stream.append_prose(self._log, text)
 
         tool_calls = self._extract_chunk_tool_calls(msg)
         if tool_calls:
@@ -1009,11 +963,8 @@ class TUIApp(App[None]):
         if text or tool_calls:
             self._schedule_scroll_end()
 
-    def _filter_assistant_text(self, text: str) -> str | None:
-        return filter_assistant_text(text, recent_tool_outputs=self._recent_tool_outputs)
-
     async def _flush_stream(self) -> None:
-        await self._stream.flush(filter_text=self._filter_assistant_text)
+        await self._stream.flush()
 
     async def _mount_tool_call(self, call: dict[str, Any]) -> None:
         name = call.get("name") or "tool"
