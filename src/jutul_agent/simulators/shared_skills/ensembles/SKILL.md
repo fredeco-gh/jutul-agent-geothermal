@@ -13,11 +13,11 @@ independent. For a single run, just use `julia_eval`.
 
 ## How
 
-The session already has a helper module, `JutulAgentEnsemble`, loaded. Call it from
-`julia_eval`:
+The session loads the `JutulAgent` package, which exports `run_ensemble` (if it's
+not yet defined, run `using JutulAgent` first). Call it from `julia_eval`:
 
 ```julia
-JutulAgentEnsemble.run_ensemble(run_case, cases; nworkers=4, setup=:(using JutulDarcy))
+run_ensemble(run_case, cases; nworkers=4, setup=:(using JutulDarcy))
 ```
 
 - `run_case` — a function applied to each case; it runs **on a worker process**.
@@ -51,7 +51,7 @@ function run_case(phi)
     return recovery_factor   # small return value
 end
 
-results = JutulAgentEnsemble.run_ensemble(
+results = run_ensemble(
     run_case, [0.10, 0.15, 0.20, 0.25];
     nworkers = 4, setup = :(using JutulDarcy, Jutul),
 )

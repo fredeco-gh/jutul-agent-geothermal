@@ -1,13 +1,8 @@
-"""Tests for the kernel's terminal-output cleanup — ANSI stripping and emulation."""
+"""Tests for the kernel's terminal-output emulation (render_terminal_output)."""
 
 from __future__ import annotations
 
-from jutul_agent.juliakernel.text import render_terminal_output, strip_ansi
-
-
-def test_strip_ansi_removes_csi_and_color_codes() -> None:
-    raw = "\x1b[32mhello\x1b[0m \x1b[1;31mworld\x1b[0m"
-    assert strip_ansi(raw) == "hello world"
+from jutul_agent.juliakernel.text import render_terminal_output
 
 
 def test_render_terminal_output_passes_plain_text_through() -> None:

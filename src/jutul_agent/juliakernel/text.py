@@ -6,9 +6,6 @@ but the bytes still carry those control sequences; a naive strip leaves every
 intermediate update stacked. ``render_terminal_output`` replays the cursor moves
 through a tiny screen buffer so the result matches what a real terminal would
 show — a single final bar instead of hundreds of stacked ones.
-
-``strip_ansi`` is the lighter helper: drop colour/CSI codes without applying
-movement.
 """
 
 from __future__ import annotations
@@ -26,18 +23,6 @@ _OTHER_ESC_RE = re.compile(r"\x1b[^\[\]]")
 # Cursor-control bytes that need the screen model. Plain output has none of these,
 # so it skips the per-character emulation below entirely.
 _NEEDS_SCREEN_RE = re.compile("[\r\x1b\b\t]")
-
-
-def strip_ansi(text: str) -> str:
-    """Strip ANSI escape sequences without applying cursor movement.
-
-    Use ``render_terminal_output`` when the captured text uses ``\\r`` or
-    cursor-movement codes to overwrite in place (e.g. ProgressMeter bars).
-    """
-
-    text = _OSC_RE.sub("", text)
-    text = _CSI_RE.sub("", text)
-    return _OTHER_ESC_RE.sub("", text)
 
 
 def render_terminal_output(text: str) -> str:

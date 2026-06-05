@@ -21,9 +21,13 @@ of the active simulator.
    `julia_env_template_path`, `skills_dir`, and `plot_helpers_path` from
    that.
 3. Add `julia_env/Project.toml` with the deps the agent should be able to
-   `using`. The kernel needs no special dep (its server is stdlib-only). Pin a
-   `Manifest.toml` alongside when the dep graph needs locking (e.g. Makie
-   version pins).
+   `using`. The kernel needs no special dep (its server is stdlib-only). Copy the
+   bundled `JutulAgent/` package from an existing env (with its `[deps]` and
+   `[sources]` entries) so the env ships the agent's Julia runtime (figure capture,
+   ensemble helpers, plotting warm-up). A new simulator can also get a per-sim
+   precompile extension in `JutulAgent/ext/` — see
+   `docs/design/warmup-and-jutulagent-package.md`. Pin a `Manifest.toml` alongside
+   when the dep graph needs locking (e.g. Makie version pins).
 4. Optionally add a `julia_env/plots.jl` with thin Makie helpers — the
    adapter picks it up automatically; the agent loads it on the first
    `julia_plot` call.

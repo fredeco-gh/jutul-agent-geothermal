@@ -23,6 +23,11 @@ build/
 # Julia lockfiles
 src/jutul_agent/**/Manifest.toml
 
+# The shared JutulAgent package synced into a sim env template for in-place
+# instantiate (CI/tests). The canonical source lives in julia_runtime/ and the
+# per-sim JutulAgent<Sim> packages are tracked; only these synced copies are not.
+src/jutul_agent/simulators/*/julia_env/JutulAgent/
+
 # IDE
 .vscode/
 .claude/

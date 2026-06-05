@@ -21,6 +21,7 @@ from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.workspace import (
     WorkspaceBootstrapError,
     bootstrap_julia_env,
+    mark_env_precompiled,
     resolve_julia_project,
     workspace_is_simulator_source,
 )
@@ -168,28 +169,18 @@ def resolve_env_package_sources(julia_project: Path) -> dict[str, tuple[Path, bo
     return sources
 
 
-# Warm the GLMakie save path used by julia_plot. Wrapped in Julia try/catch so a
-# headless box with no GL/display only warns instead of failing the whole init.
-_PLOT_WARMUP = (
-    "try; using GLMakie; GLMakie.activate!(visible = false); "
-    "fig = Figure(size = (64, 64)); lines!(Axis(fig[1, 1]), 1:2); "
-    'save(joinpath(tempdir(), "jutul-agent-plot-warmup.png"), fig); '
-    'catch e; @warn "plot warm-up skipped (GLMakie unavailable here)" exception = e; end'
-)
-
-# Resolve + download deps (must succeed), then precompile best-effort. GLMakie is
-# a default dep but can fail to precompile on a headless box with no GL/display
-# (Makie issue #2791); that must not break the whole env, so the solver still
-# instantiates and the agent can simulate (plotting then errors clearly at use).
-# Auto-precompile is turned off for instantiate so the download/resolve step can't
-# be aborted by one package's precompile error; the follow-up Pkg.precompile()
-# compiles everything it can and we swallow the rest.
-_RESILIENT_INSTANTIATE = [
-    'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end',
+# Install deps without precompiling: auto-precompile is off so one package's
+# precompile error can't abort the download/resolve step.
+_INSTANTIATE = 'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end'
+# Precompile everything that can be, best-effort. GLMakie is a default dep but can
+# fail to precompile on a headless box with no GL/display (Makie issue #2791); that
+# must not break the env, so we swallow the rest (plotting then errors at use).
+_PRECOMPILE = (
     "try; Pkg.precompile(); catch e; "
     '@warn "Some packages failed to precompile (continuing; GL plotting may be '
-    'unavailable here)" exception=e; end',
-]
+    'unavailable here)" exception=e; end'
+)
+_RESILIENT_INSTANTIATE = [_INSTANTIATE, _PRECOMPILE]
 
 
 def bootstrap_workspace(
@@ -208,8 +199,10 @@ def bootstrap_workspace(
          With ``force``, replace an existing workspace-local env first.
       2. If ``source_path`` is set, ``Pkg.develop(path=source_path)`` in
          the workspace env (idempotent; safe to re-run).
-      3. If ``precompile``, ``Pkg.instantiate()`` then a tiny plot save to warm
-         the plotting stack for ``julia_plot``.
+      3. If ``precompile``, ``Pkg.instantiate()`` then ``Pkg.precompile()``. The
+         plotting stack is warmed by the env's ``JutulAgent`` package,
+         whose ``@compile_workload`` bakes the Makie save path into the
+         precompile cache (run under xvfb here so the GL bake has a context).
 
     Returns the path to the resolved Julia project.
     """
@@ -234,13 +227,24 @@ def bootstrap_workspace(
     if len(cmds) > 1:
         _run_pkg(project, cmds)
     if precompile:
-        _warmup_plotting(project)
         # Catch a broken/half-resolved manifest here (Julia fails to boot in the
         # env) instead of at launch. The kernel server is stdlib-only, so a
         # trivial eval is the right probe.
         verify_julia_runs(project)
+        mark_env_precompiled(project)  # so launch skips a redundant bake
 
     return project
+
+
+def precompile_env(project: Path) -> None:
+    """Instantiate and precompile the env in place — bakes the warm-up packages.
+
+    Idempotent and quick when the env is already precompiled. Streams Julia's
+    progress (not captured) so a real bake reads as work in progress, not a hang.
+    Precompile is best-effort (a headless GLMakie failure is warned, not fatal);
+    a hard instantiate failure raises ``EnvSetupError``.
+    """
+    _run_pkg(project, ["using Pkg", _INSTANTIATE, _PRECOMPILE], echo=False)
 
 
 def verify_julia_runs(project: Path) -> None:
@@ -255,7 +259,9 @@ def verify_julia_runs(project: Path) -> None:
     _run_pkg(project, ["print(1 + 1)"])
 
 
-def resolve_and_instantiate(project: Path) -> None:
+def resolve_and_instantiate(
+    project: Path, *, precompile: bool = True, capture: bool = False
+) -> None:
     """Re-resolve the manifest and install deps.
 
     Plain ``Pkg.instantiate`` errors if a dep appears in Project.toml but
@@ -267,32 +273,25 @@ def resolve_and_instantiate(project: Path) -> None:
     "no registries have been installed" on a fresh Julia depot (unlike
     ``Pkg.instantiate``, ``resolve`` does not bootstrap it). So install General
     first when none is reachable.
+
+    ``precompile=False`` installs without the (potentially minutes-long) precompile
+    bake, leaving it for ``init --precompile`` — used at launch so a self-healing
+    sync doesn't block startup. ``capture=True`` hides Julia's output and folds a
+    failure into a short ``EnvSetupError`` instead of dumping a backtrace.
     """
 
-    _run_pkg(
-        project,
-        [
-            "using Pkg",
-            'isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General")',
-            "Pkg.resolve()",
-            *_RESILIENT_INSTANTIATE,
-        ],
-    )
+    cmds = [
+        "using Pkg",
+        'isempty(Pkg.Registry.reachable_registries()) && Pkg.Registry.add("General")',
+        "Pkg.resolve()",
+        _INSTANTIATE,
+    ]
+    if precompile:
+        cmds.append(_PRECOMPILE)
+    _run_pkg(project, cmds, capture=capture)
 
 
-def _warmup_plotting(project: Path) -> None:
-    """Precompile the GLMakie save path used by ``julia_plot`` (best effort)."""
-
-    try:
-        _run_pkg(project, [_PLOT_WARMUP])
-    except EnvSetupError:
-        print(
-            "warning: plot warm-up failed; julia_plot may be slow on first use",
-            flush=True,
-        )
-
-
-def _run_pkg(project: Path, cmds: list[str]) -> None:
+def _run_pkg(project: Path, cmds: list[str], *, capture: bool = False, echo: bool = True) -> None:
     if shutil.which("julia") is None:
         raise EnvSetupError("`julia` is not on PATH")
 
@@ -303,7 +302,27 @@ def _run_pkg(project: Path, cmds: list[str]) -> None:
         "-e",
         "; ".join(cmds),
     ]
-    print(f"$ {' '.join(argv)}")
+    # On headless Linux, wrap in xvfb so the GL-dependent precompile — the
+    # @compile_workload bakes that save a GLMakie figure (the shared JutulAgent
+    # package, and each JutulAgent<Sim> package's _warm_plot) — has an OpenGL
+    # context, the same wrap the runtime uses. A real display, or any non-Linux OS,
+    # skips it.
+    from jutul_agent.agent.render_profile import should_wrap_xvfb
+
+    if should_wrap_xvfb():
+        argv = ["xvfb-run", "-a", "-s", "-screen 0 1280x1024x24", *argv]
+
+    if capture:
+        # Best-effort callers (the launch-time self-heal) want a quiet run and a
+        # short error, not a page of Julia backtrace on the terminal.
+        result = subprocess.run(argv, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-12:])
+            raise EnvSetupError(f"Julia exited with code {result.returncode}:\n{tail}")
+        return
+
+    if echo:
+        print(f"$ {' '.join(argv)}")
     result = subprocess.run(argv, check=False)
     if result.returncode != 0:
         raise EnvSetupError(f"Julia exited with code {result.returncode}; see output above")

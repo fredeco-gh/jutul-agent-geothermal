@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
-from jutul_agent.simulators.warmup import warmup_script
 
 FIMBUL = SimulatorAdapter(
     name="fimbul",
@@ -13,23 +12,9 @@ FIMBUL = SimulatorAdapter(
     module_dir=Path(__file__).resolve().parent,
     package_imports=("Jutul", "JutulDarcy", "Fimbul"),
     primary_package="Fimbul",
-    warmup_code=warmup_script(
-        packages=(
-            "Jutul",
-            "JutulDarcy",
-            "Fimbul",
-            "CSV",
-            "DataFrames",
-            "Statistics",
-            "Interpolations",
-        ),
-        native_plot_block=(
-            "g = CartesianMesh((2, 2, 1), (1.0, 1.0, 1.0))\n"
-            "dom = reservoir_domain(g, permeability = 1e-13, porosity = 0.2)\n"
-            "fig, ax, plt = plot_cell_data(physical_representation(dom), dom[:porosity])\n"
-            'save(joinpath(tempdir(), "jutul_agent_native_warmup.png"), fig)'
-        ),
-    ),
+    # Warms the analytical_1d geothermal solve + plot_cell_data, baked at init. See
+    # the package's src/JutulAgentFimbul.jl for the single source of the solve.
+    warm_package="JutulAgentFimbul",
     domain_hints=(
         "Fimbul is a geothermal reservoir simulator built on top of JutulDarcy. "
         "It augments Darcy flow with an energy-conservation equation, "

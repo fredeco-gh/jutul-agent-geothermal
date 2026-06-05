@@ -47,10 +47,16 @@ jobs:
       - name: Cache Julia artifacts
         uses: julia-actions/cache@v2
 
-      # Refresh the registry so a fresh resolve sees the latest releases,
-      # then instantiate from Project + [sources].
+      # Sync the shared JutulAgent package into the template (it lives once in
+      # julia_runtime/ and is copied in at bootstrap; an in-place instantiate must
+      # do the same so the env's relative [sources] resolves). Then refresh the
+      # registry so a fresh resolve sees the latest releases and instantiate from
+      # Project + [sources].
       - name: Instantiate ${{ matrix.simulator }} env
         run: >
+          uv run python -c "from pathlib import Path; from jutul_agent.workspace import
+          sync_shared_julia_package as s;
+          s(Path('src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env'))" &&
           julia --project=src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env
           --startup-file=no
           -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'

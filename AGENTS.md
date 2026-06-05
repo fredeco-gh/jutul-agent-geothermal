@@ -88,9 +88,16 @@ exactly three things:
 - `adapter.py` — constructs the `SimulatorAdapter`. Set
   `module_dir = Path(__file__).resolve().parent` so the base class can
   derive `julia_env_template_path`, `skills_dir`, and `plot_helpers_path`.
-- `julia_env/` — `Project.toml` declaring the deps the agent can `using`. The
-  `Manifest.toml` is generated on instantiate (gitignored). Optional `plots.jl`.
-  Copied into a workspace on bootstrap.
+- `julia_env/` — `Project.toml` declaring the deps the agent can `using`, plus a
+  per-simulator `JutulAgent<Sim>/` warm package (a local `[sources]` path dep whose
+  `@recompile_invalidations` + `@compile_workload` bakes that simulator's
+  GLMakie-aware solve/plot into the precompile cache, so the first solve is fast).
+  The shared, sim-agnostic `JutulAgent` package (figure capture, ensemble helpers,
+  generic-Makie warm-up) has a single source in `src/jutul_agent/julia_runtime/` and
+  is copied into the env at bootstrap (also a relative `[sources]` dep). The
+  `Manifest.toml` is generated on instantiate (gitignored). The whole `julia_env/`
+  folder is copied into a workspace on bootstrap, so the relative `[sources]` paths
+  keep resolving.
 - `skills/<skill-name>/SKILL.md` — markdown skills surfaced via the
   deep-agents skill system.
 

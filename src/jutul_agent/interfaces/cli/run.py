@@ -159,6 +159,7 @@ async def _run_session(
             print(f"error: {exc}", file=sys.stderr)
             return 1
         _ensure_simulator_installed(adapter, ws, julia_project, args.sim or config.simulator)
+        _ensure_env_warmed(adapter, ws, julia_project, args.sim or config.simulator)
     else:
         _prepare_existing_env(adapter, ws, julia_project, args.sim or config.simulator)
 
@@ -271,6 +272,7 @@ def _prepare_existing_env(
 
     _sync_workspace_env(adapter, ws, julia_project, sim_name)
     _ensure_simulator_installed(adapter, ws, julia_project, sim_name)
+    _ensure_env_warmed(adapter, ws, julia_project, sim_name)
 
 
 def _foreign_simulator(julia_project: Path, adapter: Any) -> str | None:
@@ -327,13 +329,18 @@ def _sync_workspace_env(
     julia_project: Path,
     sim_name: str | None,
 ) -> None:
-    """Add template deps the workspace env is missing, then install them.
+    """Bring the workspace env up to date with its simulator template, then install.
 
-    Best-effort and self-healing: if resolve/instantiate fails (e.g. the new
-    deps conflict with what's already pinned), we roll the Project.toml back
-    to its previous contents so the env is left no worse than before, and
-    point the user at the command that rebuilds it cleanly. Either way we
-    proceed to launch — the kernel itself may still start fine.
+    Self-healing: when an upstream change adds packages to the template (e.g. the
+    JutulAgent warm-up packages), ``sync_julia_env_with_template`` brings the deps
+    — and the ``[sources]`` paths and package directories they need — into the env,
+    so a plain ``git pull`` + launch keeps working without a manual rebuild. We only
+    resolve and instantiate here so the install is quick; the warm-up bake runs
+    afterwards in :func:`_ensure_env_warmed` (with visible progress).
+
+    Best-effort: if the install fails (e.g. the new deps conflict with what is
+    pinned), we roll the Project.toml back so the env is no worse than before and
+    point at the clean-rebuild command. Either way we proceed to launch.
     """
 
     from jutul_agent.simulators.env_setup import EnvSetupError, resolve_and_instantiate
@@ -350,12 +357,9 @@ def _sync_workspace_env(
     if not added:
         return
 
-    print(
-        f"Added missing deps to workspace env: {', '.join(added)} — resolving and installing...",
-        flush=True,
-    )
+    print(f"Updating workspace env with {', '.join(added)} (added upstream)...", flush=True)
     try:
-        resolve_and_instantiate(julia_project)
+        resolve_and_instantiate(julia_project, precompile=False, capture=True)
     except EnvSetupError as exc:
         if before is not None:
             project_toml.write_text(before, encoding="utf-8")
@@ -363,10 +367,10 @@ def _sync_workspace_env(
         if sim_name:
             rebuild += f" --sim {sim_name}"
         print(
-            f"warning: could not install {', '.join(added)} ({exc}).\n"
-            f"         Rolled back the env so it still works as before. To rebuild it "
-            f"cleanly, run:\n             {rebuild}\n"
-            f"         Run `jutul-agent doctor` to check the result.",
+            f"warning: could not install {', '.join(added)} — rolled the env back, so it "
+            "still works as before and the agent will start normally.\n"
+            f"         To rebuild it cleanly, run: {rebuild}\n"
+            f"         (cause: {exc})",
             file=sys.stderr,
         )
 
@@ -404,13 +408,58 @@ def _ensure_simulator_installed(
         flush=True,
     )
     try:
-        resolve_and_instantiate(julia_project)
+        # Resolve + install only; the warm-up bake is _ensure_env_warmed's job.
+        resolve_and_instantiate(julia_project, precompile=False)
     except EnvSetupError as exc:
         # A user-owned root env is theirs to fix; only rebuild the managed env.
         if not (ws / "Project.toml").exists():
             _rebuild_managed_env(adapter, ws, sim_name, reason="could not be resolved")
             return
         _warn_rebuild(pkg, sim_name, exc)
+
+
+def _ensure_env_warmed(adapter: Any, ws: Path, julia_project: Path, sim_name: str | None) -> None:
+    """Precompile the managed env before launch, but only when something changed.
+
+    The per-simulator ``JutulAgent<Sim>`` package's precompile runs the
+    ``@recompile_invalidations`` solve that makes the first real solve fast
+    (seconds instead of ~30 s). When the env changed (a fresh install, or new deps
+    pulled in) we bake it here — blocking launch until it's ready, and streaming
+    Julia's progress so it reads as work in progress, not a silent hang in the first
+    eval. When nothing changed, a marker check skips it with no Julia process, so a
+    plain launch stays fast. Best-effort: on failure the agent still starts.
+    """
+
+    from jutul_agent.simulators.env_setup import EnvSetupError, precompile_env
+    from jutul_agent.workspace import (
+        env_declares_warm_packages,
+        env_precompile_is_current,
+        mark_env_precompiled,
+    )
+
+    # Only the managed env carries the warm-up packages; a user-owned env is theirs.
+    if (ws / "Project.toml").exists() or not env_declares_warm_packages(julia_project):
+        return
+    if env_precompile_is_current(julia_project):
+        return  # nothing changed since the last bake — skip without spawning Julia
+
+    print(
+        "Precompiling the Julia env (one-time after a change; can take a few minutes)...",
+        flush=True,
+    )
+    try:
+        precompile_env(julia_project)
+    except EnvSetupError as exc:
+        retry = "jutul-agent init --precompile"
+        if sim_name:
+            retry += f" --sim {sim_name}"
+        print(
+            f"warning: env precompile did not finish ({exc}); the agent will start, "
+            f"but the first solve may be slow. Retry with: {retry}",
+            file=sys.stderr,
+        )
+        return
+    mark_env_precompiled(julia_project)
 
 
 async def _resolve_package_sources(adapter: Any, julia_project: Path, config: Any) -> list[Any]:
@@ -506,7 +555,7 @@ async def _run_with_backend(
             open_windows=open_windows,
         )
         write_last_session(session.session_id)
-        warmup_task = _start_warmup(julia, adapter.warmup_code)
+        warmup_task = _start_warmup(julia, adapter.warm_package)
         try:
             ckpt_path = session.state_dir / "checkpoints.sqlite"
             async with AsyncSqliteSaver.from_conn_string(str(ckpt_path)) as checkpointer:
@@ -553,23 +602,29 @@ async def _run_with_backend(
     return 0
 
 
-def _start_warmup(julia: Any, warmup_code: str) -> asyncio.Task[Any] | None:
-    """Background warm-up: load the shared ensemble helper, then pay the
-    simulator's precompile cost while the user reads the welcome card.
+def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
+    """Background warm-up: load the agent's precompiled Julia runtime, then
+    initialise this session's GL context while the user reads the welcome card.
 
-    Best-effort: errors are swallowed and the task is cancelled on session
-    teardown.
+    The heavy compilation is already baked into the packages' precompile caches at
+    ``init``, so loading the shared ``JutulAgent`` and the env's per-simulator
+    ``warm_package`` here is just load latency; a tiny offscreen save then warms
+    GLMakie's GL context. Best-effort: every step is wrapped so a missing piece
+    never breaks startup, and the task is cancelled on session teardown.
     """
 
-    ensemble_jl = Path(__file__).resolve().parents[2] / "agent" / "ensemble.jl"
-    bootstrap = f'try; include(raw"{ensemble_jl.as_posix()}"); catch; end'
+    from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP
+
+    loads = ["try; @eval using JutulAgent; catch; end"]
+    if warm_package:
+        loads.append(f"try; @eval using {warm_package}; catch; end")
+    bootstrap = "\n".join(loads)
 
     async def _run_warmup() -> None:
         with contextlib.suppress(Exception):
             await julia.eval(bootstrap)
-        if warmup_code.strip():
-            with contextlib.suppress(Exception):
-                await julia.eval(warmup_code)
+        with contextlib.suppress(Exception):
+            await julia.eval(GL_CONTEXT_WARMUP)
 
     return asyncio.create_task(_run_warmup(), name="julia-warmup")
 

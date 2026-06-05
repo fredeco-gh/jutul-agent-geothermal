@@ -11,8 +11,13 @@ Three intentional layers:
   JutulDarcy's setup/plotter API, so it will need updating when that API drifts.
 
 Skipped unless the JutulDarcy env is instantiated (the shipped template has no
-Manifest). To run locally:
+Manifest). The shared JutulAgent package lives once in ``julia_runtime/`` and is
+synced into the env at bootstrap; an in-place instantiate must do the same first.
+To run locally:
 
+    uv run python -c "from pathlib import Path; from jutul_agent.workspace import \
+        sync_shared_julia_package as s; \
+        s(Path('src/jutul_agent/simulators/jutuldarcy/julia_env'))"
     julia --project=src/jutul_agent/simulators/jutuldarcy/julia_env \
         -e 'using Pkg; Pkg.instantiate()'
     uv run pytest tests/integration/test_julia_plot_integration.py
@@ -35,8 +40,21 @@ from jutul_agent.juliakernel import JuliaKernel, KernelConfig
 from jutul_agent.session import Session
 from jutul_agent.simulators.env_setup import manifest_has_package
 from jutul_agent.simulators.jutuldarcy import JUTULDARCY
+from jutul_agent.workspace import sync_shared_julia_package
 
 JUTULDARCY_ENV = JUTULDARCY.julia_env_template_path
+
+
+@pytest.fixture(autouse=True)
+def _materialize_shared_package() -> None:
+    """Keep the shared JutulAgent package present in the in-place template env.
+
+    It lives once in ``julia_runtime/`` and is copied into an env at bootstrap;
+    these tests instantiate the template directly, so sync it here too (idempotent).
+    Skipped when the env was never instantiated — those tests skip anyway.
+    """
+    if (JUTULDARCY_ENV / "Project.toml").exists():
+        sync_shared_julia_package(JUTULDARCY_ENV)
 
 
 @pytest.fixture

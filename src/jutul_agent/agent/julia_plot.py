@@ -26,8 +26,6 @@ from jutul_agent.paths import workspace_root
 from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
 
-_BOOTSTRAP_SCRIPT = (Path(__file__).resolve().parent / "julia_plot.jl").read_text(encoding="utf-8")
-
 _SLOT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 # Longest-edge cap (px) for the downscaled image fed back to the model. Keeps
@@ -79,9 +77,11 @@ async def _load_plot_backend(session: Session, adapter: SimulatorAdapter) -> str
             f"Julia said: {_truncate(gl.error, 300)}"
         )
 
-    helper = await session.julia.eval(_BOOTSTRAP_SCRIPT)
+    # The capture helpers (JutulAgent.JutulAgentPlots) ship precompiled in the
+    # JutulAgent package, so this just loads it rather than eval-ing a script.
+    helper = await session.julia.eval("using JutulAgent")
     if helper.error:
-        return f"ERROR: failed to load plot helper: {helper.error}"
+        return f"ERROR: failed to load JutulAgent plot helpers: {helper.error}"
 
     return None
 
@@ -107,11 +107,11 @@ def _build_render_call(
     return (
         "begin\n"
         f"    GLMakie.activate!(visible = {visible})\n"
-        "    local _jap_prev = JutulAgentPlots._current_fig()\n"
+        "    local _jap_prev = JutulAgent.JutulAgentPlots._current_fig()\n"
         "    local _jap_value = begin\n"
         f"{user_code}\n"
         "    end\n"
-        "    JutulAgentPlots.capture(_jap_value;\n"
+        "    JutulAgent.JutulAgentPlots.capture(_jap_value;\n"
         f'        path = raw"{abs_path.as_posix()}",\n'
         f"        size = {_julia_size_tuple(size)},\n"
         f"        dpi = {_julia_optional_int(dpi)},\n"
@@ -348,7 +348,7 @@ def make_recapture_tool(session: Session):
         call = (
             "begin\n"
             "    try; GLMakie.activate!(visible = false); catch; end\n"
-            "    JutulAgentPlots.recapture(;\n"
+            "    JutulAgent.JutulAgentPlots.recapture(;\n"
             f'        key = raw"{safe_slot or ""}",\n'
             f'        path = raw"{abs_path.as_posix()}",\n'
             f"        size = {_julia_size_tuple(size)},\n"
@@ -399,7 +399,9 @@ def make_close_plots_tool(session: Session):
         safe_slot = _sanitize_slot(slot) if slot else None
         if slot and safe_slot is None:
             return _INVALID_SLOT
-        result = await session.julia.eval(f'JutulAgentPlots.close_windows(raw"{safe_slot or ""}")')
+        result = await session.julia.eval(
+            f'JutulAgent.JutulAgentPlots.close_windows(raw"{safe_slot or ""}")'
+        )
         if result.error:
             return f"ERROR: {result.error}"
         return f"closed plot window: {safe_slot}" if safe_slot else "closed all plot windows"

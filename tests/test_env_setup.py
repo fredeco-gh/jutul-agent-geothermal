@@ -42,7 +42,10 @@ def test_bootstrap_copies_template_into_workspace(tmp_path: Path) -> None:
 
     assert project == workspace_julia_env(workspace)
     assert (project / "Project.toml").read_text(encoding="utf-8").startswith("[deps]")
-    assert (project / "Manifest.toml").exists()
+    # The template's Manifest.toml is intentionally NOT carried over — the workspace
+    # resolves its own at instantiate (a stale template manifest would omit newly
+    # added deps like the per-sim warm package).
+    assert not (project / "Manifest.toml").exists()
 
 
 def test_bootstrap_uses_root_project_when_present(tmp_path: Path) -> None:
@@ -154,14 +157,14 @@ def test_bootstrap_with_source_path_runs_pkg_develop(
     env_setup.bootstrap_workspace(_adapter(module_dir), workspace=workspace, source_path=source)
 
     argv = captured["argv"]
-    assert argv[0] == "julia"
+    assert "julia" in argv  # argv[0] may be `xvfb-run` on headless Linux
     assert any(arg.startswith("--project=") for arg in argv)
     code = argv[-1]
     assert "using Pkg" in code
     assert f'Pkg.develop(path=raw"{source}")' in code
 
 
-def test_precompile_runs_instantiate_and_plot_warmup(
+def test_precompile_runs_instantiate_and_precompile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module_dir = _make_template(tmp_path)
@@ -181,8 +184,13 @@ def test_precompile_runs_instantiate_and_plot_warmup(
 
     env_setup.bootstrap_workspace(_adapter(module_dir), workspace=workspace, precompile=True)
 
+    # Resolve/download then precompile; the plotting bake is the env's
+    # JutulAgent @compile_workload (run by Pkg.precompile), not a separate
+    # GLMakie eval here.
     assert any("Pkg.instantiate()" in cmd for cmd in captured)
-    assert any("GLMakie" in cmd for cmd in captured)
+    assert any("Pkg.precompile()" in cmd for cmd in captured)
+    # The post-precompile boot probe still runs.
+    assert any("print(1 + 1)" in cmd for cmd in captured)
 
 
 def test_bootstrap_raises_when_julia_missing(

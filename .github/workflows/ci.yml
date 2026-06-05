@@ -117,11 +117,17 @@ jobs:
       - name: Install headless OpenGL (xvfb + Mesa)
         run: sudo apt-get update && sudo apt-get install -y xvfb xorg-dev mesa-utils libgl1 libgl1-mesa-dri
 
-      # Registry.update() bootstraps the General registry on a fresh depot; then
-      # instantiate resolves JutulDarcy + GLMakie + the GraphMakie stack. Wrapped
-      # in xvfb-run so GLMakie can precompile with a GL context.
+      # Sync the shared JutulAgent package into the template (it lives once in
+      # julia_runtime/ and is copied in at bootstrap; an in-place instantiate must
+      # do the same so the env's relative [sources] resolves). Then Registry.update()
+      # bootstraps the General registry on a fresh depot and instantiate resolves
+      # JutulDarcy + GLMakie + the GraphMakie stack. Wrapped in xvfb-run so GLMakie
+      # can precompile with a GL context.
       - name: Instantiate JutulDarcy env
         run: >
+          uv run python -c "from pathlib import Path; from jutul_agent.workspace import
+          sync_shared_julia_package as s;
+          s(Path('src/jutul_agent/simulators/jutuldarcy/julia_env'))" &&
           xvfb-run -a julia
           --project=src/jutul_agent/simulators/jutuldarcy/julia_env --startup-file=no
           -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'

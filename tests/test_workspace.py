@@ -11,7 +11,10 @@ from jutul_agent.workspace import (
     WorkspaceConfig,
     auto_detect_simulator,
     bootstrap_julia_env,
+    env_declares_warm_packages,
+    env_precompile_is_current,
     load_workspace_config,
+    mark_env_precompiled,
     merge_simulator_config,
     resolve_julia_project,
     sync_julia_env_with_template,
@@ -83,6 +86,9 @@ def test_bootstrap_julia_env_copies_template(tmp_path: Path) -> None:
     project = bootstrap_julia_env(template, workspace=ws)
     assert project.name == "julia-env"
     assert (project / "Project.toml").exists()
+    # The shared JutulAgent package is synced in from julia_runtime/ alongside the
+    # template (the env's relative [sources] entry resolves only after this copy).
+    assert (project / "JutulAgent" / "Project.toml").exists()
 
 
 def test_merge_simulator_config_updates_one_entry() -> None:
@@ -150,3 +156,79 @@ def test_sync_skipped_when_workspace_owns_project(
     ws.mkdir()
     (ws / "Project.toml").write_text("[deps]\n", encoding="utf-8")
     assert sync_julia_env_with_template(_template_with_extra_deps, workspace=ws) == []
+
+
+@pytest.fixture
+def _template_with_path_source(tmp_path: Path) -> Path:
+    """Template whose extra dep is a relative `[sources]` path (a warm-up package)."""
+    template = tmp_path / "template"
+    (template / "FooWarm" / "src").mkdir(parents=True)
+    (template / "FooWarm" / "Project.toml").write_text('name = "FooWarm"\n', encoding="utf-8")
+    (template / "Project.toml").write_text(
+        "[deps]\n"
+        'Jutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
+        'FooWarm = "11111111-1111-1111-1111-111111111111"\n'
+        "\n[sources]\n"
+        'FooWarm = {path = "FooWarm"}\n',
+        encoding="utf-8",
+    )
+    return template
+
+
+def test_sync_brings_path_sourced_dep_with_its_source_entry_and_dir(
+    tmp_path: Path, _template_with_path_source: Path
+) -> None:
+    # Regression: a path-sourced dep added without its `[sources]` entry and
+    # package dir makes `Pkg.resolve` fail with "expected package ... registered".
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    env = workspace_julia_env(ws)
+    env.mkdir(parents=True)
+    (env / "Project.toml").write_text(
+        '[deps]\nJutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n',
+        encoding="utf-8",
+    )
+
+    assert sync_julia_env_with_template(_template_with_path_source, workspace=ws) == ["FooWarm"]
+
+    text = (env / "Project.toml").read_text(encoding="utf-8")
+    assert 'FooWarm = "11111111-1111-1111-1111-111111111111"' in text  # the dep
+    assert "[sources]" in text
+    assert 'FooWarm = {path = "FooWarm"}' in text  # the source entry
+    assert (env / "FooWarm" / "Project.toml").exists()  # the package dir copied in
+
+
+def test_env_declares_warm_packages_detects_the_jutulagent_prefix(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    env.mkdir()
+    proj = env / "Project.toml"
+
+    proj.write_text('[deps]\nJutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n', encoding="utf-8")
+    assert not env_declares_warm_packages(env)
+
+    proj.write_text(
+        '[deps]\nJutulAgentJutulDarcy = "69df87d8-8b4b-4157-81d2-8b93ff139141"\n',
+        encoding="utf-8",
+    )
+    assert env_declares_warm_packages(env)
+
+
+def test_env_precompile_marker_tracks_the_manifest(tmp_path: Path) -> None:
+    import os
+
+    from jutul_agent.workspace import PRECOMPILE_MARKER
+
+    env = tmp_path / "env"
+    env.mkdir()
+    manifest = env / "Manifest.toml"
+
+    assert not env_precompile_is_current(env)  # no marker, no manifest
+
+    manifest.write_text("", encoding="utf-8")
+    mark_env_precompiled(env)
+    os.utime(manifest, (100, 100))
+    os.utime(env / PRECOMPILE_MARKER, (200, 200))
+    assert env_precompile_is_current(env)  # baked after the last manifest write
+
+    os.utime(env / PRECOMPILE_MARKER, (50, 50))
+    assert not env_precompile_is_current(env)  # manifest changed since the bake

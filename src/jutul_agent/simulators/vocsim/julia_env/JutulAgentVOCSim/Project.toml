@@ -1,0 +1,18 @@
+name = "JutulAgentVOCSim"
+uuid = "e49c97c1-1779-484f-beef-4ccf10625475"
+version = "0.1.0"
+
+# Per-simulator warm-up package for jutul-agent (VOCSim — placeholder while
+# VOCSim.jl is unreleased). Sibling of the shared JutulAgent package in this env.
+# There is no simulator solve to bake yet, but it still loads GLMakie under
+# @recompile_invalidations so the generic Jutul + Makie code is recompiled
+# GLMakie-aware. Populate `_warm_solve` once VOCSim ships.
+
+[deps]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+
+[compat]
+PrecompileTools = "1"
+julia = "1.10"

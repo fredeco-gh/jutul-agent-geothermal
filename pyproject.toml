@@ -46,14 +46,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jutul_agent"]
 
-# Per-simulator folders carry julia_env/ templates and skills/ markdown that
-# aren't picked up by the default Python-only wheel build; force-include them,
-# along with the Julia source files (the kernel server, the plot helper).
+# Per-simulator folders carry julia_env/ templates (incl. each env's per-simulator
+# JutulAgent<Sim> warm package) and skills/ markdown, plus the shared JutulAgent
+# package under julia_runtime/ and the kernel's Julia server — none picked up by the
+# default Python-only wheel build, so force-include them.
 [tool.hatch.build.targets.wheel.force-include]
 "src/jutul_agent/simulators" = "jutul_agent/simulators"
+"src/jutul_agent/julia_runtime" = "jutul_agent/julia_runtime"
 "src/jutul_agent/juliakernel/server.jl" = "jutul_agent/juliakernel/server.jl"
-"src/jutul_agent/agent/julia_plot.jl" = "jutul_agent/agent/julia_plot.jl"
-"src/jutul_agent/agent/ensemble.jl" = "jutul_agent/agent/ensemble.jl"
 
 # Whitelist what ships in the source distribution. Keeps local development
 # scratch directories at the repo root from ever leaking into a release.
