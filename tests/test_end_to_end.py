@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from langchain_core.messages import AIMessageChunk
 from langgraph.checkpoint.memory import MemorySaver
 
 from fakes import (
@@ -56,6 +57,98 @@ async def test_agent_loop_drives_julia_eval(tmp_path: Path) -> None:
     assert kinds.count("tool_result") == 1
     assert "message_assistant" in kinds
     assert kinds[-1] == "session_end"
+
+
+async def test_tool_output_is_not_streamed_as_assistant_prose(tmp_path: Path) -> None:
+    """Real agent: a tool result must not be streamed back as assistant text.
+
+    ``run.messages`` projects the tool node's ToolMessage with its full content
+    as ``.text``; without the node filter that content was rendered as an
+    assistant message (the skill/memory/file "dump"). Drive the real agent and
+    assert the sentinel tool output never appears in the streamed prose."""
+
+    sentinel = "SENTINEL_TOOL_OUTPUT_42_do_not_echo"
+    julia = FakeJulia(answers={"probe()": sentinel})
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="julia_eval",
+                args={"code": "probe()"},
+                tool_call_id="call_probe_1",
+            ),
+            scripted_final("Done — the probe ran successfully."),
+        ]
+    )
+    agent, _ = build_agent(session, model=model)
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+
+    streamed: list[str] = []
+    try:
+        result = await runner.run_prompt(
+            "Run the probe.",
+            on_message=lambda msg: (
+                streamed.append(str(msg.content))
+                if isinstance(msg, AIMessageChunk) and msg.content
+                else None
+            ),
+        )
+    finally:
+        session.finalize()
+
+    streamed_text = "".join(streamed)
+    assert sentinel not in streamed_text
+    assert streamed_text == "Done — the probe ran successfully."
+    # The tool genuinely ran and its result is in the final state — it just
+    # arrives as a tool result, not as assistant prose.
+    assert any(sentinel in str(getattr(m, "content", "")) for m in result.messages)
+
+
+async def test_read_file_output_not_streamed_as_assistant_prose(tmp_path: Path) -> None:
+    """The reported symptom: `read_file` / `grep` / `glob` results (file, skill,
+    and memory text) rendered as assistant messages in the TUI. Drive the real
+    agent through `read_file` on a workspace file and assert its body never
+    appears in the streamed prose — only as the tool result."""
+
+    sentinel = "SENTINEL_FILE_BODY_zzz_do_not_echo"
+    (tmp_path / "notes.md").write_text(
+        f"# heading\nline a\n{sentinel}\n## section\nmore text\n", encoding="utf-8"
+    )
+    julia = FakeJulia()
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="read_file",
+                args={"file_path": "/notes.md"},
+                tool_call_id="call_read_1",
+            ),
+            scripted_final("Read notes.md; nothing to add."),
+        ]
+    )
+    agent, _ = build_agent(session, model=model)
+    runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
+
+    streamed: list[str] = []
+    try:
+        await runner.run_prompt(
+            "Read notes.md",
+            on_message=lambda msg: (
+                streamed.append(str(msg.content))
+                if isinstance(msg, AIMessageChunk) and msg.content
+                else None
+            ),
+        )
+    finally:
+        session.finalize()
+
+    streamed_text = "".join(streamed)
+    assert sentinel not in streamed_text
+    assert streamed_text == "Read notes.md; nothing to add."
 
 
 async def test_execute_tool_requires_approval(tmp_path: Path) -> None:
