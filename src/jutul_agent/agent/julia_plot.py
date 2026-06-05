@@ -3,7 +3,7 @@
 Plotting always runs on GLMakie. The tool opens a live window for the user only
 when the session can show one (an interactive run with a display); otherwise it
 renders offscreen to a PNG. Headless Linux still renders, via the xvfb-wrapped
-worker (see the AgentREPL backend). If GLMakie cannot load at all, the tool
+Julia process (see the kernel). If GLMakie cannot load at all, the tool
 returns a clear error rather than degrading to a backend where the native
 plotters do not work.
 

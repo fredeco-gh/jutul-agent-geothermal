@@ -6,16 +6,13 @@ context-manager lifecycle. Add methods only when a concrete caller needs them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol
 
+# The canonical result type lives with the kernel that produces it; re-exported
+# here so the protocol and every consumer share one ``EvalResult`` identity.
+from jutul_agent.juliakernel.result import EvalResult
 
-@dataclass(frozen=True)
-class EvalResult:
-    """Outcome of a single Julia evaluation."""
-
-    output: str
-    error: str | None = None
+__all__ = ["EvalResult", "JuliaSession"]
 
 
 class JuliaSession(Protocol):

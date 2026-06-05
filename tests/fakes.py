@@ -688,7 +688,7 @@ class FakeJulia:
     async def __aexit__(self, *_) -> None:
         return None
 
-    async def eval(self, code: str) -> EvalResult:
+    async def eval(self, code: str, on_chunk=None) -> EvalResult:
         self.calls.append(code)
         if self._eval_handler is not None:
             result = self._eval_handler(code)

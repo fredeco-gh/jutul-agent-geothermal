@@ -44,7 +44,7 @@ def manifest_has_package(julia_project: Path, package: str) -> bool:
     deps edited (or a template merged) without a follow-up ``Pkg.resolve`` /
     ``Pkg.instantiate``. Such a package is *declared* but not installed, and
     ``using <package>`` then fails at runtime with "is required but does not
-    seem to be installed", even though ``jutul-agent doctor``'s AgentREPL check
+    seem to be installed", even though ``jutul-agent doctor``'s Julia-runs check
     passes. Inspecting the manifest catches that before launch.
     """
 
@@ -235,24 +235,24 @@ def bootstrap_workspace(
         _run_pkg(project, cmds)
     if precompile:
         _warmup_plotting(project)
-        # Exercise the exact entrypoint the runtime uses. Instantiate + a plot
-        # warm-up can both pass while `using AgentREPL` still fails (bad git rev,
-        # Julia-version mismatch, half-resolved manifest) — which then surfaces
-        # at launch as a baffling "Connection closed". Catch it here instead.
-        verify_agentrepl_loads(project)
+        # Catch a broken/half-resolved manifest here (Julia fails to boot in the
+        # env) instead of at launch. The kernel server is stdlib-only, so a
+        # trivial eval is the right probe.
+        verify_julia_runs(project)
 
     return project
 
 
-def verify_agentrepl_loads(project: Path) -> None:
-    """Confirm ``using AgentREPL`` succeeds in ``project``.
+def verify_julia_runs(project: Path) -> None:
+    """Confirm Julia boots cleanly in ``project`` (a trivial eval, no packages).
 
-    This is the package the runtime loads to start the MCP server; if it
-    can't load, the agent can't start. Raises ``EnvSetupError`` on failure.
+    The kernel's server is stdlib-only, so the failure mode is a broken or
+    half-resolved manifest. Surfacing it here beats a baffling crash at launch.
+    Raises ``EnvSetupError`` on failure.
     """
 
-    print("Verifying AgentREPL loads...", flush=True)
-    _run_pkg(project, ["using AgentREPL"])
+    print("Verifying Julia runs in the env...", flush=True)
+    _run_pkg(project, ["print(1 + 1)"])
 
 
 def resolve_and_instantiate(project: Path) -> None:

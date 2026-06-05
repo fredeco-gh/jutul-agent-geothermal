@@ -68,7 +68,7 @@ def test_resolve_julia_project_prefers_julia_env_without_root_project(tmp_path: 
     ws.mkdir()
     env = ws / ".jutul-agent" / "julia-env"
     env.mkdir(parents=True)
-    (env / "Project.toml").write_text('[deps]\nAgentREPL = "uuid"\n', encoding="utf-8")
+    (env / "Project.toml").write_text('[deps]\nJutul = "uuid"\n', encoding="utf-8")
 
     assert resolve_julia_project(ws) == env
 
@@ -99,7 +99,7 @@ def _template_with_extra_deps(tmp_path: Path) -> Path:
     template.mkdir()
     (template / "Project.toml").write_text(
         "[deps]\n"
-        'AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
+        'Jutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
         'CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"\n'
         'Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"\n',
         encoding="utf-8",
@@ -115,7 +115,7 @@ def test_sync_adds_missing_deps_from_template(
     env = workspace_julia_env(ws)
     env.mkdir(parents=True)
     (env / "Project.toml").write_text(
-        '[deps]\nAgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n',
+        '[deps]\nJutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n',
         encoding="utf-8",
     )
 
@@ -134,7 +134,7 @@ def test_sync_is_noop_when_already_in_sync(tmp_path: Path, _template_with_extra_
     env.mkdir(parents=True)
     (env / "Project.toml").write_text(
         "[deps]\n"
-        'AgentREPL = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
+        'Jutul = "c6b0b931-bd15-49f6-a31f-cf7d80eb5e81"\n'
         'CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"\n'
         'Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"\n',
         encoding="utf-8",

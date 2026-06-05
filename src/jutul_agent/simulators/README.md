@@ -21,7 +21,7 @@ of the active simulator.
    `julia_env_template_path`, `skills_dir`, and `plot_helpers_path` from
    that.
 3. Add `julia_env/Project.toml` with the deps the agent should be able to
-   `using`. Always include `AgentREPL` (the REPL bridge). Pin a
+   `using`. The kernel needs no special dep (its server is stdlib-only). Pin a
    `Manifest.toml` alongside when the dep graph needs locking (e.g. Makie
    version pins).
 4. Optionally add a `julia_env/plots.jl` with thin Makie helpers — the

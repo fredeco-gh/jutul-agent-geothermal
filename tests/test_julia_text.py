@@ -1,12 +1,8 @@
-"""Tests for AgentREPL text helpers — ANSI stripping and terminal emulation."""
+"""Tests for the kernel's terminal-output cleanup — ANSI stripping and emulation."""
 
 from __future__ import annotations
 
-from jutul_agent.julia.backends.agentrepl import (
-    render_terminal_output,
-    strip_ansi,
-    strip_julia_repl_echo,
-)
+from jutul_agent.juliakernel.text import render_terminal_output, strip_ansi
 
 
 def test_strip_ansi_removes_csi_and_color_codes() -> None:
@@ -65,11 +61,7 @@ def test_render_terminal_output_handles_backspace_and_tab() -> None:
     assert render_terminal_output("ab\tcd") == "ab      cd"
 
 
-def test_strip_julia_repl_echo_drops_leading_julia_block() -> None:
-    text = "julia> using CSV\n\nloaded\n"
-    assert strip_julia_repl_echo(text) == "loaded"
-
-
-def test_strip_julia_repl_echo_leaves_non_echo_text_alone() -> None:
-    text = "just some output\n"
-    assert strip_julia_repl_echo(text) == text
+def test_render_terminal_output_fast_path_trims_like_the_screen_model() -> None:
+    # Plain text (no cursor control) takes the fast path; it must trim trailing
+    # whitespace per line and drop trailing blank lines, same as the screen model.
+    assert render_terminal_output("a  \nb \n\n") == "a\nb"

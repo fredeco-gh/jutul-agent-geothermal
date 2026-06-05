@@ -1,0 +1,169 @@
+"""Tests for the JuliaKernel backend.
+
+The integration tests need only ``julia`` on PATH — the kernel runs against base
+Julia, no instantiated env required (a strict improvement over the old backend,
+which needed a built env to test at all).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import shutil
+from pathlib import Path
+
+import pytest
+
+from jutul_agent.juliakernel import JuliaKernel, KernelConfig, OutputChunk
+from jutul_agent.juliakernel.channels import _SENTINEL, KernelChannels, _parse_frame
+from jutul_agent.juliakernel.kernel import JuliaStartupError, _truncate
+
+_HAS_JULIA = shutil.which("julia") is not None
+needs_julia = pytest.mark.skipif(not _HAS_JULIA, reason="requires `julia` on PATH")
+
+
+# ---- unit tests (no Julia) -------------------------------------------------
+
+
+def test_build_launch_assembles_flags(tmp_path: Path) -> None:
+    kernel = JuliaKernel(
+        KernelConfig(
+            julia_executable="julia",
+            julia_project=tmp_path / "env",
+            sysimage=tmp_path / "sys.so",
+            threads="auto",
+            env={"DISPLAY": ":7"},
+        )
+    )
+    command, args, env = kernel._build_launch(54321)
+    # Julia is launched directly (no xvfb-run wrapper); a display arrives via DISPLAY.
+    assert command == "julia"
+    assert f"--project={tmp_path / 'env'}" in args
+    assert f"--sysimage={tmp_path / 'sys.so'}" in args
+    assert "--threads=auto" in args
+    assert "54321" in args
+    assert any(a.endswith("server.jl") for a in args)
+    assert env["DISPLAY"] == ":7"
+    assert "JK_TOKEN" in env
+
+
+def test_parse_frame_handles_every_tag() -> None:
+    import base64
+
+    assert _parse_frame(b"READY\tdeadbeef\n") == ("READY", "deadbeef")
+    assert _parse_frame(b"INT\n") == ("INT", "")
+    ok = b"OK\t" + base64.b64encode(b"2") + b"\n"
+    assert _parse_frame(ok) == ("OK", "2")
+    err = b"ERR\t" + base64.b64encode(b"DomainError") + b"\n"
+    assert _parse_frame(err) == ("ERR", "DomainError")
+
+
+def test_truncate_caps_long_backtraces() -> None:
+    short = "line1\nline2"
+    assert _truncate(short) == short
+    long = "\n".join(f"frame {i}" for i in range(500))
+    out = _truncate(long)
+    assert "more lines of backtrace omitted" in out
+    assert len(out.splitlines()) < 500
+
+
+async def test_startup_error_for_missing_julia() -> None:
+    kernel = JuliaKernel(KernelConfig(julia_executable="definitely-not-julia-zzz"))
+    with pytest.raises(JuliaStartupError):
+        await kernel.__aenter__()
+    # _spawn tore down what it opened before raising (no leaked listener socket).
+    assert kernel._listener is None
+
+
+async def test_channels_split_a_segment_across_two_reads() -> None:
+    """A SENTINEL straddling a read boundary still closes the segment cleanly.
+
+    Drives KernelChannels with bare StreamReaders (no Julia): the parser must
+    reassemble the sentinel from two reads and stream the pre-sentinel bytes.
+    """
+    out, err = asyncio.StreamReader(), asyncio.StreamReader()
+    channels = KernelChannels(out, err)
+    streamed: list[str] = []
+    channels.on_chunk = lambda chunk: streamed.append(chunk.text)
+
+    data = b"hello world" + _SENTINEL + b"leftover"
+    mid = len(b"hello world") + 3  # split inside the SENTINEL
+    out.feed_data(data[:mid])
+    out.feed_data(data[mid:])
+
+    assert await channels.segment("stdout") == "hello world"
+    assert "".join(streamed) == "hello world"  # streamed, not the held-back tail
+    out.feed_eof()
+    err.feed_eof()
+    await channels.aclose()
+
+
+async def test_channels_segment_raises_when_the_pipe_closes() -> None:
+    """A read blocked on a dead channel wakes with an error instead of hanging."""
+    out, err = asyncio.StreamReader(), asyncio.StreamReader()
+    channels = KernelChannels(out, err)
+    out.feed_eof()
+    err.feed_eof()
+    with pytest.raises(RuntimeError):
+        await channels.segment("stdout")
+    await channels.aclose()
+
+
+# ---- integration tests (need Julia) ----------------------------------------
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_eval_persistence_streaming_and_error() -> None:
+    async with JuliaKernel(KernelConfig()) as k:
+        r = await k.eval("1 + 1")
+        assert r.error is None
+        assert r.output == "2"
+        assert r.value_repr == "2"
+
+        assert (await k.eval("x = 41; x + 1")).output == "42"  # state persists
+
+        r = await k.eval('println("hello"); nothing')
+        assert r.error is None
+        assert r.output == "hello"  # no "nothing" noise
+
+        r = await k.eval("sqrt(-1)")
+        assert r.error is not None
+        assert "DomainError" in r.error
+
+        chunks: list[OutputChunk] = []
+        r = await k.eval(
+            'for i in 1:4; println("tick $i"); flush(stdout); sleep(0.15); end',
+            on_chunk=chunks.append,
+        )
+        assert chunks, "expected live output chunks"
+        assert any("tick" in c.text for c in chunks if c.stream == "stdout")
+        assert r.output == "tick 1\ntick 2\ntick 3\ntick 4"
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_interrupt_survives_and_recovers() -> None:
+    async with JuliaKernel(KernelConfig()) as k:
+        task = asyncio.create_task(
+            k.eval("for i in 1:200; println(i); flush(stdout); sleep(0.05); end")
+        )
+        await asyncio.sleep(1.0)
+        await k.interrupt()
+        r = await task
+        assert r.interrupted
+        assert k.running  # the server survived the interrupt
+        assert (await k.eval("21 * 2")).output == "42"  # and still works
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_reset_and_restart_clear_state() -> None:
+    async with JuliaKernel(KernelConfig()) as k:
+        await k.eval("y = 7")
+        await k.reset()
+        assert (await k.eval("@isdefined(y)")).output == "false"
+
+        await k.eval("z = 9")
+        await k.restart()
+        assert k.running
+        assert (await k.eval("@isdefined(z)")).output == "false"

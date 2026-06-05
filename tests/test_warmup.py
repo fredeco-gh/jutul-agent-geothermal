@@ -11,11 +11,14 @@ from jutul_agent.interfaces.cli.run import _start_warmup
 from jutul_agent.julia.session import EvalResult
 
 
-async def test_start_warmup_returns_none_for_empty_code() -> None:
+async def test_start_warmup_loads_ensemble_helper_even_with_empty_code() -> None:
     julia = FakeJulia()
-    assert _start_warmup(julia, "") is None
-    assert _start_warmup(julia, "   \n   ") is None
-    assert julia.calls == []
+    task = _start_warmup(julia, "")
+    assert task is not None
+    await task
+    # With no simulator warm-up code, it still loads the shared ensemble helper.
+    assert len(julia.calls) == 1
+    assert "ensemble.jl" in julia.calls[0] and "include(" in julia.calls[0]
 
 
 async def test_start_warmup_runs_warmup_code_in_background() -> None:
@@ -23,7 +26,9 @@ async def test_start_warmup_runs_warmup_code_in_background() -> None:
     task = _start_warmup(julia, "using BattMo")
     assert task is not None
     await task
-    assert julia.calls == ["using BattMo"]
+    # First loads the ensemble helper, then runs the simulator warm-up.
+    assert any("ensemble.jl" in c for c in julia.calls)
+    assert julia.calls[-1] == "using BattMo"
 
 
 async def test_start_warmup_swallows_errors_so_startup_does_not_break() -> None:

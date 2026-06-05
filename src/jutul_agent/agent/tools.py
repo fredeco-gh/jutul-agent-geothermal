@@ -81,7 +81,13 @@ def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | No
         if package_mounts is not None:
             with contextlib.suppress(Exception):
                 await package_mounts.refresh()
-        text = result.output if not result.error else f"ERROR: {result.error}"
+        if result.error:
+            # Keep anything the code printed before it threw, then the error.
+            text = f"ERROR: {result.error}"
+            if result.output.strip():
+                text = f"{result.output}\n{text}"
+        else:
+            text = result.output
         if _STALE_LOAD_RE.search(text):
             text += _STALE_LOAD_HINT
         if _PRECOMPILE_FAIL_RE.search(text):

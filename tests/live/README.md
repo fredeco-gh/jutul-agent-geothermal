@@ -20,8 +20,7 @@ JUTUL_AGENT_LIVE_MODEL=anthropic:claude-sonnet-4-5 pytest tests/live/
 
 ## Requirements
 
-- Julia on `PATH` and the AgentREPL env at
-  `src/jutul_agent/julia/agentrepl_env/`
+- Julia on `PATH` (the live smoke runs Julia via the kernel on base Julia)
 - One of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`
 
 Tests skip cleanly when requirements are missing.

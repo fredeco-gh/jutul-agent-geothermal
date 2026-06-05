@@ -40,11 +40,11 @@ Two GitHub Actions workflows:
 
 - `ci.yml` — every push/PR. `lint` (ruff); `test` across Linux/Windows/macOS
   (`pytest -m "not integration"`, no Julia); `julia-integration` (Linux only:
-  instantiates the bare AgentREPL env, runs `test_julia_session.py`).
+  runs `test_juliakernel.py` against base Julia — the kernel needs no env).
 - `simulators.yml` — per-simulator smoke matrix (`jutuldarcy`, `battmo`,
   `fimbul`, `mocca`; Linux). On PR + push to `main`, a weekly Monday run
   (catches upstream breakage), and manual dispatch. Each job instantiates the
-  env from `Project.toml` + `[sources]` and runs `test_simulators_smoke.py`.
+  env from `Project.toml` and runs `test_simulators_smoke.py`.
 
 ## Local git hooks
 
@@ -66,10 +66,11 @@ and check on staged `.py` files. To verify the whole tree like CI:
   `approval.py`, `turns.py`, `mounts.py` — the `/add-dir` route mounting).
 - `src/jutul_agent/simulators/` — adapter dataclass, registry, env bootstrap,
   shared skills, and one folder per simulator (see below).
-- `src/jutul_agent/julia/` — `JuliaSession` Protocol in `session.py`; each
-  backend is a self-contained sub-package under `backends/` (today just
-  `backends/agentrepl/`). The bare AgentREPL env for backend tests lives
-  in `agentrepl_env/`.
+- `src/jutul_agent/julia/` — the `JuliaSession` Protocol (`session.py`) and the
+  Julia toolchain checks (`requirements.py`).
+- `src/jutul_agent/juliakernel/` — the backend: a self-contained, supervised
+  Julia runtime (`kernel.py` + stdlib-only `server.jl`) with live output and
+  SIGINT interrupt. Splittable into a standalone package.
 - `src/jutul_agent/trace/` — SQLite event log and `TraceRecorder` middleware.
 - `src/jutul_agent/transcript/` — renderers that consume a trace
   (HTML transcript, markdown transcript, investigation report).
@@ -87,10 +88,9 @@ exactly three things:
 - `adapter.py` — constructs the `SimulatorAdapter`. Set
   `module_dir = Path(__file__).resolve().parent` so the base class can
   derive `julia_env_template_path`, `skills_dir`, and `plot_helpers_path`.
-- `julia_env/` — `Project.toml` declaring deps plus a `[sources]` entry for the
-  unregistered AgentREPL.jl. The
-  `Manifest.toml` is generated on instantiate.
-  Optional `plots.jl`. Copied into a workspace on bootstrap.
+- `julia_env/` — `Project.toml` declaring the deps the agent can `using`. The
+  `Manifest.toml` is generated on instantiate (gitignored). Optional `plots.jl`.
+  Copied into a workspace on bootstrap.
 - `skills/<skill-name>/SKILL.md` — markdown skills surfaced via the
   deep-agents skill system.
 

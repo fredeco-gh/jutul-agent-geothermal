@@ -175,22 +175,21 @@ It checks, with a one-line fix for each problem:
 - `julia` is on PATH and is **1.12+**
 - a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
 - which Julia project this workspace resolves to (see the gotcha below)
-- that project has a `Project.toml` containing `AgentREPL`
 - the simulator's package is actually resolved in the env's `Manifest.toml`
   (catches a `Project.toml` that lists it but was never instantiated)
 - a display is available for plotting — and on a headless Linux box, that
   `xvfb` is installed so GLMakie can render (warns, doesn't fail)
-- `using AgentREPL` actually loads in that project
+- Julia boots cleanly in that project (a trivial eval — catches a broken manifest)
 
 **Gotcha — workspace vs. launch directory.** `jutul-agent` uses the
 directory you launch it from as the workspace, not where you ran `init`.
 `cd` into the initialised folder before launching, or pass
 `--workspace <path>` explicitly. Note too that a `Project.toml` in the 
 root of your workspace takes precedence over `.jutul-agent/julia-env/`
-— if that root project doesn't include `AgentREPL`, startup will fail.
-`doctor` flags this case.
+— if that root project doesn't include the simulator's packages, `using
+<Sim>` will fail even though the kernel starts. `doctor` flags this case.
 
-**"Julia failed to start before the agent could connect".** This means the
+**"Julia failed to start before the kernel was ready".** This means the
 Julia subprocess crashed during startup; the message now includes Julia's
 own error and the path to a full log
 (`…/sessions/<id>/julia-startup.log`). The most common cause is an
@@ -200,7 +199,7 @@ out-of-date or incomplete env — rebuild it with:
 uv run jutul-agent init --sim <name> --precompile --force
 ```
 
-`init --precompile` verifies `using AgentREPL` loads as its final step, so a
+`init --precompile` verifies Julia boots in the env as its final step, so a
 clean `init` rules out this whole class of failure.
 
 ## TUI
@@ -295,7 +294,8 @@ src/jutul_agent/
   simulators/      adapter base, registry, env bootstrap; one folder per simulator:
                      <name>/adapter.py + julia_env/ + skills/
                    plus shared_skills/ used by every session
-  julia/           JuliaSession protocol, AgentREPL backend, agentrepl_env/
+  julia/           JuliaSession protocol + Julia toolchain checks
+  juliakernel/     supervised Julia runtime (kernel.py + server.jl) — the backend
   trace/           append-only SQLite event log + recorder middleware
   transcript/      renderers (HTML, markdown, investigation report)
   interfaces/      CLI + Textual TUI (TUI owns the approval card renderer)

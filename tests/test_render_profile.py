@@ -7,6 +7,7 @@ import pytest
 from jutul_agent.agent.render_profile import (
     can_open_windows,
     has_display,
+    managed_display,
     plotting_display_available,
     should_wrap_xvfb,
 )
@@ -79,6 +80,37 @@ def test_should_wrap_xvfb_only_on_headless_linux_with_xvfb(
 
     monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: "Darwin")
     assert should_wrap_xvfb() is False
+
+
+def test_managed_display_raises_cleanly_when_xvfb_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The startup path treats a missing Xvfb as "no plotting here" (a caught
+    # RuntimeError), not a hard crash — so failing fast and clearly matters.
+    monkeypatch.setattr("jutul_agent.agent.render_profile.shutil.which", lambda _: None)
+    with pytest.raises(RuntimeError, match="Xvfb"), managed_display():
+        pass
+
+
+def test_managed_display_closes_pipe_when_xvfb_fails_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If Popen fails after the pipe is opened, neither pipe fd should leak.
+    import os
+
+    if not os.path.isdir("/proc/self/fd"):
+        pytest.skip("fd-count check needs /proc (Linux)")
+    monkeypatch.setattr("jutul_agent.agent.render_profile.xvfb_available", lambda: True)
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("fork denied")
+
+    monkeypatch.setattr("jutul_agent.agent.render_profile.subprocess.Popen", _boom)
+
+    before = len(os.listdir("/proc/self/fd"))
+    with pytest.raises(PermissionError), managed_display():
+        pass
+    assert len(os.listdir("/proc/self/fd")) == before  # both pipe fds were closed
 
 
 def test_plotting_display_available_on_desktop_os(monkeypatch: pytest.MonkeyPatch) -> None:

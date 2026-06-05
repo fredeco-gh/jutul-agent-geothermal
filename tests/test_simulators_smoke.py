@@ -19,7 +19,7 @@ import shutil
 
 import pytest
 
-from jutul_agent.julia.backends.agentrepl import AgentREPLBackend, AgentREPLConfig
+from jutul_agent.juliakernel import JuliaKernel, KernelConfig
 from jutul_agent.simulators import registry
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.simulators.env_setup import project_has_package
@@ -46,8 +46,8 @@ async def test_simulator_env_loads(adapter: SimulatorAdapter) -> None:
     if not project_has_package(env, adapter.primary_package):
         pytest.skip(f"{adapter.name} is a placeholder: {adapter.primary_package} not in its env")
 
-    config = AgentREPLConfig(julia_project=env)
-    async with AgentREPLBackend(config) as julia:
+    config = KernelConfig(julia_project=env)
+    async with JuliaKernel(config) as julia:
         result = await julia.eval(f"using {adapter.primary_package}")
         assert result.error is None, f"{adapter.name}: {result.error}"
         loaded = await julia.eval(f"@isdefined({adapter.primary_package})")

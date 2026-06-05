@@ -17,8 +17,9 @@ Manifest). To run locally:
         -e 'using Pkg; Pkg.instantiate()'
     uv run pytest tests/integration/test_julia_plot_integration.py
 
-On headless Linux GLMakie needs xvfb (jutul-agent auto-wraps the worker). CI runs
-these in the `plot-integration` job.
+On headless Linux GLMakie needs a virtual display; the ``plot_display`` fixture
+starts a private Xvfb (as production does via ``managed_display``). CI runs these
+in the `plot-integration` job.
 """
 
 from __future__ import annotations
@@ -29,12 +30,39 @@ from pathlib import Path
 import pytest
 
 from jutul_agent.agent.julia_plot import make_julia_plot_tool
-from jutul_agent.julia.backends.agentrepl import AgentREPLBackend, AgentREPLConfig
+from jutul_agent.agent.render_profile import has_display, managed_display, xvfb_available
+from jutul_agent.juliakernel import JuliaKernel, KernelConfig
 from jutul_agent.session import Session
 from jutul_agent.simulators.env_setup import manifest_has_package
 from jutul_agent.simulators.jutuldarcy import JUTULDARCY
 
 JUTULDARCY_ENV = JUTULDARCY.julia_env_template_path
+
+
+@pytest.fixture
+def plot_display():
+    """A DISPLAY for GLMakie, faithful to production.
+
+    GLMakie needs an OpenGL context; with none, its ``save`` *hard-crashes* the
+    Julia process (a GL abort, not a catchable Julia error), surfaced as "the
+    Julia kernel exited unexpectedly". Production gives the kernel a private Xvfb
+    display via ``render_profile.managed_display`` (passed through ``DISPLAY``);
+    the test does the same, so it doesn't depend on the outer process owning one.
+    Yields ``None`` when a real display is already present (use the ambient one).
+    """
+
+    if has_display():
+        yield None
+        return
+    if not xvfb_available():
+        pytest.skip("no display and Xvfb is not available")
+    with managed_display() as display:
+        yield display
+
+
+def _plot_kernel_config(display: str | None) -> KernelConfig:
+    env = {"DISPLAY": display} if display else None
+    return KernelConfig(julia_project=JUTULDARCY_ENV, env=env)
 
 
 def _julia_available() -> bool:
@@ -50,7 +78,7 @@ def _gl_ready(env_dir: Path) -> bool:
     )
 
 
-def _session(julia: AgentREPLBackend, tmp_path: Path, sid: str) -> Session:
+def _session(julia: JuliaKernel, tmp_path: Path, sid: str) -> Session:
     return Session.create(julia=julia, state_root=tmp_path, simulator=JUTULDARCY, session_id=sid)
 
 
@@ -84,12 +112,12 @@ _FIGURE_SHAPES = {
     not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_captures_figure_shapes(tmp_path: Path) -> None:
+async def test_julia_plot_captures_figure_shapes(tmp_path: Path, plot_display) -> None:
     """julia_plot captures every Makie return shape, and errors (not captures a stale
     figure) when the code draws nothing new. Guards our capture logic, not anyone's
     plotters."""
-    config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
-    async with AgentREPLBackend(config) as julia:
+    config = _plot_kernel_config(plot_display)
+    async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "capture-shapes")
         tool = make_julia_plot_tool(session)
 
@@ -118,10 +146,10 @@ async def test_julia_plot_captures_figure_shapes(tmp_path: Path) -> None:
     not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_view_returns_image_blocks(tmp_path: Path) -> None:
+async def test_julia_plot_view_returns_image_blocks(tmp_path: Path, plot_display) -> None:
     """view=True returns text + image content blocks the model can see."""
-    config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
-    async with AgentREPLBackend(config) as julia:
+    config = _plot_kernel_config(plot_display)
+    async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "view-image")
         tool = make_julia_plot_tool(session)
         code = (
@@ -167,10 +195,10 @@ _NATIVE_PLOTTERS = {
     not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_native_plotters_render_to_png(tmp_path: Path) -> None:
+async def test_native_plotters_render_to_png(tmp_path: Path, plot_display) -> None:
     """Every native plotter we document renders to a non-blank PNG through julia_plot."""
-    config = AgentREPLConfig(julia_project=JUTULDARCY_ENV)
-    async with AgentREPLBackend(config) as julia:
+    config = _plot_kernel_config(plot_display)
+    async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "native-plotters")
         # setup_reservoir_model returns the model directly (a tuple only with
         # extra_out=true), and takes a system, not an :immiscible shortcut.

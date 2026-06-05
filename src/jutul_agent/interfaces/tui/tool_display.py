@@ -15,7 +15,6 @@ from jutul_agent.interfaces.tui._rendering import (
     shorten_single_line,
     truncate_preview,
 )
-from jutul_agent.julia.backends.agentrepl import strip_julia_repl_echo
 from jutul_agent.paths import workspace_root
 
 _COMPACT_TOOLS = frozenset(
@@ -108,10 +107,7 @@ def display_tool_body(
         return None
 
     code_section = _julia_code_section(tool_name, args)
-    raw_full = strip_read_file_line_numbers(output) if tool_name == "read_file" else output
-    # When the Code section is shown, drop the `julia> ... ` echo lines from
-    # the output so the code isn't duplicated.
-    full = strip_julia_repl_echo(raw_full) if code_section else raw_full
+    full = strip_read_file_line_numbers(output) if tool_name == "read_file" else output
     language = _TOOL_LANGUAGES.get(tool_name, "")
 
     summary_meta = _summarize_output(full)

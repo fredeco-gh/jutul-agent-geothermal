@@ -47,16 +47,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
-      # The `integration` tests need a live Julia env (AgentREPL.jl, and for the
-      # plot tests a GLMakie-instantiated JutulDarcy env). That's too heavy for
-      # the cross-OS lane and isn't provisioned here, so skip it. The
+      # The `integration` tests need a live Julia runtime (and, for the plot
+      # tests, a GLMakie-instantiated JutulDarcy env). That's too heavy for the
+      # cross-OS lane and isn't provisioned here, so skip it. The
       # `julia-integration` and `plot-integration` jobs cover them on Linux.
       - name: Test
         run: uv run pytest -m "not integration"
 
-  # Lightweight Julia coverage: exercises the Python <-> AgentREPL.jl MCP backend
-  # against the bare `agentrepl_env`. The heavier plot tests (which need a
-  # GLMakie-instantiated simulator env) run in the `plot-integration` job below.
+  # Lightweight Julia coverage: exercises the JuliaKernel backend (framed control
+  # protocol, live streaming, SIGINT interrupt, reset) against base Julia — no
+  # instantiated env needed. The heavier plot tests (which need a GLMakie-
+  # instantiated simulator env) run in the `plot-integration` job below.
   julia-integration:
     runs-on: ubuntu-latest
     steps:
@@ -79,16 +80,8 @@ jobs:
       - name: Cache Julia artifacts
         uses: julia-actions/cache@v2
 
-      # Registry.update() also bootstraps the General registry on a fresh runner
-      # depot (Pkg.resolve assumes it already exists and fails); then instantiate
-      # resolves from Project + [sources].
-      - name: Instantiate AgentREPL env
-        run: >
-          julia --project=src/jutul_agent/julia/agentrepl_env --startup-file=no
-          -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'
-
-      - name: Test (AgentREPL backend)
-        run: uv run pytest tests/test_julia_session.py
+      - name: Test (JuliaKernel backend)
+        run: uv run pytest tests/test_juliakernel.py -v
 
   # Real plotting coverage: instantiate a GLMakie-enabled JutulDarcy env and run
   # the julia_plot integration tests (our capture/window/view machinery and the
@@ -118,15 +111,15 @@ jobs:
         uses: julia-actions/cache@v2
 
       # GLMakie needs an OpenGL context; the runner is headless, so provide a
-      # virtual X server (xvfb) plus Mesa software GL. jutul-agent auto-wraps the
-      # Julia worker in xvfb-run at runtime, and we wrap the precompile below.
+      # virtual X server (xvfb) plus Mesa software GL. The plot tests start their
+      # own Xvfb (via the managed_display fixture, as the runtime does); the
+      # precompile below is wrapped in xvfb-run.
       - name: Install headless OpenGL (xvfb + Mesa)
         run: sudo apt-get update && sudo apt-get install -y xvfb xorg-dev mesa-utils libgl1 libgl1-mesa-dri
 
       # Registry.update() bootstraps the General registry on a fresh depot; then
-      # instantiate resolves AgentREPL (from [sources]) + JutulDarcy + GLMakie +
-      # the GraphMakie stack. Wrapped in xvfb-run so GLMakie can precompile with a
-      # GL context.
+      # instantiate resolves JutulDarcy + GLMakie + the GraphMakie stack. Wrapped
+      # in xvfb-run so GLMakie can precompile with a GL context.
       - name: Instantiate JutulDarcy env
         run: >
           xvfb-run -a julia
