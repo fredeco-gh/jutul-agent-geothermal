@@ -35,6 +35,7 @@ dev = [
     "pre-commit>=3.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-timeout>=2.3",
     "ruff>=0.5",
     "syrupy>=4",
 ]
@@ -87,7 +88,10 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --ignore=tests/live"
+# Global per-test timeout so a wedged test can't hang CI forever; sized to catch only
+# infinite hangs, not slow work. conftest raises it for the compile-heavy integration
+# tests.
+addopts = "-ra --ignore=tests/live --timeout=120"
 asyncio_mode = "auto"
 markers = [
     "integration: requires a live Julia runtime (the kernel tests need only base Julia; the simulator/plot tests need an instantiated env)",

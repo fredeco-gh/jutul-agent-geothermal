@@ -20,6 +20,18 @@ from jutul_agent.simulators.base import SimulatorAdapter
 
 load_dotenv()
 
+# Integration tests run real Julia and pay first-call compilation, which can take
+# minutes (more on slow CI). The global 120 s timeout would flake them, so give them
+# a large budget that only catches a genuine (infinite) deadlock. An explicit
+# per-test ``@pytest.mark.timeout`` still wins.
+_INTEGRATION_TIMEOUT_S = 1800
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    for item in items:
+        if item.get_closest_marker("integration") and item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(_INTEGRATION_TIMEOUT_S))
+
 
 @pytest.fixture(autouse=True)
 def _reset_workspace_overrides(tmp_path: Path, monkeypatch):
