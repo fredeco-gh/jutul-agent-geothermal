@@ -10,9 +10,9 @@ from typing import Protocol
 
 # The canonical result type lives with the kernel that produces it; re-exported
 # here so the protocol and every consumer share one ``EvalResult`` identity.
-from jutul_agent.juliakernel.result import EvalResult
+from jutul_agent.juliakernel.result import EvalResult, OnChunk
 
-__all__ = ["EvalResult", "JuliaSession"]
+__all__ = ["EvalResult", "JuliaSession", "OnChunk"]
 
 
 class JuliaSession(Protocol):
@@ -22,8 +22,13 @@ class JuliaSession(Protocol):
 
     async def __aexit__(self, *exc_info: object) -> None: ...
 
-    async def eval(self, code: str) -> EvalResult:
-        """Evaluate ``code`` and return its result."""
+    async def eval(self, code: str, on_chunk: OnChunk | None = None) -> EvalResult:
+        """Evaluate ``code`` and return its result.
+
+        ``on_chunk`` (optional) receives output fragments live as the eval
+        produces them, for callers that stream the output to a UI. The returned
+        ``EvalResult`` still carries the full cleaned output regardless.
+        """
         ...
 
     async def reset(self) -> EvalResult:

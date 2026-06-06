@@ -15,11 +15,44 @@ from typing import TYPE_CHECKING, Any
 
 from langchain_core.tools import tool
 
+from jutul_agent.juliakernel.result import OnChunk, OutputChunk
 from jutul_agent.paths import resolve_workspace_path, workspace_root
 from jutul_agent.session import Session
 
 if TYPE_CHECKING:
     from jutul_agent.agent.packages_backend import PackageMounts
+
+# langgraph exposes the active tool call's output-delta writer only through this
+# ContextVar. Reading it directly keeps the tool's plain ``code: str`` signature (a
+# ``ToolRuntime`` parameter would break standalone tool calls in tests). Guarded so
+# a langgraph internals change just disables streaming.
+try:  # pragma: no cover - import guard
+    from langgraph.pregel._tools import _tool_call_writer
+except Exception:  # pragma: no cover - langgraph internals moved
+    _tool_call_writer = None  # type: ignore[assignment]
+
+
+def _capture_delta_writer() -> OnChunk | None:
+    """Return an ``on_chunk`` that streams kernel output as tool-output deltas.
+
+    The writer is captured here, in the tool's context where langgraph set the
+    ContextVar, so it stays valid when the kernel's pump task (a different task)
+    invokes it. Returns ``None`` outside a streaming graph (e.g. unit tests).
+    """
+
+    if _tool_call_writer is None:
+        return None
+    writer = _tool_call_writer.get()
+    if writer is None:
+        return None
+
+    def on_chunk(chunk: OutputChunk) -> None:
+        if chunk.text:
+            # Raw fragment (carriage returns / ANSI intact); the UI renders it.
+            writer(chunk.text)
+
+    return on_chunk
+
 
 # Julia can't reload a module already loaded this session, so a new version only
 # takes effect in a fresh process. This is the one case where a restart is unavoidable.
@@ -65,7 +98,7 @@ def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | No
             error description if the evaluation failed.
         """
         try:
-            result = await session.julia.eval(code)
+            result = await session.julia.eval(code, on_chunk=_capture_delta_writer())
         except Exception as exc:
             # A transport-level failure (not a Julia error): the session died,
             # e.g. the process was killed or crashed. Surface it as a recoverable
