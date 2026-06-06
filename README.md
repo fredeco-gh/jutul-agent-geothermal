@@ -13,7 +13,7 @@ your workspace, and keeps a per-session trace.
 Works on Linux, macOS, and Windows. You need three things on PATH:
 
 - **Python 3.12+**
-- **Julia 1.12+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
+- **Julia 1.10+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
 - **uv** — Astral's Python project manager (handles the venv and entry points)
 
 On a **headless Linux** server, plotting also needs `xvfb` (`sudo apt-get install -y xvfb`); without it, simulation still works but plot calls error.
@@ -37,15 +37,13 @@ Open a new terminal afterwards so the updated PATH is picked up. Full
 instructions and other install methods:
 [docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
 
-### 2. Make sure Julia 1.12+ is the default
+### 2. Make sure Julia is 1.10+
 
-If `juliaup` gave you an older channel, switch:
+`juliaup`'s default channel already satisfies this. If you're on an older pin:
 
 ```sh
-juliaup add 1.12 && juliaup default 1.12
+juliaup add 1.10 && juliaup default 1.10
 ```
-
-Check with `julia --version`.
 
 ### 3. Clone and sync
 
@@ -172,7 +170,7 @@ uv run jutul-agent doctor
 
 It checks, with a one-line fix for each problem:
 
-- `julia` is on PATH and is **1.12+**
+- `julia` is on PATH and is **1.10+**
 - a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
 - which Julia project this workspace resolves to (see the gotcha below)
 - the simulator's package is actually resolved in the env's `Manifest.toml`

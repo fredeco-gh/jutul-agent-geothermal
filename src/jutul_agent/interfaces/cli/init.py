@@ -64,7 +64,15 @@ def build_parser(prog: str = "jutul-agent init") -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
+    from jutul_agent.julia.requirements import JuliaRequirementError, require_julia
     from jutul_agent.simulators.env_setup import EnvSetupError, bootstrap_workspace
+
+    # Fail early with clear remediation if Julia is missing or too old.
+    try:
+        require_julia()
+    except JuliaRequirementError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     ws = workspace_root()
     config = load_workspace_config(ws)
@@ -114,7 +122,7 @@ def run(args: argparse.Namespace) -> int:
     if args.force:
         print("  env:           replaced from template (--force)")
     if args.precompile:
-        print("  precompile:    done (Pkg.instantiate + plot warm-up)")
+        print("  precompile:    done (Pkg.instantiate + Pkg.precompile)")
         _note_headless_plotting()
     return 0
 

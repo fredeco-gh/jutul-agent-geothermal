@@ -11,7 +11,9 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-MIN_JULIA_VERSION: tuple[int, int] = (1, 12)
+# Floor set by the simulators, not the kernel (server.jl is stdlib-only): Mocca
+# needs 1.10, the others less. 1.10 is also the current Julia LTS.
+MIN_JULIA_VERSION: tuple[int, int] = (1, 10)
 
 _VERSION_RE = re.compile(r"julia version (\d+)\.(\d+)\.(\d+)")
 
