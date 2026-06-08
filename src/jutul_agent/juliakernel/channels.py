@@ -25,6 +25,11 @@ from .result import OnChunk, OutputChunk
 _SENTINEL = b"\x1e\x1eJK-EVAL-DONE\x1e\x1e\n"
 _STDERR_TAIL_CAP = 16 * 1024
 _READ_SIZE = 64 * 1024
+# Each result frame is one base64 ``readline`` line. A deep solver error prints
+# enormous type signatures, well past asyncio's 64 KiB default (which would raise
+# and look like the process died). The server caps payloads; this is the matching,
+# generous transport ceiling.
+_CTRL_LIMIT = 64 * 1024 * 1024
 
 # Pushed onto a channel's queue when its pump exits, so a blocked reader wakes and
 # learns the process is gone instead of hanging forever.
@@ -58,7 +63,7 @@ class KernelChannels:
 
     async def attach_control(self, conn: socket.socket) -> None:
         """Open the control connection over ``conn`` and start pumping it."""
-        reader, writer = await asyncio.open_connection(sock=conn)
+        reader, writer = await asyncio.open_connection(sock=conn, limit=_CTRL_LIMIT)
         self._ctrl_writer = writer
         self._tasks.append(asyncio.create_task(self._pump_control(reader)))
 

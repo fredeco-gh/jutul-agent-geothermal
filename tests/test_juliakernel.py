@@ -15,7 +15,7 @@ import pytest
 
 from jutul_agent.juliakernel import JuliaKernel, KernelConfig, OutputChunk
 from jutul_agent.juliakernel.channels import _SENTINEL, KernelChannels, _parse_frame
-from jutul_agent.juliakernel.kernel import JuliaStartupError, _truncate
+from jutul_agent.juliakernel.kernel import JuliaStartupError
 
 _HAS_JULIA = shutil.which("julia") is not None
 needs_julia = pytest.mark.skipif(not _HAS_JULIA, reason="requires `julia` on PATH")
@@ -55,15 +55,6 @@ def test_parse_frame_handles_every_tag() -> None:
     assert _parse_frame(ok) == ("OK", "2")
     err = b"ERR\t" + base64.b64encode(b"DomainError") + b"\n"
     assert _parse_frame(err) == ("ERR", "DomainError")
-
-
-def test_truncate_caps_long_backtraces() -> None:
-    short = "line1\nline2"
-    assert _truncate(short) == short
-    long = "\n".join(f"frame {i}" for i in range(500))
-    out = _truncate(long)
-    assert "more lines of backtrace omitted" in out
-    assert len(out.splitlines()) < 500
 
 
 async def test_startup_error_for_missing_julia() -> None:
@@ -142,6 +133,73 @@ async def test_eval_persistence_streaming_and_error() -> None:
 
 @pytest.mark.integration
 @needs_julia
+async def test_huge_error_frame_does_not_kill_session() -> None:
+    """A giant error payload comes back as a normal error, not a false death.
+
+    A deep error's base64 frame can exceed asyncio's 64 KiB readline default, which
+    would look like the process died. The kernel raises the transport limit and caps
+    the payload server-side, so the error returns bounded and the session survives.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        r = await k.eval('error("X" ^ 200_000)')
+        assert r.error is not None
+        assert k.running, "the session must survive a huge error frame"
+        assert "output truncated" in r.error  # server-side cap kept the frame small
+        assert len(r.error) < 80 * 1024
+        assert (await k.eval("6 * 7")).output == "42"  # still usable, no reset needed
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_error_stacktrace_is_compact() -> None:
+    """Errors use Julia's own REPL backtrace with the type limiter.
+
+    ``format_error`` passes the ``:stacktrace_types_limited`` IOContext key, so a
+    frame's huge specialized argument types collapse to ``{…}`` while the call chain
+    and small types are kept.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        # A nested call so there are real frames with argument types.
+        r = await k.eval("f(x) = sqrt(x); g(x) = f(x); g(-1.0)")
+        assert r.error is not None
+        assert "DomainError" in r.error
+        assert "Stacktrace:" in r.error
+        assert " @ " in r.error  # frames carry `@ file:line`
+        assert len(r.error) < 8 * 1024  # compact, not a type-signature dump
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_error_keeps_output_printed_before_the_throw() -> None:
+    """Output the user code printed before it threw is kept, not discarded."""
+    async with JuliaKernel(KernelConfig()) as k:
+        r = await k.eval('println("progress: step 1"); error("boom")')
+        assert r.error is not None
+        assert "boom" in r.error
+        # The breadcrumb the agent needs survives in both the assembled output
+        # and the structured stdout.
+        assert "progress: step 1" in r.output
+        assert "progress: step 1" in r.stdout
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_undisplayable_value_reports_its_type() -> None:
+    """A value whose show/string both throw yields its type, not '<unprintable value>'."""
+    async with JuliaKernel(KernelConfig()) as k:
+        await k.eval(
+            "struct _Unshowable end\n"
+            'Base.show(io::IO, ::MIME"text/plain", ::_Unshowable) = error("no")\n'
+            'Base.show(io::IO, ::_Unshowable) = error("no")'
+        )
+        r = await k.eval("_Unshowable()")
+        assert r.error is None
+        assert "_Unshowable" in r.output
+        assert "cannot be displayed" in r.output
+
+
+@pytest.mark.integration
+@needs_julia
 async def test_interrupt_survives_and_recovers() -> None:
     async with JuliaKernel(KernelConfig()) as k:
         task = asyncio.create_task(
@@ -157,6 +215,28 @@ async def test_interrupt_survives_and_recovers() -> None:
 
 @pytest.mark.integration
 @needs_julia
+async def test_cancelled_eval_interrupts_and_preserves_state() -> None:
+    """Cancelling a running eval interrupts it and keeps the session + state alive.
+
+    Instead of restarting Julia (losing packages and variables), the kernel SIGINTs
+    the eval and drains its result frame, so the process stays in protocol sync.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        await k.eval("kept = 123")  # state that must survive the cancel
+        task = asyncio.create_task(k.eval("for i in 1:1000; sleep(0.1); end; 1"))
+        await asyncio.sleep(1.0)  # let it enter the loop
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert k.running, "the session must survive a cancelled eval"
+        assert k.cancel_preserved_state, "state should be preserved, not restarted"
+        # No protocol desync (results align with their code) and state is intact.
+        assert (await k.eval("kept + 1")).output == "124"
+        assert (await k.eval("2 + 2")).output == "4"
+
+
+@pytest.mark.integration
+@needs_julia
 async def test_reset_and_restart_clear_state() -> None:
     async with JuliaKernel(KernelConfig()) as k:
         await k.eval("y = 7")
@@ -167,3 +247,21 @@ async def test_reset_and_restart_clear_state() -> None:
         await k.restart()
         assert k.running
         assert (await k.eval("@isdefined(z)")).output == "false"
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_killed_process_surfaces_as_error_not_a_hang() -> None:
+    """If the process dies mid-eval, the blocked read wakes with a clean error.
+
+    The pump feeding a channel pushes a poison marker when it exits, so a read
+    waiting on the dead channel raises instead of hanging forever.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        task = asyncio.create_task(k.eval("sleep(60)"))
+        await asyncio.sleep(0.5)
+        assert k._proc is not None
+        k._proc.kill()  # hard kill mid-eval, not a survivable SIGINT
+        with pytest.raises(RuntimeError):
+            await task
+        assert not k.running

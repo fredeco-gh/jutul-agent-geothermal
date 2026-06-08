@@ -32,7 +32,9 @@ from .result import EvalResult, OnChunk
 from .text import render_terminal_output
 
 _SERVER_JL = Path(__file__).resolve().parent / "server.jl"
-_MAX_ERROR_LINES = 80  # cap a Julia backtrace so it can't flood the agent's context
+# After cancelling an eval we SIGINT it and wait this long for it to stop and emit
+# its result frame; past this we treat it as wedged and restart.
+_INTERRUPT_DRAIN_TIMEOUT = 10.0
 
 
 class JuliaStartupError(RuntimeError):
@@ -85,6 +87,7 @@ class JuliaKernel:
         self._stderr_fh: IO[bytes] | None = None
         self._token = ""
         self._lock = asyncio.Lock()
+        self._cancel_preserved_state = True
 
     # ---- lifecycle ---------------------------------------------------------
 
@@ -141,14 +144,56 @@ class JuliaKernel:
         assert channels is not None
         async with self._lock:
             channels.on_chunk = on_chunk
+            got_frame = got_out = False
             try:
                 await channels.send(code)
                 frame = await channels.frame()
+                got_frame = True
                 out_raw = await channels.segment("stdout")
+                got_out = True
                 err_raw = await channels.segment("stderr")
+            except asyncio.CancelledError:
+                # The caller was cancelled mid-eval. Interrupt the eval and drain its
+                # result so the process stays in protocol sync with its REPL state,
+                # rather than restarting. Shielded so the cancellation can't abort the
+                # recovery itself.
+                channels.on_chunk = None
+                await asyncio.shield(self._recover_from_cancel(got_frame, got_out))
+                raise
             finally:
                 channels.on_chunk = None
         return self._build_result(frame, out_raw, err_raw)
+
+    async def _recover_from_cancel(self, got_frame: bool, got_out: bool) -> None:
+        """Leave the session usable after an eval was cancelled mid-flight.
+
+        If the eval is still running (no result frame yet), SIGINT it, then consume
+        exactly the frame and segments it still owes so the next eval doesn't read a
+        stale one. If it ignores the interrupt or the process dies, fall back to a
+        restart (the only case where REPL state is lost).
+        """
+        channels = self._channels
+        if channels is None:
+            return
+        if not got_frame:
+            await self.interrupt()
+        try:
+            async with asyncio.timeout(_INTERRUPT_DRAIN_TIMEOUT):
+                if not got_frame:
+                    await channels.frame()
+                if not got_out:
+                    await channels.segment("stdout")
+                await channels.segment("stderr")
+            self._cancel_preserved_state = True
+        except Exception:
+            self._cancel_preserved_state = False
+            with contextlib.suppress(Exception):
+                await self.restart()
+
+    @property
+    def cancel_preserved_state(self) -> bool:
+        """Whether the last cancelled eval kept REPL state (vs. forced a restart)."""
+        return self._cancel_preserved_state
 
     def _build_result(self, frame: tuple[str, str], out_raw: str, err_raw: str) -> EvalResult:
         tag, payload = frame
@@ -172,9 +217,7 @@ class JuliaKernel:
                 interrupted=True,
             )
         if tag == "ERR":
-            return EvalResult(
-                output="\n".join(parts), error=_truncate(payload), stdout=out, stderr=err
-            )
+            return EvalResult(output="\n".join(parts), error=payload, stdout=out, stderr=err)
         # OK — append the value's repr.
         if payload:
             parts.append(payload)
@@ -339,12 +382,3 @@ class JuliaKernel:
         env["JK_TOKEN"] = self._token
 
         return cfg.julia_executable, args, env
-
-
-def _truncate(text: str) -> str:
-    lines = text.splitlines()
-    if len(lines) <= _MAX_ERROR_LINES:
-        return text
-    kept = lines[:_MAX_ERROR_LINES]
-    kept.append(f"… ({len(lines) - _MAX_ERROR_LINES} more lines of backtrace omitted)")
-    return "\n".join(kept)
