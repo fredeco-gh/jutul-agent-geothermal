@@ -35,3 +35,15 @@ def test_prompt_describes_glmakie_window_behavior(tmp_path: Path) -> None:
     p = assemble_session_prompt(_adapter(tmp_path))
     assert "GLMakie" in p
     assert "live window" in p
+
+
+def test_prompt_states_window_availability_per_session(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    windowed = assemble_session_prompt(adapter, open_windows=True)
+    headless = assemble_session_prompt(adapter, open_windows=False)
+    # Windowed: promises an interactive window, no caveat.
+    assert "live plot windows are available" in windowed
+    assert "HEADLESS" not in windowed
+    # Headless: explicit caveat so the agent won't claim a window opened.
+    assert "HEADLESS" in headless
+    assert "Never tell the user a window opened" in headless
