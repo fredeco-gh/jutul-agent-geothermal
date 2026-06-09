@@ -6,10 +6,35 @@ from pathlib import Path
 from typing import Any
 
 from fakes import FakeJulia, make_fake_adapter
-from jutul_agent.agent.julia_plot import make_julia_plot_tool
+from jutul_agent.agent.julia_plot import make_julia_plot_tool, make_recapture_tool
 from jutul_agent.julia.session import EvalResult
 from jutul_agent.session import Session
 from jutul_agent.trace import TraceLog
+
+
+def _contains_key(obj: Any, key: str) -> bool:
+    """Recursively check whether ``key`` appears anywhere in a JSON schema."""
+    if isinstance(obj, dict):
+        return key in obj or any(_contains_key(v, key) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_contains_key(v, key) for v in obj)
+    return False
+
+
+def test_plot_tool_schemas_are_provider_safe(tmp_path: Path) -> None:
+    """Array params must use ``items``, not ``prefixItems``.
+
+    A ``tuple[int, int]`` annotation emits JSON-Schema ``prefixItems`` with no
+    ``items`` field, which Gemini (and strict OpenAI schema validation) reject
+    with "properties[size].items: missing field". ``list[int]`` emits ``items``.
+    """
+    julia = FakeJulia()
+    session = _session(tmp_path, julia)
+    for tool in (make_julia_plot_tool(session), make_recapture_tool(session)):
+        schema = tool.args_schema.model_json_schema()
+        assert not _contains_key(schema, "prefixItems"), (
+            f"{tool.name} schema uses prefixItems (Gemini-incompatible): {schema}"
+        )
 
 
 async def _invoke(tool, args: dict, *, tool_call_id: str) -> Any:
