@@ -104,6 +104,18 @@ async def test_channels_segment_raises_when_the_pipe_closes() -> None:
 
 @pytest.mark.integration
 @needs_julia
+async def test_relative_include_resolves_in_workspace(tmp_path: Path) -> None:
+    # A file written to the workspace must be `include`-able by its relative name;
+    # without the rewrite, Julia resolves it next to the kernel's own source file.
+    (tmp_path / "snippet.jl").write_text('println("loaded snippet")\n')
+    async with JuliaKernel(KernelConfig(cwd=tmp_path)) as k:
+        r = await k.eval('include("snippet.jl")')
+        assert r.error is None, r.error
+        assert "loaded snippet" in r.output
+
+
+@pytest.mark.integration
+@needs_julia
 async def test_eval_persistence_streaming_and_error() -> None:
     async with JuliaKernel(KernelConfig()) as k:
         r = await k.eval("1 + 1")

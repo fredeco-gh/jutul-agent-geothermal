@@ -90,6 +90,21 @@ function emit_result(ctrl, tag, payload)
     end
 end
 
+# Julia binds a script's top-level `include` to that script's directory, so a
+# user's `include("foo.jl")` would look next to this server file rather than the
+# working directory (the workspace, where files are written). Rewrite top-level
+# `include(x)` to `include(abspath(x))` — the cwd is the workspace — so relative
+# paths resolve there. Absolute paths and nested includes are unaffected.
+function rewrite_includes!(ex)
+    ex isa Expr || return ex
+    if ex.head === :call && length(ex.args) == 2 && ex.args[1] === :include
+        ex.args[2] = Expr(:call, :abspath, ex.args[2])
+    else
+        foreach(rewrite_includes!, ex.args)
+    end
+    return ex
+end
+
 function main()
     port = parse(Int, ARGS[1])
     token = get(ENV, "JK_TOKEN", "")
@@ -119,7 +134,7 @@ function main()
         tag = "OK"
         payload = ""
         try
-            val = Core.eval(Main, Meta.parseall(code))   # user output streams to fd1/fd2
+            val = Core.eval(Main, rewrite_includes!(Meta.parseall(code)))  # output streams to fd1/fd2
             payload = value_repr(val)
         catch e
             if e isa InterruptException
