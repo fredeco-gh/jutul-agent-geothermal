@@ -38,6 +38,11 @@ BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
         "<path>",
     ),
     SlashCommandSpec(
+        "/model",
+        "open the model selector, or switch to a given model",
+        "[provider:model]",
+    ),
+    SlashCommandSpec(
         "/approval-mode",
         "set approval policy for this session",
         "[ask|workspace|auto]",

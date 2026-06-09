@@ -195,8 +195,6 @@ class WelcomeBlock(MessageBlock):
         *,
         simulator_label: str,
         session_id: str,
-        model_label: str | None,
-        approval_mode_label: str | None = None,
     ) -> None:
         super().__init__(
             "Session",
@@ -204,8 +202,6 @@ class WelcomeBlock(MessageBlock):
             _render_welcome_message(
                 simulator_label=simulator_label,
                 session_id=session_id,
-                model_label=model_label,
-                approval_mode_label=approval_mode_label,
             ),
             markdown=True,
         )
@@ -298,28 +294,20 @@ def _render_welcome_message(
     *,
     simulator_label: str,
     session_id: str,
-    model_label: str | None,
-    approval_mode_label: str | None = None,
 ) -> str:
+    # The active model and approval mode live in the status bar, which stays
+    # current as they change; the welcome card is a one-time landing note.
     lines = [
         f"**jutul-agent** is ready for **{simulator_label}**.",
         f"Session `{session_id[:8]}`",
+        "",
+        "Ask a question or describe a task.",
+        "Shift+Tab cycles approval mode "
+        "(*workspace* auto-approves file edits; *auto* skips all prompts).",
+        "**Ctrl+C** interrupts a running turn. When idle: select text + "
+        "**Ctrl+C** copies it (or `/copy` for the whole last reply); "
+        "**Ctrl+C** twice exits.",
     ]
-    if model_label:
-        lines[-1] += f" · model `{shorten(model_label, 48)}`"
-    if approval_mode_label:
-        lines[-1] += f" · approvals `{approval_mode_label}`"
-    lines.extend(
-        [
-            "",
-            "Ask a question or describe a task.",
-            "Shift+Tab cycles approval mode "
-            "(*workspace* auto-approves file edits; *auto* skips all prompts).",
-            "**Ctrl+C** interrupts a running turn. When idle: select text + "
-            "**Ctrl+C** copies it (or `/copy` for the whole last reply); "
-            "**Ctrl+C** twice exits.",
-        ]
-    )
     return "\n".join(lines)
 
 
@@ -420,6 +408,10 @@ class StatusBar(Static):
         self._pending_count = pending_count
         self._tool_toggle_available = tool_toggle_available
         self._approval_mode_label = approval_mode_label
+        self.refresh()
+
+    def set_model(self, model_label: str | None) -> None:
+        self._model_label = model_label
         self.refresh()
 
     def render(self) -> Text:

@@ -42,7 +42,7 @@ def _sanitize_slot(slot: str) -> str | None:
     return slot
 
 
-def _julia_size_tuple(size: tuple[int, int] | None) -> str:
+def _julia_size_tuple(size: list[int] | None) -> str:
     if size is None:
         return "nothing"
     return f"({int(size[0])}, {int(size[1])})"
@@ -90,7 +90,7 @@ def _build_render_call(
     *,
     user_code: str,
     abs_path: Path,
-    size: tuple[int, int] | None,
+    size: list[int] | None,
     dpi: int | None,
     open_window: bool,
     window_key: str,
@@ -142,7 +142,7 @@ def _finalize(
     rel_path: str,
     caption: str,
     tool_call_id: str,
-    size: tuple[int, int] | None,
+    size: list[int] | None,
     dpi: int | None,
     slot: str | None,
     source_code: str,
@@ -208,7 +208,7 @@ def make_julia_plot_tool(session: Session):
         code: str,
         tool_call_id: Annotated[str, InjectedToolCallId],
         caption: str = "",
-        size: tuple[int, int] | None = None,
+        size: list[int] | None = None,
         dpi: int | None = None,
         slot: str | None = None,
         view: bool = False,
@@ -313,7 +313,7 @@ def make_recapture_tool(session: Session):
         caption: str = "",
         view: bool = True,
         slot: str | None = None,
-        size: tuple[int, int] | None = None,
+        size: list[int] | None = None,
     ) -> str | list[dict[str, Any]]:
         """Snapshot an open plot window at its CURRENT view and show it to you.
 

@@ -16,10 +16,12 @@ classifiers = [
 dependencies = [
     "deepagents>=0.6.8",
     "python-dotenv>=1.0",
-    # Provider packages. langchain-anthropic comes via deepagents; we add the
-    # others explicitly so the default `openai:gpt-5.4-mini` works out of the
-    # box and `provider:model` switching does not need code changes.
+    # Provider packages we bundle so the selected models work out of the box
+    # (langchain-anthropic arrives via deepagents). ollama covers local models;
+    # any other provider works once the user installs its langchain-* package.
     "langchain-openai>=0.2",
+    "langchain-google-genai>=4.2.2",
+    "langchain-ollama>=1.1.0",
     "langgraph-checkpoint-sqlite>=3.1.0",
     "markdown-it-py[linkify]>=4.0",
     "pygments>=2.17",

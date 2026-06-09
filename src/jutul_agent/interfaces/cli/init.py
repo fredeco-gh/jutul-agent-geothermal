@@ -14,6 +14,7 @@ from jutul_agent.interfaces.cli._helpers import (
 from jutul_agent.paths import workspace_root
 from jutul_agent.simulators import registry
 from jutul_agent.workspace import (
+    WorkspaceConfig,
     auto_detect_simulator,
     load_workspace_config,
     merge_simulator_config,
@@ -124,6 +125,8 @@ def run(args: argparse.Namespace) -> int:
     if args.precompile:
         print("  precompile:    done (Pkg.instantiate + Pkg.precompile)")
         _note_headless_plotting()
+
+    _maybe_prompt_for_provider_key(new_config)
     return 0
 
 
@@ -152,3 +155,48 @@ def _note_headless_plotting() -> None:
         f"is unavailable here.\n                 To enable plots, {hint}. "
         "Simulation works without it."
     )
+
+
+def _maybe_prompt_for_provider_key(config: WorkspaceConfig) -> None:
+    """Offer to save an API key when the resolved model's provider has none.
+
+    Prompts only with a TTY; otherwise prints a note. Local models are skipped.
+    """
+    import getpass
+    import sys
+
+    from jutul_agent.agent.builder import resolve_model
+    from jutul_agent.agent.models import provider_info
+    from jutul_agent.credentials import missing_credential, store_credential
+    from jutul_agent.user_config import load_user_config
+
+    model_id = resolve_model(
+        None, workspace_model=config.model, user_model=load_user_config().model
+    )
+    env_var = missing_credential(model_id)
+    if env_var is None:
+        return
+
+    info = provider_info(model_id)
+    label = info.label if info else model_id
+    if not sys.stdin.isatty():
+        print(
+            f"\nNote: {label} needs {env_var}, which isn't set. Add it to your shell, "
+            "a .env, or launch `jutul-agent` and pick a model to be prompted for it.",
+            file=sys.stderr,
+        )
+        return
+
+    print(f"\n{label} ({model_id}) needs an API key, but {env_var} isn't set.")
+    try:
+        value = getpass.getpass(
+            f"Paste {env_var} to save it for future runs (leave blank to skip): "
+        ).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if not value:
+        print("Skipped — set it later via the model selector, a .env, or your shell.")
+        return
+    path = store_credential(env_var, value)
+    print(f"Saved {env_var} to {path}.")

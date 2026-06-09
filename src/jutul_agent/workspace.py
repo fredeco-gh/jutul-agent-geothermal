@@ -124,12 +124,14 @@ class SimulatorConfig:
 class WorkspaceConfig:
     """Loaded contents of ``.jutul-agent/config.toml``.
 
-    Empty config is fine — every field defaults sensibly.
+    Empty config is fine — every field defaults sensibly. ``model`` shares its
+    key with the user-global config; the workspace value wins.
     """
 
     simulator: str | None = None
     simulators: dict[str, SimulatorConfig] = field(default_factory=dict)
     approval_mode: str | None = None
+    model: str | None = None
 
     def simulator_config(self, name: str) -> SimulatorConfig:
         return self.simulators.get(name) or SimulatorConfig()
@@ -146,6 +148,7 @@ def load_workspace_config(workspace: Path | None = None) -> WorkspaceConfig:
 
     sim_name = (data.get("workspace") or {}).get("simulator")
     approval_mode = (data.get("workspace") or {}).get("approval_mode")
+    model = data.get("model")
     simulators_raw = data.get("simulator") or {}
     simulators: dict[str, SimulatorConfig] = {}
     for name, body in simulators_raw.items():
@@ -160,6 +163,7 @@ def load_workspace_config(workspace: Path | None = None) -> WorkspaceConfig:
         simulator=sim_name,
         simulators=simulators,
         approval_mode=approval_mode,
+        model=model if isinstance(model, str) else None,
     )
 
 
@@ -186,12 +190,17 @@ def write_workspace_config(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = []
+    # A top-level key must precede any table.
+    if config.model:
+        lines.append(f"model = {_toml_basic_string(config.model)}")
     workspace_lines: list[str] = []
     if config.simulator:
         workspace_lines.append(f'simulator = "{config.simulator}"')
     if config.approval_mode:
         workspace_lines.append(f'approval_mode = "{config.approval_mode}"')
     if workspace_lines:
+        if lines:
+            lines.append("")
         lines.append("[workspace]")
         lines.extend(workspace_lines)
 

@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jutul_agent.agent.models import key_env_var, provider_info, provider_of
 from jutul_agent.agent.render_profile import (
     has_display,
     plotting_display_available,
@@ -30,8 +31,6 @@ from jutul_agent.workspace import (
     load_workspace_config,
     resolve_julia_project,
 )
-
-_PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
 
 PASS = "PASS"
 WARN = "WARN"
@@ -79,7 +78,7 @@ def run(args: argparse.Namespace) -> int:
     print(f"jutul-agent doctor - workspace: {ws}\n")
 
     julia = _check_julia(report)
-    _check_provider_key(report)
+    _check_model_and_key(report, _resolve_model_id(config))
     sim_name = _check_simulator(report, sim_name)
     project = _check_julia_project(report, ws)
     _check_simulator_installed(report, project, sim_name)
@@ -128,16 +127,82 @@ def _check_julia(report: _Report):
     return julia
 
 
-def _check_provider_key(report: _Report) -> None:
-    present = [k for k in _PROVIDER_KEYS if os.environ.get(k)]
-    if present:
-        report.line(PASS, "Provider API key", f"{', '.join(present)} set")
+def _resolve_model_id(config) -> str:
+    """The model this workspace will use (same precedence as the agent)."""
+    # Lazy: builder pulls in deepagents, too heavy to import on every CLI call.
+    from jutul_agent.agent.builder import resolve_model
+    from jutul_agent.user_config import load_user_config
+
+    return resolve_model(None, workspace_model=config.model, user_model=load_user_config().model)
+
+
+def _check_model_and_key(report: _Report, model_id: str) -> None:
+    """Report the resolved model and whether its provider's credential is ready."""
+    info = provider_info(model_id)
+    label = info.label if info else (provider_of(model_id) or "unknown provider")
+    report.line(PASS, "Model", f"{model_id} ({label})")
+
+    if info is not None and info.local:
+        _check_ollama(report, model_id)
+        return
+
+    env_var = key_env_var(model_id)
+    if env_var is None:
+        report.line(
+            WARN,
+            "Provider API key",
+            f"unknown provider for {model_id}",
+            "Make sure the right langchain-<provider> package is installed and the key is set.",
+        )
+        return
+    if os.environ.get(env_var):
+        report.line(PASS, "Provider API key", f"{env_var} set")
     else:
         report.line(
             FAIL,
             "Provider API key",
-            "no ANTHROPIC_API_KEY or OPENAI_API_KEY",
-            "Add one to your .env (see .env.example) or export it in this shell.",
+            f"{env_var} not set for {label}",
+            "Add it to your shell or .env, or launch the TUI and pick a model "
+            "(you'll be prompted to enter and save the key).",
+        )
+
+
+def _check_ollama(report: _Report, model_id: str) -> None:
+    import asyncio
+
+    from jutul_agent import ollama_client
+    from jutul_agent.agent.models import is_ollama_cloud
+
+    name = ollama_client.model_name(model_id)
+    if not asyncio.run(ollama_client.is_reachable()):
+        report.line(
+            WARN,
+            "Ollama server",
+            f"not reachable at {ollama_client.host()}",
+            "Start it with `ollama serve` (or install it from https://ollama.com).",
+        )
+        return
+    if is_ollama_cloud(model_id):
+        report.line(PASS, "Ollama model", f"{name} (hosted by Ollama; needs `ollama signin`)")
+        return
+    if not asyncio.run(ollama_client.is_installed(name)):
+        report.line(
+            WARN,
+            "Ollama model",
+            f"{name} not pulled",
+            f"Pull it with `ollama pull {name}` (or select it in the TUI to pull in-app).",
+        )
+        return
+    # The agent is tool-driven, so a model the daemon reports as tool-less can't run.
+    if asyncio.run(ollama_client.supports_tools(name)):
+        report.line(PASS, "Ollama model", f"{name} pulled (tools supported)")
+    else:
+        report.line(
+            FAIL,
+            "Ollama model",
+            f"{name} doesn't support tool calling, which jutul-agent requires",
+            f"Pick a tool-capable model, or update Ollama and re-pull if it should "
+            f"support tools (`ollama show {name}` lists capabilities).",
         )
 
 
