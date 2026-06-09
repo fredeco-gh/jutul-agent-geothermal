@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
-from jutul_agent.simulators.warmup import warmup_script
 
 JUTULDARCY = SimulatorAdapter(
     name="jutuldarcy",
@@ -13,15 +12,9 @@ JUTULDARCY = SimulatorAdapter(
     module_dir=Path(__file__).resolve().parent,
     package_imports=("Jutul", "JutulDarcy"),
     primary_package="JutulDarcy",
-    warmup_code=warmup_script(
-        packages=("Jutul", "JutulDarcy", "CSV", "DataFrames", "Statistics", "Interpolations"),
-        native_plot_block=(
-            "g = CartesianMesh((2, 2, 1), (1.0, 1.0, 1.0))\n"
-            "dom = reservoir_domain(g, permeability = 1e-13, porosity = 0.2)\n"
-            "fig, ax, plt = plot_cell_data(physical_representation(dom), dom[:porosity])\n"
-            'save(joinpath(tempdir(), "jutul_agent_native_warmup.png"), fig)'
-        ),
-    ),
+    # Warms simulate_reservoir + plot_cell_data, baked GLMakie-aware at init. See
+    # the package's src/JutulAgentJutulDarcy.jl for the single source of the solve.
+    warm_package="JutulAgentJutulDarcy",
     domain_hints=(
         "JutulDarcy is a fully-differentiable porous-media reservoir simulator "
         "built on the Jutul framework. Core concepts: `CartesianMesh` or unstructured "

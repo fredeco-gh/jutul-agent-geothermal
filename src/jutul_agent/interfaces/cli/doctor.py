@@ -11,7 +11,6 @@ import argparse
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 from jutul_agent.agent.render_profile import (
@@ -32,7 +31,6 @@ from jutul_agent.workspace import (
     resolve_julia_project,
 )
 
-_AGENTREPL_PKG = "AgentREPL"
 _PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
 
 PASS = "PASS"
@@ -84,16 +82,16 @@ def run(args: argparse.Namespace) -> int:
     _check_provider_key(report)
     sim_name = _check_simulator(report, sim_name)
     project = _check_julia_project(report, ws)
-    has_agentrepl = _check_agentrepl_dep(report, project)
     _check_simulator_installed(report, project, sim_name)
     _check_plotting_display(report)
 
-    # Only attempt the (slow) load if the cheap checks passed — otherwise the
-    # error would just restate what we already reported.
-    if julia.ok and project is not None and has_agentrepl:
-        _check_agentrepl_loads(report, project)
+    # Confirm Julia actually boots in this env — catches a broken/half-resolved
+    # manifest before the agent starts the kernel. Only when the cheap checks
+    # passed, else the error would just restate what we already reported.
+    if julia.ok and project is not None:
+        _check_julia_runs(report, project)
     else:
-        report.line(WARN, f"`using {_AGENTREPL_PKG}` loads", "skipped (fix the items above first)")
+        report.line(WARN, "Julia runs in env", "skipped (fix the items above first)")
 
     print()
     if report.worst == FAIL:
@@ -183,7 +181,7 @@ def _check_julia_project(report: _Report, ws: Path) -> Path | None:
             "Julia project",
             detail,
             "A root Project.toml takes precedence over .jutul-agent/julia-env — "
-            "make sure it includes AgentREPL and the simulator.",
+            "make sure it includes the simulator package.",
         )
     else:
         report.line(PASS, "Julia project", detail)
@@ -193,7 +191,7 @@ def _check_julia_project(report: _Report, ws: Path) -> Path | None:
 def _check_simulator_installed(report: _Report, project: Path | None, sim_name: str | None) -> None:
     """Verify the simulator's package is resolved in the env's manifest.
 
-    `_check_agentrepl_loads` only proves AgentREPL works; a workspace whose
+    `_check_julia_runs` only proves Julia boots; a workspace whose
     Project lists the simulator but whose Manifest never resolved it still
     passes that check, then fails at runtime on `using <Sim>`. This closes
     that gap cheaply (a manifest read, no Julia subprocess).
@@ -224,8 +222,8 @@ def _check_plotting_display(report: _Report) -> None:
 
     Plotting is optional: simulation, eval, and the file tools work without it.
     So this only ever WARNs — a real display (any desktop OS, or X/Wayland on
-    Linux) passes; headless Linux passes when ``xvfb-run`` is on PATH (the backend
-    wraps the worker in it). It warns when headless Linux has neither, with the
+    Linux) passes; headless Linux passes when ``xvfb-run`` is on PATH (the kernel
+    wraps the Julia process in it). It warns when headless Linux has neither, with the
     one command that fixes it.
     """
 
@@ -254,48 +252,28 @@ def _check_plotting_display(report: _Report) -> None:
     )
 
 
-def _check_agentrepl_dep(report: _Report, project: Path | None) -> bool:
-    if project is None:
-        return False
-    proj_toml = project / "Project.toml"
-    try:
-        data = tomllib.loads(proj_toml.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        report.line(FAIL, "AgentREPL in project deps", f"could not read Project.toml: {exc}")
-        return False
-    if _AGENTREPL_PKG in (data.get("deps") or {}):
-        report.line(PASS, "AgentREPL in project deps")
-        return True
-    report.line(
-        FAIL,
-        "AgentREPL in project deps",
-        f"{_AGENTREPL_PKG} not in [deps]",
-        "Run `jutul-agent init --force` to refresh the env from the template.",
-    )
-    return False
+def _check_julia_runs(report: _Report, project: Path) -> None:
+    """Confirm Julia boots cleanly in this env (a trivial eval, no packages).
 
+    The kernel's server is stdlib-only, so the real failure mode is a broken or
+    half-resolved manifest. A trivial ``print(1 + 1)`` in the project surfaces it
+    with the same actionable rebuild hint.
+    """
 
-def _check_agentrepl_loads(report: _Report, project: Path) -> None:
-    argv = [
-        "julia",
-        f"--project={project}",
-        "--startup-file=no",
-        "-e",
-        f"using {_AGENTREPL_PKG}",
-    ]
+    argv = ["julia", f"--project={project}", "--startup-file=no", "-e", "print(1 + 1)"]
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=600, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        report.line(FAIL, f"`using {_AGENTREPL_PKG}` loads", str(exc))
+        report.line(FAIL, "Julia runs in env", str(exc))
         return
     if result.returncode == 0:
-        report.line(PASS, f"`using {_AGENTREPL_PKG}` loads")
+        report.line(PASS, "Julia runs in env")
         return
     tail = "\n".join((result.stderr or result.stdout or "").strip().splitlines()[-12:])
     report.line(
         FAIL,
-        f"`using {_AGENTREPL_PKG}` loads",
-        "Julia could not load AgentREPL",
+        "Julia runs in env",
+        "Julia exited with an error in this env",
         "Run `jutul-agent init --sim <name> --precompile --force` to rebuild the env.",
     )
     if tail:

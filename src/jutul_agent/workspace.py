@@ -15,6 +15,7 @@ Per-workspace *session* storage lives outside the workspace, under
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -25,6 +26,58 @@ from jutul_agent.paths import workspace_root
 WORKSPACE_DIRNAME = ".jutul-agent"
 WORKSPACE_CONFIG_FILENAME = "config.toml"
 WORKSPACE_JULIA_ENV_DIRNAME = "julia-env"
+
+# The shared, simulator-agnostic JutulAgent package: one source copy in the repo,
+# copied into every workspace env at bootstrap (next to that env's per-simulator
+# JutulAgent<Sim> package) so the env's relative `[sources]` entry resolves. Env
+# templates declare it but ship no copy.
+SHARED_JULIA_PACKAGE_DIRNAME = "JutulAgent"
+
+# Touched after a successful precompile so launch can skip the (multi-second) bake
+# when nothing has changed. See ``env_precompile_is_current``.
+PRECOMPILE_MARKER = ".jutul-agent-precompiled"
+
+
+def shared_julia_package_path() -> Path:
+    """Source dir of the shared JutulAgent package bundled with the install."""
+    return Path(__file__).resolve().parent / "julia_runtime" / SHARED_JULIA_PACKAGE_DIRNAME
+
+
+def env_declares_warm_packages(env_dir: Path) -> bool:
+    """Whether ``env_dir``'s Project.toml declares jutul-agent warm-up packages.
+
+    The warm packages (the shared ``JutulAgent`` and a per-simulator
+    ``JutulAgent<Sim>``) all share the ``JutulAgent`` name prefix.
+    """
+    proj = env_dir / "Project.toml"
+    if not proj.exists():
+        return False
+    try:
+        data = tomllib.loads(proj.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return any(name.startswith(SHARED_JULIA_PACKAGE_DIRNAME) for name in data.get("deps", {}))
+
+
+def env_precompile_is_current(env_dir: Path) -> bool:
+    """Whether the env's precompile is up to date, so launch can skip the bake.
+
+    A cheap (no-Julia) stand-in for "is ``Pkg.precompile`` a no-op": the marker is
+    touched after a successful precompile, and any resolve/instantiate rewrites
+    ``Manifest.toml``. So a marker at least as new as the manifest means nothing has
+    changed since the last bake and the launch precompile can be skipped.
+    """
+    marker = env_dir / PRECOMPILE_MARKER
+    manifest = env_dir / "Manifest.toml"
+    if not (marker.exists() and manifest.exists()):
+        return False
+    return marker.stat().st_mtime >= manifest.stat().st_mtime
+
+
+def mark_env_precompiled(env_dir: Path) -> None:
+    """Record that the env's packages have been precompiled (see the marker check)."""
+    with contextlib.suppress(OSError):
+        (env_dir / PRECOMPILE_MARKER).touch()
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +287,8 @@ def sync_julia_env_with_template(
     if (ws / "Project.toml").exists():
         return []
 
-    target_proj = workspace_julia_env(ws) / "Project.toml"
+    env_dir = workspace_julia_env(ws)
+    target_proj = env_dir / "Project.toml"
     template_proj = template_path / "Project.toml"
     if not (target_proj.exists() and template_proj.exists()):
         return []
@@ -253,49 +307,109 @@ def sync_julia_env_with_template(
     if not missing:
         return []
 
+    # A dep the template declares via a relative `[sources]` path (jutul-agent's
+    # in-env runtime packages, JutulAgent + JutulAgent<Sim>) is not registered, so
+    # `Pkg.resolve` fails with "expected package ... to be registered" unless its
+    # source entry and the package directory come over too. Bring both alongside
+    # the dep so the env stays installable after an upstream change.
+    template_sources = template.get("sources", {})
+    target_sources = target.get("sources", {})
+    missing_sources = {
+        k: v for k, v in template_sources.items() if k in missing and k not in target_sources
+    }
+
     new_text = _append_deps(target_text, missing)
+    if missing_sources:
+        new_text = _append_sources(new_text, missing_sources)
     target_proj.write_text(new_text, encoding="utf-8")
+    _copy_source_packages(template_path, env_dir, missing_sources)
     return sorted(missing)
 
 
 def _append_deps(project_toml_text: str, deps: dict[str, str]) -> str:
-    """Insert ``deps`` into the ``[deps]`` table of a Project.toml text.
+    """Insert ``deps`` into the ``[deps]`` table (created if absent)."""
 
-    Preserves the existing key order and adds new entries at the end of
-    the ``[deps]`` table. If no ``[deps]`` table exists, appends one.
+    return _append_table_entries(
+        project_toml_text, "deps", [f'{k} = "{v}"' for k, v in deps.items()]
+    )
+
+
+def _append_sources(project_toml_text: str, sources: dict[str, object]) -> str:
+    """Insert ``sources`` into the ``[sources]`` table (created if absent)."""
+
+    entries = [f"{name} = {_format_source_value(spec)}" for name, spec in sources.items()]
+    return _append_table_entries(project_toml_text, "sources", entries)
+
+
+def _format_source_value(spec: object) -> str:
+    """Render a ``[sources]`` value back to TOML (e.g. ``{path = "JutulAgent"}``)."""
+
+    if isinstance(spec, dict):
+        return "{" + ", ".join(f'{k} = "{v}"' for k, v in spec.items()) + "}"
+    return f'"{spec}"'
+
+
+def _append_table_entries(project_toml_text: str, table: str, entries: list[str]) -> str:
+    """Append ``entries`` to ``[table]`` in a Project.toml text.
+
+    Preserves the existing key order and adds new entries at the end of the
+    table. If the table does not exist, appends it.
     """
 
+    header = f"[{table}]"
     lines = project_toml_text.splitlines()
     out: list[str] = []
-    in_deps = False
+    in_table = False
     inserted = False
-    deps_entries = [f'{k} = "{v}"' for k, v in deps.items()]
 
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            if in_deps and not inserted:
-                out.extend(deps_entries)
+            if in_table and not inserted:
+                out.extend(entries)
                 out.append("")
                 inserted = True
-            in_deps = stripped == "[deps]"
+            in_table = stripped == header
         out.append(line)
 
-    if in_deps and not inserted:
-        # File ended while still in [deps] — append entries directly.
-        out.extend(deps_entries)
+    if in_table and not inserted:
+        # File ended while still in the table — append entries directly.
+        out.extend(entries)
         inserted = True
 
     if not inserted:
         if out and out[-1].strip():
             out.append("")
-        out.append("[deps]")
-        out.extend(deps_entries)
+        out.append(header)
+        out.extend(entries)
 
     text = "\n".join(out)
     if not text.endswith("\n"):
         text += "\n"
     return text
+
+
+def _copy_source_packages(template_path: Path, env_dir: Path, sources: dict[str, object]) -> None:
+    """Copy the package directory backing each path ``[sources]`` entry into the env.
+
+    The shared ``JutulAgent`` package lives in the repo (not the template), so it
+    is synced from there; per-simulator packages are subdirectories of the template.
+    """
+
+    for spec in sources.values():
+        path = spec.get("path") if isinstance(spec, dict) else None
+        if not path:
+            continue
+        if path == SHARED_JULIA_PACKAGE_DIRNAME:
+            sync_shared_julia_package(env_dir)
+            continue
+        src = template_path / path
+        if not src.is_dir():
+            continue
+        dst = env_dir / path
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
 
 
 def bootstrap_julia_env(
@@ -329,8 +443,27 @@ def bootstrap_julia_env(
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         shutil.rmtree(target)
-    shutil.copytree(template_path, target)
+    # Never carry a template's Manifest.toml into the workspace: it is environment-
+    # and version-specific, so the workspace resolves its own at instantiate time.
+    shutil.copytree(template_path, target, ignore=shutil.ignore_patterns("Manifest.toml"))
+    sync_shared_julia_package(target)
     return target
+
+
+def sync_shared_julia_package(env_dir: Path) -> None:
+    """Copy the shared JutulAgent package (``julia_runtime/``) into ``env_dir``.
+
+    Overwrites any existing copy. Called at bootstrap and before instantiating a
+    template in place (CI/tests). See ``SHARED_JULIA_PACKAGE_DIRNAME``.
+    """
+
+    src = shared_julia_package_path()
+    if not src.is_dir():
+        raise WorkspaceBootstrapError(f"shared JutulAgent package missing at {src}")
+    dst = env_dir / SHARED_JULIA_PACKAGE_DIRNAME
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
 
 
 def merge_simulator_config(

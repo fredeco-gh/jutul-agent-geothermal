@@ -42,7 +42,7 @@ def test_default_invocation_without_sim_errors(
     Pass an isolated ``--workspace``: the repo checkout has
     ``.jutul-agent/config.toml`` with ``simulator = "battmo"``, and ``main``
     resets workspace overrides via ``_apply_workspace_flags`` (``None`` → cwd).
-    Without isolation the CLI would launch AgentREPL/Julia and hang or crash
+    Without isolation the CLI would launch Julia and hang or crash
     under pytest capture (stderr has no fileno).
     """
     ws = tmp_path / "workspace"

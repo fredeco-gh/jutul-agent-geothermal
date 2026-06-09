@@ -61,7 +61,7 @@ def _make_plot_eval_handler(
             if gl_ok:
                 return EvalResult(output="")
             return EvalResult(output="", error="libGL error: failed to load driver")
-        if "module JutulAgentPlots" in code:
+        if stripped == "using JutulAgent":  # loads the precompiled capture helpers
             return EvalResult(output="")
         if "JutulAgentPlots.capture" in code:
             if not accept_figure:

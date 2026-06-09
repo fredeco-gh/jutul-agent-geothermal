@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from textual.widgets import Markdown
 
 from _tui import submit_prompt
-from fakes import make_scripted_model, scripted_final, scripted_tool_call
+from fakes import (
+    FakeJulia,
+    make_fake_adapter,
+    make_scripted_model,
+    scripted_final,
+    scripted_tool_call,
+)
 from jutul_agent.agent.builder import build_agent
 from jutul_agent.interfaces.tui import TUIApp
 from jutul_agent.interfaces.tui.widgets import MessageBlock, ToolBlock
@@ -69,6 +78,66 @@ async def test_multi_tool_turn_renders_full_block_sequence(
     trace_text = _trace_payloads_concat(session)
     assert "2 + 2" in trace_text
     assert "pkgdir(FakePkg)" in trace_text
+
+
+async def test_julia_eval_output_streams_live_into_tool_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end live streaming: a julia_eval producing carriage-return progress
+    delivers each fragment to the tool card *before* the call finishes, through the
+    real graph (tool -> delta writer -> output_deltas -> TurnToolEvent -> ToolBlock).
+
+    The final ``set_result`` overwrites the streamed buffer, so we spy on
+    ``append_output`` to observe that the deltas actually flowed live (and in
+    order), then confirm the rendered text collapsed the bar like a terminal.
+    """
+
+    chunks = [
+        "Progress   0%|        |\r",
+        "Progress  50%|####    |\r",
+        "Progress 100%|########|\n",
+    ]
+    julia = FakeJulia(stream_chunks=chunks, answers={"solve()": "Progress 100%|########|"})
+    session = Session.create(
+        julia=julia,
+        state_root=tmp_path,
+        simulator=make_fake_adapter(tmp_path),
+        session_id="stream-e2e",
+    )
+
+    recorded: list[str] = []
+    original = ToolBlock.append_output
+
+    async def _spy(self: ToolBlock, delta: str) -> None:
+        recorded.append(delta)
+        await original(self, delta)
+
+    monkeypatch.setattr(ToolBlock, "append_output", _spy)
+
+    model = make_scripted_model(
+        [
+            scripted_tool_call(
+                tool_name="julia_eval",
+                args={"code": "solve()"},
+                tool_call_id="call_solve",
+            ),
+            scripted_final("Solve finished."),
+        ]
+    )
+    agent, _ = build_agent(session, model=model)
+    app = TUIApp(agent=agent, session=session, model_label="fake:script")
+
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "solve")
+        tool_blocks = list(app.query(ToolBlock))
+        final_output = tool_blocks[0]._output if tool_blocks else ""
+
+    session.finalize()
+
+    # Each fragment reached the card live, in order — the streaming path is wired.
+    assert recorded == chunks
+    # And the final card shows one collapsed bar, not three stacked lines.
+    assert final_output == "Progress 100%|########|"
 
 
 def _trace_payloads_concat(session: Session) -> str:

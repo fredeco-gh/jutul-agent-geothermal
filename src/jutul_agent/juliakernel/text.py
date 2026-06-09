@@ -1,17 +1,11 @@
-"""Text cleanup for AgentREPL.jl-captured stdout.
+"""Render captured Julia output to its final on-screen state.
 
-AgentREPL forwards its worker's stdout to the MCP response unchanged. The
-worker is non-TTY, so the bytes still contain the literal control
-sequences that ProgressMeter.jl, Jutul, and friends emit to overwrite
-their progress block in place (``\\r``, ``\\x1b[A`` cursor-up,
-``\\x1b[K`` erase-line, …). A naive strip leaves every intermediate
-update stacked on top of each other; we replay the cursor moves through a
-tiny screen buffer so the result matches what a real terminal would show.
-
-Two simpler helpers sit alongside:
-
-* ``strip_ansi`` — drop colour/CSI codes without applying movement.
-* ``strip_julia_repl_echo`` — remove the leading ``julia> …`` echo block.
+Progress libraries (e.g. ProgressMeter.jl) emit carriage returns and cursor-
+movement codes to overwrite a progress block in place. We own the output pipe,
+but the bytes still carry those control sequences; a naive strip leaves every
+intermediate update stacked. ``render_terminal_output`` replays the cursor moves
+through a tiny screen buffer so the result matches what a real terminal would
+show — a single final bar instead of hundreds of stacked ones.
 """
 
 from __future__ import annotations
@@ -26,45 +20,24 @@ _CSI_RE = re.compile(r"\x1b\[([0-9;?]*)([A-Za-z])")
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 # Standalone single-character escapes (ESC followed by one byte that isn't `[` or `]`)
 _OTHER_ESC_RE = re.compile(r"\x1b[^\[\]]")
-
-
-def strip_ansi(text: str) -> str:
-    """Strip ANSI escape sequences without applying cursor movement.
-
-    Use ``render_terminal_output`` when the captured text uses ``\\r`` or
-    cursor-movement codes to overwrite in place (e.g. ProgressMeter bars).
-    """
-
-    text = _OSC_RE.sub("", text)
-    text = _CSI_RE.sub("", text)
-    return _OTHER_ESC_RE.sub("", text)
-
-
-def strip_julia_repl_echo(text: str) -> str:
-    """Drop the leading ``julia> ...`` echo block from REPL output.
-
-    AgentREPL echoes the code as ``julia> first_line`` followed by indented
-    continuation lines, terminated by a blank line before the real output
-    starts.
-    """
-
-    lines = text.splitlines()
-    if not lines or not lines[0].lstrip().startswith("julia>"):
-        return text
-    for i in range(1, len(lines)):
-        if not lines[i].strip():
-            return "\n".join(lines[i + 1 :])
-    return ""
+# Cursor-control bytes that need the screen model. Plain output has none of these,
+# so it skips the per-character emulation below entirely.
+_NEEDS_SCREEN_RE = re.compile("[\r\x1b\b\t]")
 
 
 def render_terminal_output(text: str) -> str:
     """Render ``text`` to its final on-screen state, like a terminal would.
 
-    SGR (colour) codes are dropped; CSI sequences we don't model are
-    skipped. Tabs expand to 8-column stops, ``\\b`` moves the cursor back,
-    and the result is joined with ``\\n`` with trailing whitespace
-    stripped.
+    SGR (colour) codes are dropped; CSI sequences we don't model are skipped.
+    Tabs expand to 8-column stops, ``\\b`` moves the cursor back, and the result
+    is joined with ``\\n`` with trailing whitespace stripped.
     """
+
+    if _NEEDS_SCREEN_RE.search(text) is None:
+        # No cursor control (the common case): just trim trailing whitespace per
+        # line and drop trailing blank lines, matching what the screen model below
+        # would produce for plain text.
+        return "\n".join(line.rstrip() for line in text.split("\n")).rstrip("\n")
 
     text = _OSC_RE.sub("", text)
     text = _OTHER_ESC_RE.sub("", text)
@@ -100,10 +73,9 @@ def render_terminal_output(text: str) -> str:
 class _Screen:
     """Tiny in-memory screen buffer for ``render_terminal_output``.
 
-    Only handles the CSI sequences that AgentREPL output actually uses:
-    cursor up/down/left/right, absolute positioning, line erase (``K``),
-    display erase (``J``), and the column-1 reset on row change. SGR (``m``)
-    is intentionally ignored — colour is dropped at the call site.
+    Handles the CSI sequences Julia output actually uses: cursor up/down/left/
+    right, absolute positioning, line erase (``K``), display erase (``J``), and
+    the column-1 reset on row change. SGR (``m``) is intentionally ignored.
     """
 
     def __init__(self) -> None:

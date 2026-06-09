@@ -251,7 +251,7 @@ def build_agent(
         model=resolve_model(model),
         backend=backend,
         tools=tools,
-        system_prompt=assemble_session_prompt(session.simulator),
+        system_prompt=assemble_session_prompt(session.simulator, open_windows=session.open_windows),
         skills=skill_sources(session.simulator),
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),

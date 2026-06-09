@@ -1,8 +1,9 @@
 """GLMakie figure capture for jutul-agent's julia_plot tool.
 
-The Python tool includes this file once per session. Before each plot it
-activates GLMakie (visible for an interactive window, offscreen otherwise),
-evaluates the user's expression, and hands the result to capture.
+A submodule of the JutulAgent package (precompiled with it); the plot tool drives
+it as `JutulAgent.JutulAgentPlots.capture(...)` after `using JutulAgent`. Before
+each plot it activates GLMakie (visible for an interactive window, offscreen
+otherwise), evaluates the user's expression, and hands the result to capture.
 
 capture resolves a Makie Figure from whatever the plotter produced: a returned
 Figure or FigureAxisPlot, a (fig, ax, plot) tuple, or, for plotters that open a

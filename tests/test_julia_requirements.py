@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from jutul_agent.julia import requirements
-from jutul_agent.julia.backends.agentrepl import JuliaStartupError
+from jutul_agent.juliakernel import JuliaStartupError
 
 
 class _Proc:
@@ -84,12 +84,11 @@ def test_startup_error_surfaces_julia_stderr() -> None:
         "the Julia process exited before responding",
         julia_executable="julia",
         julia_project=Path("/tmp/ws/.jutul-agent/julia-env"),
-        stderr_tail="ERROR: ArgumentError: Package AgentREPL not found in current path.",
+        stderr_tail="ERROR: ArgumentError: Package Jutul not found in current path.",
         log_file=Path("/tmp/ws/julia-startup.log"),
     )
     text = str(err)
-    # The real cause is front and center, not buried under an MCP traceback.
-    assert "Package AgentREPL not found" in text
+    # The real cause is front and center, not buried under a transport traceback.
+    assert "Package Jutul not found" in text
     assert "julia project: " in text
     assert "julia-startup.log" in text
-    assert "jutul-agent doctor" in text

@@ -15,6 +15,9 @@ VOCSIM = SimulatorAdapter(
     # actually safe to ``using`` today.
     package_imports=("Jutul",),
     primary_package="VOCSim",
+    # Placeholder warm package: loads Jutul + GLMakie under @recompile_invalidations
+    # but has no solve to bake until VOCSim.jl ships. See src/JutulAgentVOCSim.jl.
+    warm_package="JutulAgentVOCSim",
     domain_hints=(
         "VOCSim is a Jutul-based simulator for methane and volatile "
         "organic-compound emissions during hydrocarbon storage and handling "

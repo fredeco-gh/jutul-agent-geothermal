@@ -11,13 +11,12 @@ import pytest
 
 from jutul_agent.agent.builder import build_agent
 from jutul_agent.agent.turns import TurnRunner
-from jutul_agent.julia.backends.agentrepl import AgentREPLBackend, AgentREPLConfig
-from jutul_agent.paths import PACKAGE_ROOT, set_workspace_root
+from jutul_agent.juliakernel import JuliaKernel, KernelConfig
+from jutul_agent.paths import set_workspace_root
 from jutul_agent.session import Session
 from jutul_agent.simulators.jutuldarcy import JUTULDARCY
 from jutul_agent.trace import TraceLog
 
-AGENTREPL_ENV = PACKAGE_ROOT / "julia" / "agentrepl_env"
 _PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY")
 _LIVE_MODEL_ENV = "JUTUL_AGENT_LIVE_MODEL"
 _DEFAULT_LIVE_MODEL = "openai:gpt-5.4-mini"
@@ -25,7 +24,7 @@ _EXPECTED_SUM = "105"
 
 
 def _has_julia() -> bool:
-    return shutil.which("julia") is not None and (AGENTREPL_ENV / "Project.toml").exists()
+    return shutil.which("julia") is not None
 
 
 def _has_any_provider_key() -> bool:
@@ -34,7 +33,7 @@ def _has_any_provider_key() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not (_has_julia() and _has_any_provider_key()),
-    reason=("Requires Julia + AgentREPL.jl env + one of: " + ", ".join(_PROVIDER_KEYS)),
+    reason=("Requires Julia + one of: " + ", ".join(_PROVIDER_KEYS)),
 )
 
 
@@ -49,8 +48,8 @@ async def _attempt(tmp_path: Path) -> None:
     model_label = os.environ.get(_LIVE_MODEL_ENV, _DEFAULT_LIVE_MODEL)
     model = init_chat_model(model_label, temperature=0)
 
-    config = AgentREPLConfig(julia_project=AGENTREPL_ENV)
-    async with AgentREPLBackend(config) as julia:
+    config = KernelConfig()
+    async with JuliaKernel(config) as julia:
         session = Session.create(julia=julia, state_root=tmp_path / "state", simulator=JUTULDARCY)
         try:
             agent, _ = build_agent(session, model=model)

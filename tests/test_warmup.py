@@ -9,21 +9,31 @@ import pytest
 from fakes import FakeJulia
 from jutul_agent.interfaces.cli.run import _start_warmup
 from jutul_agent.julia.session import EvalResult
+from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP
 
 
-async def test_start_warmup_returns_none_for_empty_code() -> None:
+async def test_start_warmup_loads_both_runtime_packages() -> None:
     julia = FakeJulia()
-    assert _start_warmup(julia, "") is None
-    assert _start_warmup(julia, "   \n   ") is None
-    assert julia.calls == []
-
-
-async def test_start_warmup_runs_warmup_code_in_background() -> None:
-    julia = FakeJulia()
-    task = _start_warmup(julia, "using BattMo")
+    task = _start_warmup(julia, "JutulAgentBattMo")
     assert task is not None
     await task
-    assert julia.calls == ["using BattMo"]
+    # First eval loads the shared runtime + the per-sim warm package; then the GL
+    # context warm-up runs.
+    assert "using JutulAgent" in julia.calls[0]
+    assert "using JutulAgentBattMo" in julia.calls[0]
+    assert julia.calls[-1] == GL_CONTEXT_WARMUP
+
+
+async def test_start_warmup_without_warm_package_still_loads_shared() -> None:
+    julia = FakeJulia()
+    task = _start_warmup(julia, "")
+    assert task is not None
+    await task
+    # A placeholder sim with no warm package still loads the shared runtime and
+    # warms the GL context.
+    assert "using JutulAgent" in julia.calls[0]
+    assert "JutulAgentBattMo" not in julia.calls[0]
+    assert julia.calls[-1] == GL_CONTEXT_WARMUP
 
 
 async def test_start_warmup_swallows_errors_so_startup_does_not_break() -> None:
@@ -31,7 +41,7 @@ async def test_start_warmup_swallows_errors_so_startup_does_not_break() -> None:
         raise RuntimeError("simulated env-load failure")
 
     julia = FakeJulia(eval_handler=boom)
-    task = _start_warmup(julia, "using BrokenPackage")
+    task = _start_warmup(julia, "JutulAgentBattMo")
     assert task is not None
     # The task should finish without re-raising — startup must not block on
     # a broken simulator env.
@@ -47,7 +57,7 @@ async def test_start_warmup_can_be_cancelled_during_shutdown() -> None:
         return EvalResult(output="never")
 
     julia = FakeJulia(eval_handler=slow)
-    task = _start_warmup(julia, "using SlowPackage")
+    task = _start_warmup(julia, "JutulAgentJutulDarcy")
     assert task is not None
     await started.wait()
     task.cancel()
@@ -64,73 +74,24 @@ async def test_fake_julia_reset_counts_invocations() -> None:
     assert julia.reset_count == 2
 
 
-async def test_all_real_adapters_warm_their_primary_package() -> None:
-    """Every adapter except placeholders should ``using <primary>`` on startup."""
+def test_all_real_adapters_name_a_warm_package() -> None:
+    """Every simulator declares a per-sim warm package (placeholders too)."""
 
     from jutul_agent.simulators import registry
 
     for name in registry.names():
         adapter = registry.get(name)
-        if name == "vocsim":  # placeholder while VOCSim.jl is unreleased
-            continue
-        assert adapter.warmup_code, f"adapter {name!r} has no warmup_code"
-        assert adapter.primary_package in adapter.warmup_code, (
-            f"adapter {name!r} warmup_code does not load primary package "
-            f"{adapter.primary_package!r}"
+        assert adapter.warm_package == "JutulAgent" + adapter.display_name, (
+            f"adapter {name!r} warm_package {adapter.warm_package!r} should be "
+            f"'JutulAgent{adapter.display_name}'"
         )
 
 
-async def test_all_real_adapters_warm_the_plotting_path() -> None:
-    """Warm-up must compile the GLMakie save path so the first plot is fast."""
+def test_gl_context_warmup_drives_the_offscreen_save_path() -> None:
+    """The one irreducible per-session cost: GLMakie's offscreen render+save."""
 
-    from jutul_agent.simulators import registry
-
-    for name in registry.names():
-        if name == "vocsim":
-            continue
-        adapter = registry.get(name)
-        assert "GLMakie.activate!(visible = false)" in adapter.warmup_code, (
-            f"adapter {name!r} does not warm the plotting path"
-        )
-
-
-def test_warmup_loads_glmakie_before_solving() -> None:
-    """GLMakie must load before the solve.
-
-    Loading a package after warming the solve invalidates the solve's compiled
-    code, so the agent's first real solve recompiles from scratch. GLMakie
-    therefore has to be in the up-front `using`.
-    """
-    from jutul_agent.simulators.warmup import warmup_script
-
-    script = warmup_script(packages=("BattMo",), solve_block="solve(sim)")
-    assert "GLMakie" in script.split("solve(", 1)[0], (
-        "GLMakie must be loaded before the warm-up solve to avoid invalidation"
-    )
-
-
-def test_warmup_script_stages_are_independent_try_blocks() -> None:
-    """A failure in one stage (missing pkg, API drift) must not abort the rest."""
-
-    from jutul_agent.simulators.warmup import warmup_script
-
-    script = warmup_script(packages=("Foo",), solve_block="error_here()")
-    # using(Foo, GLMakie), solve, GLMakie save: each its own try/catch so one
-    # failure can't abort the rest.
-    assert script.count("try") == 3
-    assert script.count("catch") == 3
-    assert "using Foo, GLMakie" in script
-    assert "error_here()" in script
-    assert "GLMakie.activate!(visible = false)" in script
-
-    # Opting out of plotting drops the GLMakie stages (down to the solve only).
-    no_plot = warmup_script(packages=("Foo",), solve_block="x()", warm_plotting=False)
-    assert no_plot.count("try") == 2
-    assert "GLMakie" not in no_plot
-
-
-def test_battmo_warmup_runs_a_real_solve() -> None:
-    from jutul_agent.simulators.battmo import BATTMO
-
-    assert "Simulation(" in BATTMO.warmup_code
-    assert "solve(" in BATTMO.warmup_code
+    assert "GLMakie.activate!(visible = false)" in GL_CONTEXT_WARMUP
+    assert "save(" in GL_CONTEXT_WARMUP
+    # Self-contained: it binds GLMakie into Main itself (the packages load it only
+    # inside their own modules).
+    assert "using GLMakie" in GL_CONTEXT_WARMUP

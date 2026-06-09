@@ -31,6 +31,7 @@ from langchain_core.messages import (
 from langgraph.types import Command
 
 from jutul_agent.julia.session import EvalResult
+from jutul_agent.juliakernel.result import OutputChunk
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import Event
 
@@ -674,10 +675,14 @@ class FakeJulia:
         pkgdir: dict[str, Path] | None = None,
         answers: dict[str, str] | None = None,
         eval_handler: Callable[[str], EvalResult | Awaitable[EvalResult]] | None = None,
+        stream_chunks: Sequence[str] | None = None,
     ) -> None:
         self._pkgdir = pkgdir or {}
         self._answers = answers or {}
         self._eval_handler = eval_handler
+        # When set, eval emits these as live stdout fragments through ``on_chunk``
+        # before returning — lets a test exercise the streaming path.
+        self._stream_chunks = list(stream_chunks or [])
         self.calls: list[str] = []
         self.reset_count: int = 0
         self.restart_count: int = 0
@@ -688,8 +693,11 @@ class FakeJulia:
     async def __aexit__(self, *_) -> None:
         return None
 
-    async def eval(self, code: str) -> EvalResult:
+    async def eval(self, code: str, on_chunk=None) -> EvalResult:
         self.calls.append(code)
+        if on_chunk is not None:
+            for text in self._stream_chunks:
+                on_chunk(OutputChunk(text=text, stream="stdout"))
         if self._eval_handler is not None:
             result = self._eval_handler(code)
             if inspect.iscoroutine(result):

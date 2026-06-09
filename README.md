@@ -13,7 +13,7 @@ your workspace, and keeps a per-session trace.
 Works on Linux, macOS, and Windows. You need three things on PATH:
 
 - **Python 3.12+**
-- **Julia 1.12+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
+- **Julia 1.10+** — install via [juliaup](https://github.com/JuliaLang/juliaup)
 - **uv** — Astral's Python project manager (handles the venv and entry points)
 
 On a **headless Linux** server, plotting also needs `xvfb` (`sudo apt-get install -y xvfb`); without it, simulation still works but plot calls error.
@@ -37,15 +37,13 @@ Open a new terminal afterwards so the updated PATH is picked up. Full
 instructions and other install methods:
 [docs.astral.sh/uv/getting-started/installation](https://docs.astral.sh/uv/getting-started/installation/).
 
-### 2. Make sure Julia 1.12+ is the default
+### 2. Make sure Julia is 1.10+
 
-If `juliaup` gave you an older channel, switch:
+`juliaup`'s default channel already satisfies this. If you're on an older pin:
 
 ```sh
-juliaup add 1.12 && juliaup default 1.12
+juliaup add 1.10 && juliaup default 1.10
 ```
-
-Check with `julia --version`.
 
 ### 3. Clone and sync
 
@@ -172,25 +170,24 @@ uv run jutul-agent doctor
 
 It checks, with a one-line fix for each problem:
 
-- `julia` is on PATH and is **1.12+**
+- `julia` is on PATH and is **1.10+**
 - a provider API key is set (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`)
 - which Julia project this workspace resolves to (see the gotcha below)
-- that project has a `Project.toml` containing `AgentREPL`
 - the simulator's package is actually resolved in the env's `Manifest.toml`
   (catches a `Project.toml` that lists it but was never instantiated)
 - a display is available for plotting — and on a headless Linux box, that
   `xvfb` is installed so GLMakie can render (warns, doesn't fail)
-- `using AgentREPL` actually loads in that project
+- Julia boots cleanly in that project (a trivial eval — catches a broken manifest)
 
 **Gotcha — workspace vs. launch directory.** `jutul-agent` uses the
 directory you launch it from as the workspace, not where you ran `init`.
 `cd` into the initialised folder before launching, or pass
 `--workspace <path>` explicitly. Note too that a `Project.toml` in the 
 root of your workspace takes precedence over `.jutul-agent/julia-env/`
-— if that root project doesn't include `AgentREPL`, startup will fail.
-`doctor` flags this case.
+— if that root project doesn't include the simulator's packages, `using
+<Sim>` will fail even though the kernel starts. `doctor` flags this case.
 
-**"Julia failed to start before the agent could connect".** This means the
+**"Julia failed to start before the kernel was ready".** This means the
 Julia subprocess crashed during startup; the message now includes Julia's
 own error and the path to a full log
 (`…/sessions/<id>/julia-startup.log`). The most common cause is an
@@ -200,7 +197,7 @@ out-of-date or incomplete env — rebuild it with:
 uv run jutul-agent init --sim <name> --precompile --force
 ```
 
-`init --precompile` verifies `using AgentREPL` loads as its final step, so a
+`init --precompile` verifies Julia boots in the env as its final step, so a
 clean `init` rules out this whole class of failure.
 
 ## TUI
@@ -295,7 +292,8 @@ src/jutul_agent/
   simulators/      adapter base, registry, env bootstrap; one folder per simulator:
                      <name>/adapter.py + julia_env/ + skills/
                    plus shared_skills/ used by every session
-  julia/           JuliaSession protocol, AgentREPL backend, agentrepl_env/
+  julia/           JuliaSession protocol + Julia toolchain checks
+  juliakernel/     supervised Julia runtime (kernel.py + server.jl) — the backend
   trace/           append-only SQLite event log + recorder middleware
   transcript/      renderers (HTML, markdown, investigation report)
   interfaces/      CLI + Textual TUI (TUI owns the approval card renderer)

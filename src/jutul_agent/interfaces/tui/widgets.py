@@ -24,6 +24,7 @@ from jutul_agent.interfaces.tui.tool_display import (
     display_tool_body,
     uses_compact_display,
 )
+from jutul_agent.juliakernel.text import render_terminal_output
 
 if TYPE_CHECKING:
     from textual.widgets._markdown import MarkdownStream
@@ -41,6 +42,9 @@ _TOOL_PREVIEW_LIMITS: dict[str, tuple[int, int]] = {
 _TODO_PREVIEW_ITEMS = 3
 _TODO_PREVIEW_TEXT = 72
 _TODO_FULL_TEXT = 140
+# Cap on the live-streamed buffer re-rendered per delta, so a long solve's output
+# can't make each refresh cost grow without bound.
+_STREAM_RENDER_CAP = 256 * 1024
 
 
 class MessageBlock(Vertical):
@@ -596,8 +600,13 @@ class ToolBlock(Vertical):
     async def append_output(self, delta: str) -> None:
         if not delta:
             return
-        self._streamed += delta
-        self._output = self._streamed
+        # Keep only the tail so each re-render stays bounded. Rendering tolerates a
+        # truncated escape at the cut; it sits far up in scrollback anyway.
+        self._streamed = (self._streamed + delta)[-_STREAM_RENDER_CAP:]
+        # Render the raw buffer to its on-screen state so carriage returns and cursor
+        # moves (ProgressMeter/Jutul bars) collapse to a single updating line,
+        # matching a real terminal and the final EvalResult.output.
+        self._output = render_terminal_output(self._streamed)
         self._status = "running"
         await self._ensure_body()
         await self._refresh()

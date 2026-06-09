@@ -88,3 +88,30 @@ async def test_tool_block_append_output_then_set_result() -> None:
         is_error=False,
     )
     assert block._body_widget.body == expected
+
+
+async def test_tool_block_collapses_carriage_return_progress() -> None:
+    """Streamed deltas are rendered like a terminal: a progress bar that
+    overwrites itself with carriage returns collapses to a single line instead
+    of stacking, matching the kernel's final rendered output."""
+
+    block = ToolBlock("julia_eval", {"code": "run()"}, tool_call_id="call-2")
+
+    class _FakeMarkdown:
+        def __init__(self) -> None:
+            self.body = ""
+
+        async def update(self, body: str) -> None:
+            self.body = body
+
+        def refresh(self, *, layout: bool = False) -> None:
+            return None
+
+    block._body_widget = _FakeMarkdown()
+    # Three in-place updates of one bar, arriving as separate deltas.
+    await block.append_output("Progress   0%|        |\r")
+    await block.append_output("Progress  50%|####    |\r")
+    await block.append_output("Progress 100%|########|\n")
+
+    assert block._output == "Progress 100%|########|"
+    assert block._output.count("Progress") == 1

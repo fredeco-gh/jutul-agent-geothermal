@@ -57,20 +57,6 @@ def test_julia_eval_body_shows_code_then_output() -> None:
     assert code_index >= 0 and output_index > code_index
 
 
-def test_julia_eval_strips_repl_echo_from_output() -> None:
-    output = "julia> using CSV\n\nloaded\n→ true\n[0.1s]"
-    body = display_tool_body(
-        "julia_eval",
-        {"code": "using CSV"},
-        output=output,
-        expanded=False,
-        is_error=False,
-    )
-    assert "julia> using CSV" not in body
-    assert "loaded" in body
-    assert "→ true" in body
-
-
 def test_julia_eval_running_state_shows_code() -> None:
     body = display_tool_body(
         "julia_eval",

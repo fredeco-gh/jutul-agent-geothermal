@@ -3,15 +3,26 @@
 The plotting tool always renders with GLMakie. The only environment-dependent
 choice is whether to open an on-screen window (a human is watching an interactive
 session on a machine with a display) or render offscreen to a file (a headless or
-one-shot run). Headless Linux still renders: the AgentREPL backend wraps the Julia
-worker in xvfb, giving GLMakie a virtual display, so it draws offscreen there.
+one-shot run). Headless Linux still renders: the caller starts a private virtual
+X server (Xvfb) via :func:`managed_display` and points the Julia process at it
+through ``DISPLAY``, so GLMakie draws offscreen there.
+
+We launch ``Xvfb`` directly rather than via ``xvfb-run`` for the Julia *session*:
+``xvfb-run`` runs its command with ``2>&1`` (stderr folded into stdout), which
+would collapse the kernel's separate stdout/stderr channels. (One-shot ``Pkg``
+precompile subprocesses, which don't use that protocol, still use ``xvfb-run``.)
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
+import select
 import shutil
+import subprocess
+import time
+from collections.abc import Iterator
 
 
 def has_display() -> bool:
@@ -46,24 +57,114 @@ def xvfb_run_available() -> bool:
     return shutil.which("xvfb-run") is not None
 
 
+def xvfb_available() -> bool:
+    """True if the ``Xvfb`` server binary is on PATH (ships with ``xvfb-run``)."""
+    return shutil.which("Xvfb") is not None
+
+
+@contextlib.contextmanager
+def managed_display(*, screen: str = "1280x1024x24", timeout: float = 30.0) -> Iterator[str]:
+    """Start a private ``Xvfb`` server and yield its ``DISPLAY`` (e.g. ``":7"``).
+
+    Gives headless GLMakie an OpenGL context without ``xvfb-run`` — we launch
+    ``Xvfb`` directly so the Julia process keeps its stdout and stderr on the
+    separate pipes the kernel protocol needs (``xvfb-run`` runs its command with
+    ``2>&1``, merging them, which deadlocks the kernel's per-eval stderr sentinel).
+
+    Uses ``Xvfb -displayfd`` so the server picks a free display number itself and
+    reports it back — no ``:N`` lock-file guessing or races. The server is torn
+    down on exit. Raises ``RuntimeError`` if ``Xvfb`` is missing or never reports a
+    display; callers treat that as "no plotting here" rather than a hard failure.
+    """
+
+    if not xvfb_available():
+        raise RuntimeError("`Xvfb` is not on PATH")
+    read_fd, write_fd = os.pipe()
+    try:
+        proc = subprocess.Popen(
+            [
+                "Xvfb",
+                "-displayfd",
+                str(write_fd),
+                "-screen",
+                "0",
+                screen,
+                "-nolisten",
+                "tcp",
+                "-ac",
+            ],
+            pass_fds=(write_fd,),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except BaseException:
+        os.close(read_fd)  # Popen failed, so the read side never reaches its finally below
+        raise
+    finally:
+        os.close(write_fd)
+
+    try:
+        number = _read_display_number(read_fd, timeout)
+    except BaseException:
+        _terminate(proc)
+        raise
+    finally:
+        os.close(read_fd)
+
+    display = f":{number}"
+    try:
+        yield display
+    finally:
+        _terminate(proc)
+
+
+def _read_display_number(read_fd: int, timeout: float) -> str:
+    """Read the display number Xvfb writes to ``-displayfd`` once it is ready."""
+
+    deadline = time.monotonic() + timeout
+    buf = b""
+    while not buf.endswith(b"\n"):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Xvfb did not report a display number in time")
+        if not select.select([read_fd], [], [], remaining)[0]:
+            continue
+        chunk = os.read(read_fd, 64)
+        if not chunk:
+            break
+        buf += chunk
+    number = buf.decode("ascii", "replace").strip()
+    if not number:
+        raise RuntimeError("Xvfb exited before reporting a display number")
+    return number
+
+
+def _terminate(proc: subprocess.Popen) -> None:
+    proc.terminate()
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=5)
+
+
 def xvfb_opted_out() -> bool:
     """True if the user disabled the headless xvfb wrap (``JUTUL_AGENT_NO_XVFB``)."""
     return bool(os.environ.get("JUTUL_AGENT_NO_XVFB"))
 
 
 def should_wrap_xvfb() -> bool:
-    """True on headless Linux where ``xvfb-run`` can supply a virtual display.
+    """True on headless Linux where a virtual display (Xvfb) should back GLMakie.
 
-    GLMakie needs an X/Wayland display (or xvfb) for its OpenGL context; it has no
-    built-in OSMesa/EGL switch. So on a Linux box with no ``DISPLAY`` we run the
-    Julia worker under ``xvfb-run`` to make the native 3D plotters work headless
-    (the same approach JutulDarcy uses in its own CI). The worker that AgentREPL
-    spawns inherits this environment. Set ``JUTUL_AGENT_NO_XVFB=1`` to opt out;
-    plotting then has no display and julia_plot reports a clear error.
+    GLMakie needs an X/Wayland display for its OpenGL context; it has no built-in
+    OSMesa/EGL switch. So on a Linux box with no ``DISPLAY`` we give the Julia
+    process a private Xvfb display (the session via :func:`managed_display`, which
+    the process and any ``addprocs`` workers inherit through ``DISPLAY``; one-shot
+    ``Pkg`` precompiles via ``xvfb-run``). The same approach JutulDarcy uses in its
+    own CI. Set ``JUTUL_AGENT_NO_XVFB=1`` to opt out; plotting then has no display
+    and julia_plot reports a clear error.
 
-    This is the single source of truth for the wrap decision: the AgentREPL
-    backend uses it to wrap the worker, and ``doctor`` / startup use the related
+    The single source of truth for the headless-display decision: startup wiring
+    uses it to launch the Xvfb display, and ``doctor`` / startup use the related
     ``plotting_display_available`` to warn when plotting won't work here.
+    ``xvfb-run`` ships the ``Xvfb`` binary, so its presence implies both.
     """
 
     if platform.system() != "Linux":

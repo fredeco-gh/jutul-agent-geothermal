@@ -10,8 +10,28 @@ from jutul_agent.interfaces.cli import main
 from jutul_agent.workspace import workspace_config_path, workspace_julia_env
 
 
+@pytest.fixture
+def _julia_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pretend Julia 1.12 is installed so init's ``require_julia()`` check passes.
+
+    These tests exercise the bootstrap (template copy + config), not the Julia
+    toolchain, so they must not depend on a real Julia being on PATH (the cross-OS
+    CI lane has none).
+    """
+    import shutil
+    import subprocess
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/julia" if name == "julia" else None)
+
+    class _Version:
+        returncode = 0
+        stdout = "julia version 1.12.0\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Version())
+
+
 def test_init_bootstraps_workspace_and_writes_config(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], _julia_on_path: None
 ) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -36,7 +56,7 @@ def test_init_bootstraps_workspace_and_writes_config(
 
 
 def test_setup_alias_bootstraps_workspace(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], _julia_on_path: None
 ) -> None:
     ws = tmp_path / "ws2"
     ws.mkdir()
@@ -56,8 +76,10 @@ def test_instantiate_alias_runs_precompile_path(
 
     class _Result:
         returncode = 0
+        # init now runs `require_julia()` first, which parses `julia --version`.
+        stdout = "julia version 1.12.0\n"
 
-    def _fake_run(argv, check=False):
+    def _fake_run(argv, check=False, **kwargs):
         captured_cmds.append(argv)
         return _Result()
 

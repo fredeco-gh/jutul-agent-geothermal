@@ -17,16 +17,43 @@ from __future__ import annotations
 from jutul_agent.simulators.base import SimulatorAdapter
 
 
-def assemble_session_prompt(adapter: SimulatorAdapter) -> str:
+def assemble_session_prompt(adapter: SimulatorAdapter, *, open_windows: bool = True) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
         "Primary Julia packages: " + ", ".join(adapter.package_imports) + ".",
         _tool_guide(adapter),
+        _display_note(open_windows),
     ]
     hints = adapter.domain_hints.strip()
     if hints:
         sections.append("Simulator hints:\n" + hints)
     return "\n\n".join(sections) + "\n"
+
+
+def _display_note(open_windows: bool) -> str:
+    """Tell the agent, for *this* session, whether a live plot window can appear.
+
+    Without it the agent can't know it's headless and will wrongly tell the user a
+    window opened (e.g. after a native ``plot_well_results`` call). When no window
+    can show, steer it to ``julia_plot`` — which still renders a PNG — and away from
+    claiming interactivity the user can't see.
+    """
+
+    if open_windows:
+        return (
+            "Display: live plot windows are available this session. `julia_plot` "
+            "opens an interactive Makie window the user can rotate/zoom/step, and "
+            "also saves a PNG."
+        )
+    return (
+        "Display: this session is HEADLESS — no on-screen window can appear. "
+        "`julia_plot` still renders and saves a PNG (the user sees it in the "
+        "transcript/report), so use it for every figure. Native interactive viewers "
+        "(`plot_well_results`, `plot_reservoir`, `plot_cell_data`, …) called in "
+        "`julia_eval` draw to an offscreen virtual display the user cannot see — "
+        "wrap such results in `julia_plot` instead. Never tell the user a window "
+        "opened or that they can rotate/zoom/interact with a plot; they can't."
+    )
 
 
 def _package_mounts(adapter: SimulatorAdapter) -> str:
