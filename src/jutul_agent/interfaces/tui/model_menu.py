@@ -20,7 +20,9 @@ from textual.widgets import Input, OptionList, ProgressBar, Static
 from textual.widgets.option_list import Option
 
 from jutul_agent.agent.models import (
+    OLLAMA_CLOUD,
     PROVIDERS,
+    RECOMMENDED_OLLAMA_LOCAL,
     ModelInfo,
     discover_models,
     is_known_model,
@@ -150,16 +152,33 @@ class ModelMenu(ModalScreen[ModelChoice | None]):
             self._populate(self.query_one("#model-filter", Input).value)
 
     def _sections(self) -> list[tuple[str, list[ModelInfo]]]:
-        """``(header, models)`` sections in display order: Recent, then providers."""
+        """``(header, models)`` sections in display order: Recent, cloud providers,
+        then Ollama local (installed + recommended-to-pull) and Ollama cloud."""
         sections: list[tuple[str, list[ModelInfo]]] = []
         if self._recent:
             sections.append(("Recent", [ModelInfo(mid, mid) for mid in self._recent]))
         catalog = discover_models()
         for provider, info in PROVIDERS.items():
-            models = self._ollama if info.local else list(catalog.get(provider, ()))
-            if models:
+            if info.local:
+                continue  # Ollama handled below as local + cloud
+            if models := list(catalog.get(provider, ())):
                 sections.append((info.label, models))
+        if local := self._ollama_local_models():
+            sections.append(("Ollama (local)", local))
+        sections.append(
+            ("Ollama (cloud)", [ModelInfo(f"ollama:{tag}", tag) for tag in OLLAMA_CLOUD])
+        )
         return sections
+
+    def _ollama_local_models(self) -> list[ModelInfo]:
+        """Installed local models (daemon-discovered) plus recommended ones not yet
+        pulled, marked so Enter triggers an in-app pull."""
+        models = list(self._ollama)
+        installed_bases = {m.label.split(":", 1)[0] for m in self._ollama}
+        for tag in RECOMMENDED_OLLAMA_LOCAL:
+            if tag.split(":", 1)[0] not in installed_bases:
+                models.append(ModelInfo(f"ollama:{tag}", tag, "not pulled · Enter to pull"))
+        return models
 
     def _populate(self, filter_text: str) -> None:
         options = self.query_one("#model-options", OptionList)

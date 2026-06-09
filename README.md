@@ -289,9 +289,20 @@ uv run jutul-agent --sim jutuldarcy --model anthropic:claude-sonnet-4-6
 
 Run models locally through [Ollama](https://ollama.com) — no API key needed.
 Install Ollama and start it (`ollama serve`), then pick an `ollama:` model in
-the selector. If the model isn't pulled yet, jutul-agent pulls it for you;
-or pull it yourself first with `ollama pull <model>`. Local models are
-convenient but generally weaker at tool use than the hosted ones.
+the selector. The list includes a few recommended models you can pull on the
+spot, your already-installed ones, and Ollama Cloud (`:cloud`) models. If a
+model isn't pulled yet, jutul-agent pulls it for you.
+
+jutul-agent is tool-driven, so a local model must support **tool calling**
+(`ollama show <model>` lists `tools` under Capabilities). A recent model can
+report no tools if your Ollama is too old to parse its template — keep Ollama
+up to date (`curl -fsSL https://ollama.com/install.sh | sh`) and re-pull. Local
+models are convenient but generally weaker at tool use than the hosted ones.
+
+The agent's prompt is large, so local models are loaded with a context window
+sized to the model (what Ollama reports it supports), capped at a memory budget
+— 64K by default. On memory-tight hardware, lower the cap with
+`JUTUL_AGENT_OLLAMA_NUM_CTX` (e.g. `32768`).
 
 ### Other providers
 

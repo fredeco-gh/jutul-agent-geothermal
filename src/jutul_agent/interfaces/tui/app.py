@@ -738,26 +738,32 @@ class TUIApp(App[None]):
         await self._apply_model(model_id, scope)
 
     async def _prepare_local_model(self, model_id: str, scope: str) -> None:
-        """Check a local (Ollama) model is reachable and pulled, then switch.
-
-        Reports if the server is down; pulls the model first if it's missing.
+        """Check a local (Ollama) model is reachable, pulled, and tool-capable,
+        then switch. Reports if the server is down; pulls the model if missing.
         """
         from jutul_agent import ollama_client
+        from jutul_agent.agent.models import is_ollama_cloud
 
-        name = ollama_client.model_name(model_id)
         if not await ollama_client.is_reachable():
             await self._note(
                 f"Ollama isn't reachable at {ollama_client.host()}. Start it with "
                 "`ollama serve` (or install it from https://ollama.com), then try again."
             )
             return
-        if await ollama_client.is_installed(name):
+        if is_ollama_cloud(model_id):
+            # Hosted by Ollama (needs `ollama signin`); nothing to pull locally.
             await self._apply_model(model_id, scope)
+            return
+        name = ollama_client.model_name(model_id)
+        if await ollama_client.is_installed(name):
+            await self._apply_local_if_tool_capable(model_id, scope, name)
             return
 
         def _after_pull(ok: bool | None) -> None:
             if ok:
-                self.run_worker(self._apply_model(model_id, scope), name="model-switch")
+                self.run_worker(
+                    self._apply_local_if_tool_capable(model_id, scope, name), name="model-switch"
+                )
             else:
                 self.run_worker(
                     self._note(f"`{name}` was not pulled; switch cancelled."),
@@ -765,6 +771,20 @@ class TUIApp(App[None]):
                 )
 
         self.push_screen(OllamaPullModal(model_name=name), _after_pull)
+
+    async def _apply_local_if_tool_capable(self, model_id: str, scope: str, name: str) -> None:
+        """Switch only if the daemon exposes tool calling for the model — the
+        agent is tool-driven, so a tool-less model can't run here."""
+        from jutul_agent import ollama_client
+
+        if not await ollama_client.supports_tools(name):
+            await self._note(
+                f"`{model_id}` doesn't support tool calling, which this agent requires. "
+                "Pick a tool-capable model, or update Ollama and re-pull if it should "
+                "support tools."
+            )
+            return
+        await self._apply_model(model_id, scope)
 
     def _prompt_api_key(self, model_id: str, scope: str, env_var: str) -> None:
         """Collect the provider key in a modal, store it, then resume the switch."""

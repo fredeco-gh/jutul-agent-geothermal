@@ -18,7 +18,12 @@ class _ListResp:
         self.models = [_Model(n) for n in names]
 
 
-def _fake_client(*, names=None, list_error=None, pull_chunks=None):
+class _ShowResp:
+    def __init__(self, capabilities: list[str]) -> None:
+        self.capabilities = capabilities
+
+
+def _fake_client(*, names=None, list_error=None, pull_chunks=None, caps=None, show_error=None):
     class _Chunk:
         def __init__(self, status, total=None, completed=None):
             self.status, self.total, self.completed = status, total, completed
@@ -35,6 +40,11 @@ def _fake_client(*, names=None, list_error=None, pull_chunks=None):
                     yield _Chunk(status, total, completed)
 
             return _gen()
+
+        async def show(self, name):
+            if show_error is not None:
+                raise show_error
+            return _ShowResp(caps or [])
 
     return _Client()
 
@@ -76,6 +86,58 @@ async def test_installed_models_and_is_installed(monkeypatch: pytest.MonkeyPatch
     assert set(await ollama_client.installed_models()) == {"llama3.1:latest", "qwen2.5:latest"}
     assert await ollama_client.is_installed("llama3.1") is True
     assert await ollama_client.is_installed("mistral") is False
+
+
+async def test_supports_tools_from_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ollama_client, "_client", lambda: _fake_client(caps=["completion", "tools", "thinking"])
+    )
+    assert await ollama_client.capabilities("qwen3:14b") == ["completion", "tools", "thinking"]
+    assert await ollama_client.supports_tools("qwen3:14b") is True
+
+
+async def test_supports_tools_false_when_capability_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A daemon too old for the model's template reports a reduced set (no tools).
+    monkeypatch.setattr(
+        ollama_client, "_client", lambda: _fake_client(caps=["completion", "vision"])
+    )
+    assert await ollama_client.supports_tools("qwen3.6:27b") is False
+
+
+async def test_capabilities_empty_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ollama_client, "_client", lambda: _fake_client(show_error=ConnectionError("down"))
+    )
+    assert await ollama_client.capabilities("x") == []
+    assert await ollama_client.supports_tools("x") is False
+
+
+def test_context_window_reads_max_context_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Info:
+        def __init__(self) -> None:
+            self.modelinfo = {"qwen35.context_length": 262144, "general.parameter_count": 27}
+
+    class _SyncClient:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def show(self, name):
+            return _Info()
+
+    monkeypatch.setattr("ollama.Client", _SyncClient)
+    assert ollama_client.context_window("qwen3.6:27b") == 262144
+
+
+def test_context_window_none_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _SyncClient:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+        def show(self, name):
+            raise ConnectionError("down")
+
+    monkeypatch.setattr("ollama.Client", _SyncClient)
+    assert ollama_client.context_window("x") is None
 
 
 async def test_installed_models_empty_when_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:

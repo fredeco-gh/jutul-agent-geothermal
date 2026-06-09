@@ -171,6 +171,7 @@ def _check_ollama(report: _Report, model_id: str) -> None:
     import asyncio
 
     from jutul_agent import ollama_client
+    from jutul_agent.agent.models import is_ollama_cloud
 
     name = ollama_client.model_name(model_id)
     if not asyncio.run(ollama_client.is_reachable()):
@@ -181,14 +182,27 @@ def _check_ollama(report: _Report, model_id: str) -> None:
             "Start it with `ollama serve` (or install it from https://ollama.com).",
         )
         return
-    if asyncio.run(ollama_client.is_installed(name)):
-        report.line(PASS, "Ollama model", f"{name} pulled")
-    else:
+    if is_ollama_cloud(model_id):
+        report.line(PASS, "Ollama model", f"{name} (hosted by Ollama; needs `ollama signin`)")
+        return
+    if not asyncio.run(ollama_client.is_installed(name)):
         report.line(
             WARN,
             "Ollama model",
             f"{name} not pulled",
             f"Pull it with `ollama pull {name}` (or select it in the TUI to pull in-app).",
+        )
+        return
+    # The agent is tool-driven, so a model the daemon reports as tool-less can't run.
+    if asyncio.run(ollama_client.supports_tools(name)):
+        report.line(PASS, "Ollama model", f"{name} pulled (tools supported)")
+    else:
+        report.line(
+            FAIL,
+            "Ollama model",
+            f"{name} doesn't support tool calling, which jutul-agent requires",
+            f"Pick a tool-capable model, or update Ollama and re-pull if it should "
+            f"support tools (`ollama show {name}` lists capabilities).",
         )
 
 

@@ -671,6 +671,7 @@ async def test_model_switch_rebuilds_and_persists_to_workspace(
     # Local model is reachable + already pulled, so the switch is deterministic.
     monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
     monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(True))
 
     calls: list[tuple[str, list]] = []
 
@@ -699,6 +700,45 @@ async def test_model_switch_rebuilds_and_persists_to_workspace(
     assert load_workspace_config(tmp_path).model == "ollama:llama3.1"
 
 
+async def test_cloud_ollama_switch_skips_pull(
+    session: Session, tmp_path: Path, monkeypatch
+) -> None:
+    from jutul_agent import ollama_client
+    from jutul_agent.agent.builder import build_backend
+    from jutul_agent.interfaces.tui.model_menu import OllamaPullModal
+
+    monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
+
+    async def _must_not_check(name):
+        raise AssertionError("is_installed must not be called for a cloud model")
+
+    monkeypatch.setattr(ollama_client, "is_installed", _must_not_check)
+
+    calls: list[str] = []
+
+    def factory(model_id: str, dirs):
+        calls.append(model_id)
+        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+
+    app = TUIApp(
+        agent=_stub_agent(),
+        session=session,
+        backend=build_backend(session.simulator, workspace=tmp_path),
+        model_label="openai:gpt-5.4-mini",
+        agent_factory=factory,
+    )
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        await app._handle_command("/model ollama:glm-5.1:cloud")
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert calls == ["ollama:glm-5.1:cloud"]  # switched, no pull
+        assert app._model_label == "ollama:glm-5.1:cloud"
+        assert not isinstance(app.screen, OllamaPullModal)
+
+
 async def test_model_switch_preserves_mounted_dirs(
     session: Session, tmp_path: Path, monkeypatch
 ) -> None:
@@ -708,6 +748,7 @@ async def test_model_switch_preserves_mounted_dirs(
 
     monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
     monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(True))
 
     extra = tmp_path / "data"
     extra.mkdir()
@@ -801,6 +842,32 @@ async def test_api_key_modal_stores_key_and_switches(
     assert "ANTHROPIC_API_KEY" in user_env_path().read_text(encoding="utf-8")
 
 
+async def test_local_model_without_tools_is_refused(session: Session, monkeypatch) -> None:
+    from jutul_agent import ollama_client
+
+    monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
+    monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
+    # Daemon too old for the model's template → reports no `tools` capability.
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(False))
+    calls: list[str] = []
+
+    app = TUIApp(
+        agent=_stub_agent(),
+        session=session,
+        model_label="openai:gpt-5.4-mini",
+        agent_factory=lambda model_id, dirs: (calls.append(model_id), (_stub_agent(), None))[1],
+    )
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        await app._handle_command("/model ollama:qwen3.6:27b")
+        await pilot.pause()
+
+        assert calls == []  # not switched
+        assert app._model_label == "openai:gpt-5.4-mini"
+        notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
+        assert any("doesn't support tool calling" in block._content for block in notes)
+
+
 async def test_local_model_switch_notes_when_ollama_unreachable(
     session: Session, monkeypatch
 ) -> None:
@@ -835,6 +902,7 @@ async def test_local_model_switch_pulls_then_switches(
 
     monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
     monkeypatch.setattr(ollama_client, "is_installed", _async_return(False))
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(True))
 
     async def fake_pull(name):
         yield PullProgress(status="pulling", fraction=0.5)

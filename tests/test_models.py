@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from jutul_agent.agent.builder import DEFAULT_MODEL
 from jutul_agent.agent.models import (
+    OLLAMA_CLOUD,
     PROVIDERS,
+    RECOMMENDED_OLLAMA_LOCAL,
     discover_models,
     is_known_model,
     is_local,
+    is_ollama_cloud,
     key_env_var,
     provider_info,
     provider_of,
@@ -58,3 +61,17 @@ def test_is_known_model_rejects_free_text() -> None:
     assert is_known_model("openai:gpt-5.4-mini")
     assert not is_known_model("openrouter:some/model")
     assert not is_known_model("anthropic:haiku")  # not a real id
+
+
+def test_ollama_cloud_detection() -> None:
+    assert is_ollama_cloud("ollama:glm-5.1:cloud")
+    assert not is_ollama_cloud("ollama:llama4")
+    assert not is_ollama_cloud("openai:gpt-5.5")
+
+
+def test_curated_ollama_lists_are_well_formed() -> None:
+    # Local tags are pulled (no :cloud); cloud tags are hosted (always :cloud).
+    assert RECOMMENDED_OLLAMA_LOCAL
+    assert all(not t.endswith(":cloud") for t in RECOMMENDED_OLLAMA_LOCAL)
+    assert OLLAMA_CLOUD
+    assert all(t.endswith(":cloud") for t in OLLAMA_CLOUD)

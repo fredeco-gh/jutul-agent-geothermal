@@ -69,6 +69,36 @@ def is_local(model_id: str) -> bool:
     return bool(info and info.local)
 
 
+def is_ollama_cloud(model_id: str) -> bool:
+    """Ollama-hosted (``:cloud``) models run remotely — no local pull needed."""
+    return provider_of(model_id) == "ollama" and model_id.endswith(":cloud")
+
+
+# Ollama ships no profile data, so unlike the cloud providers it has no
+# discoverable catalog — a short hand-maintained list is the only way to offer
+# browse-and-pull. This is the one curated list we keep; edit it as the local
+# landscape moves. Local tags are pulled on first use; cloud models are hosted
+# by Ollama (`ollama signin`) and switch directly.
+#
+# Qwen3.6 is the current sweet spot for local agentic coding (Apache 2.0): the
+# 27B dense leads its size class on agentic-coding benchmarks (~17 GB at Q4),
+# and the 35B-A3B MoE (~3B active) decodes far faster with long context, good
+# for batched eval rollouts. NB: all open-weight models are Python-centric, so
+# Julia/JutulDarcy tool-use is their weak axis — validate on real tasks.
+RECOMMENDED_OLLAMA_LOCAL: tuple[str, ...] = (
+    "qwen3.6:27b",
+    "qwen3.6:35b-a3b",
+)
+# Frontier-tier models hosted by Ollama (mirrors deepagents-code's set); far
+# better at tool use than small local models.
+OLLAMA_CLOUD: tuple[str, ...] = (
+    "deepseek-v4-flash:cloud",
+    "glm-5.1:cloud",
+    "kimi-k2.6:cloud",
+    "minimax-m2.7:cloud",
+)
+
+
 @lru_cache(maxsize=1)
 def discover_models() -> dict[str, list[ModelInfo]]:
     """Tool-calling models from installed provider packages, grouped by provider.

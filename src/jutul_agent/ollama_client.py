@@ -64,6 +64,47 @@ async def installed_models() -> list[str]:
     return names
 
 
+async def capabilities(name: str) -> list[str]:
+    """Capability tags the daemon reports for a pulled model (e.g. ``tools``,
+    ``vision``); empty on any error."""
+    with contextlib.suppress(Exception):
+        info = await _client().show(name)
+        caps = getattr(info, "capabilities", None)
+        if caps is None and isinstance(info, dict):
+            caps = info.get("capabilities")
+        if caps:
+            return list(caps)
+    return []
+
+
+async def supports_tools(name: str) -> bool:
+    """Whether the daemon exposes tool calling for ``name``."""
+    return "tools" in await capabilities(name)
+
+
+def context_window(name: str) -> int | None:
+    """The model's max context length (tokens) the daemon reports, or None.
+
+    Lets callers size ``num_ctx`` to the model rather than guess. Sync because it
+    runs at model-build time; best-effort (None when the daemon can't answer).
+    """
+    with contextlib.suppress(Exception):
+        from ollama import Client
+
+        info = Client(timeout=2.0).show(name)
+        modelinfo = getattr(info, "modelinfo", None)
+        if modelinfo is None and isinstance(info, dict):
+            modelinfo = info.get("modelinfo") or info.get("model_info")
+        lengths = [
+            value
+            for key, value in (modelinfo or {}).items()
+            if isinstance(value, int) and key.endswith("context_length")
+        ]
+        if lengths:
+            return max(lengths)
+    return None
+
+
 def _matches(installed: str, name: str) -> bool:
     # Installed tags carry a version (e.g. "llama3.1:latest"); match a bare name
     # against the tag's base so "llama3.1" finds "llama3.1:latest".

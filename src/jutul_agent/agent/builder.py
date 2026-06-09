@@ -40,7 +40,7 @@ from jutul_agent.agent.memory import (
     make_remember_tool,
     memory_backend_route,
 )
-from jutul_agent.agent.models import PROVIDERS
+from jutul_agent.agent.models import PROVIDERS, provider_of
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
@@ -135,6 +135,44 @@ def register_provider_profiles() -> None:
     for provider in PROVIDERS:
         register_harness_profile(provider, profile)
     _provider_profiles_registered = True
+
+
+def _ollama_ctx_budget(default: int = 65536) -> int:
+    """Most context (KV cache) to allocate for a local model — a memory cap,
+    overridable with ``$JUTUL_AGENT_OLLAMA_NUM_CTX``."""
+    try:
+        return int(os.environ["JUTUL_AGENT_OLLAMA_NUM_CTX"])
+    except (KeyError, ValueError):
+        return default
+
+
+def _ollama_num_ctx(model_id: str) -> int:
+    """Context window to load a local model with: the model's own reported max,
+    capped at the memory budget. Ollama defaults too small for the agent's
+    prompt, and a flat constant ignores each model's real capability.
+    """
+    from jutul_agent import ollama_client
+
+    budget = _ollama_ctx_budget()
+    reported = ollama_client.context_window(ollama_client.model_name(model_id))
+    return min(reported, budget) if reported else budget
+
+
+def _resolve_model_for_agent(model: Any) -> Any:
+    """A pre-built model instance for Ollama, the spec string otherwise.
+
+    deepagents skips profile resolution for specs with more than one colon, so
+    `ollama:<model>:<tag>` ids would otherwise get neither our harness profile
+    nor a context setting. Passing an instance makes deepagents resolve the
+    harness profile by provider, and lets us widen the context window local
+    models need. Cloud providers keep the string so their provider profiles
+    still apply; an already-built model is passed through untouched.
+    """
+    if isinstance(model, str) and provider_of(model) == "ollama":
+        from langchain.chat_models import init_chat_model
+
+        return init_chat_model(model, num_ctx=_ollama_num_ctx(model))
+    return model
 
 
 def build_backend(
@@ -261,7 +299,7 @@ def build_agent(
     )
     subagents = [factory(session) for factory in session.simulator.subagent_factories]
     agent = create_deep_agent(
-        model=resolve_model(model),
+        model=_resolve_model_for_agent(resolve_model(model)),
         backend=backend,
         tools=tools,
         system_prompt=assemble_session_prompt(session.simulator, open_windows=session.open_windows),

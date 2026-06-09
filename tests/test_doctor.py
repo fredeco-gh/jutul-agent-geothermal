@@ -50,8 +50,31 @@ def test_check_unknown_provider_warns(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_check_ollama_pulled_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
     monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(True))
     report = _RecordingReport()
     doctor._check_model_and_key(report, "ollama:llama3.1")
+    assert report.status_for("Ollama model") == doctor.PASS
+
+
+def test_check_ollama_without_tools_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
+    monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
+    monkeypatch.setattr(ollama_client, "supports_tools", _async_return(False))
+    report = _RecordingReport()
+    doctor._check_model_and_key(report, "ollama:qwen3.6:27b")
+    assert report.status_for("Ollama model") == doctor.FAIL
+
+
+def test_check_ollama_cloud_passes_without_pull(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
+
+    async def _must_not_check(name):
+        raise AssertionError("cloud models are not pulled/capability-checked")
+
+    monkeypatch.setattr(ollama_client, "is_installed", _must_not_check)
+    monkeypatch.setattr(ollama_client, "supports_tools", _must_not_check)
+    report = _RecordingReport()
+    doctor._check_model_and_key(report, "ollama:glm-5.1:cloud")
     assert report.status_for("Ollama model") == doctor.PASS
 
 

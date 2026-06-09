@@ -30,6 +30,26 @@ async def test_model_menu_lists_discovered_models() -> None:
         assert None in ids
 
 
+async def test_model_menu_shows_recommended_and_cloud_ollama(monkeypatch) -> None:
+    # No installed local models in tests; recommended-to-pull local models and
+    # hosted cloud models still appear so you can pick without typing a tag.
+    from jutul_agent import ollama_client
+
+    async def _none() -> list[str]:
+        return []
+
+    monkeypatch.setattr(ollama_client, "installed_models", _none)
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(ModelMenu(current=None))
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        ids = _option_ids(app.screen)
+        assert "ollama:qwen3.6:27b" in ids  # recommended local, pullable
+        assert "ollama:glm-5.1:cloud" in ids  # hosted cloud
+
+
 async def test_model_menu_shows_recent_section(monkeypatch) -> None:
     # A free-text id that isn't in any provider catalog can only appear via the
     # Recent section, so its presence proves that section is rendered.
