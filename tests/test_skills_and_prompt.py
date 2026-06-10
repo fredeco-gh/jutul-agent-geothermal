@@ -19,7 +19,6 @@ def test_registry_lists_known_simulators() -> None:
     assert "battmo" in registry.names()
     assert "fimbul" in registry.names()
     assert "mocca" in registry.names()
-    assert "vocsim" in registry.names()
 
 
 def test_assemble_session_prompt_includes_runtime_context(tmp_path: Path) -> None:
@@ -73,7 +72,6 @@ def test_repo_deepagents_skill_assets_exist() -> None:
         ("battmo", "battmo-cycling"),
         ("fimbul", "fimbul-overview"),
         ("mocca", "mocca-overview"),
-        ("vocsim", "vocsim-overview"),
     ]
     for sim, skill in expected:
         assert registry.get(sim).skills_dir.joinpath(skill, "SKILL.md").exists()
@@ -94,3 +92,4 @@ def test_every_simulator_has_env_template_and_overview_skill() -> None:
         assert template.exists(), f"missing env template for {name}: {template}"
         overview = adapter.skills_dir / f"{name}-overview" / "SKILL.md"
         assert overview.exists(), f"missing overview skill for {name}: {overview}"
+

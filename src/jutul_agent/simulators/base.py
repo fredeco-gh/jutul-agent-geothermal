@@ -3,7 +3,7 @@
 Each supported simulator (JutulDarcy, BattMo, …) ships an adapter that
 declares which Julia packages the agent should know about, where its
 skill markdown lives, and short orientation hints for the system prompt.
-The adapter does not know about workspace paths — those are resolved at
+The adapter does not know about workspace paths; those are resolved at
 run time via ``jutul_agent.workspace``.
 
 Layout convention: each simulator owns one folder under
@@ -37,7 +37,7 @@ class SimulatorAdapter:
     # Name of this env's per-simulator warm-up package (e.g.
     # ``"JutulAgentJutulDarcy"``). Loaded in the background at session start so its
     # precompiled, GLMakie-aware solver is resident; its solve/plot bake is what
-    # makes the agent's first call fast. Empty disables (placeholder sims).
+    # makes the agent's first call fast. Empty disables the warm-up.
     warm_package: str = ""
     # Each factory takes the Session and returns a deepagents ``SubAgent``
     # spec dict so a simulator can contribute named subagents on top of

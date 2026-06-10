@@ -1,7 +1,7 @@
 """Modal dialogs for selecting a model, entering an API key, and pulling a model.
 
-``ModelMenu`` lists discovered models grouped by provider — plus a "Recent"
-section — and accepts any ``provider:model`` typed in; it returns
+``ModelMenu`` lists discovered models grouped by provider; plus a "Recent"
+section; and accepts any ``provider:model`` typed in; it returns
 ``(model_id, scope)``. ``ApiKeyModal`` collects a provider key when one is
 missing. ``OllamaPullModal`` pulls a local model. The caller (``app.TUIApp``)
 applies the resulting switch.
@@ -19,7 +19,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, ProgressBar, Static
 from textual.widgets.option_list import Option
 
-from jutul_agent.agent.models import (
+from jutul_agent.models import (
     OLLAMA_CLOUD,
     PROVIDERS,
     RECOMMENDED_OLLAMA_LOCAL,
@@ -143,7 +143,7 @@ class ModelMenu(ModalScreen[ModelChoice | None]):
 
         try:
             names = await ollama_client.installed_models()
-        except Exception:  # daemon down or unreachable — leave Ollama out
+        except Exception:  # daemon down or unreachable; leave Ollama out
             return
         if not names:
             return

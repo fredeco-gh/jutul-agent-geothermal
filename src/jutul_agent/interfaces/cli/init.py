@@ -138,7 +138,7 @@ def _note_headless_plotting() -> None:
     call fails mid-session. Simulation itself is unaffected.
     """
 
-    from jutul_agent.agent.render_profile import (
+    from jutul_agent.display import (
         plotting_display_available,
         xvfb_opted_out,
     )
@@ -166,8 +166,8 @@ def _maybe_prompt_for_provider_key(config: WorkspaceConfig) -> None:
     import sys
 
     from jutul_agent.agent.builder import resolve_model
-    from jutul_agent.agent.models import provider_info
     from jutul_agent.credentials import missing_credential, store_credential
+    from jutul_agent.models import provider_info
     from jutul_agent.user_config import load_user_config
 
     model_id = resolve_model(

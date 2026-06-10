@@ -17,8 +17,10 @@ the same bindings.
 Never reach for `execute` to spawn `julia`, `julia --project`, `julia -e ...`,
 or a shell pipeline that runs Julia: every such call starts a brand-new
 process with no shared state, pays the full precompile cost, and the user
-has to approve a shell command. `execute` is only for non-Julia shell work
-(grep, find, ls, git, …).
+has to approve a shell command. Results that feed your conclusions
+(simulation outputs, quantities the user asked for) come from this session's
+REPL, not recomputed through some other interpreter; `execute` covers
+ordinary shell work (grep, find, ls, git, …).
 
 ## Build incrementally
 

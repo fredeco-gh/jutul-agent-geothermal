@@ -23,7 +23,6 @@ from jutul_agent.workspace import (
     auto_detect_simulator,
     load_workspace_config,
     resolve_julia_project,
-    sync_julia_env_with_template,
 )
 
 
@@ -35,7 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Other commands: `jutul-agent init|setup [--sim <name>]`, "
-            "`jutul-agent doctor`, `jutul-agent transcript [<id>]`. "
+            "`jutul-agent doctor`, `jutul-agent transcript [<id>]`, "
+            "`jutul-agent eval <suite> --model <id>`. "
             "(`setup` is an alias for `init`.)"
         ),
     )
@@ -123,7 +123,7 @@ def dispatch(args: argparse.Namespace) -> int:
         return asyncio.run(_run_session(args, adapter, config))
     except KeyboardInterrupt:
         # Ctrl+C during the synchronous startup (Julia kernel, env bootstrap,
-        # warm-up) — before the TUI takes over input. Exit cleanly instead of
+        # warm-up), before the TUI takes over input. Exit cleanly instead of
         # dumping a traceback.
         print("\nStartup interrupted.", file=sys.stderr)
         return 130
@@ -136,11 +136,7 @@ async def _run_session(
 ) -> int:
     from jutul_agent.julia.requirements import JuliaRequirementError, require_julia
     from jutul_agent.juliakernel import JuliaStartupError, KernelConfig
-    from jutul_agent.simulators.env_setup import (
-        EnvSetupError,
-        bootstrap_workspace,
-        is_workspace_env_ready,
-    )
+    from jutul_agent.simulators.env_setup import EnvSetupError, prepare_workspace_env
 
     try:
         require_julia()
@@ -152,23 +148,24 @@ async def _run_session(
     julia_project = args.julia_project or resolve_julia_project(ws)
 
     if args.julia_project is not None:
+        # An explicit project override is used as-is; the user owns it.
         if not (julia_project / "Project.toml").exists():
             print(
                 f"error: --julia-project {julia_project} has no Project.toml.",
                 file=sys.stderr,
             )
             return 2
-    elif not is_workspace_env_ready(ws):
-        # Implicit auto-bootstrap (without dev or precompile — those are init's job).
+    else:
         try:
-            bootstrap_workspace(adapter, workspace=ws)
+            prepare_workspace_env(
+                adapter,
+                workspace=ws,
+                julia_project=julia_project,
+                sim_name=args.sim or config.simulator,
+            )
         except EnvSetupError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-        _ensure_simulator_installed(adapter, ws, julia_project, args.sim or config.simulator)
-        _ensure_env_warmed(adapter, ws, julia_project, args.sim or config.simulator)
-    else:
-        _prepare_existing_env(adapter, ws, julia_project, args.sim or config.simulator)
 
     session_id = str(uuid.uuid4())
     state_dir = session_dir(session_id)
@@ -205,17 +202,17 @@ def _open_headless_display(stack: Any) -> dict[str, str] | None:
     """Start a virtual display for headless plotting, returning ``{DISPLAY: ...}``.
 
     Returns ``None`` when no virtual display is needed (a real display is present,
-    non-Linux, or the user opted out) or when Xvfb can't start — the Julia process
+    non-Linux, or the user opted out) or when Xvfb can't start; the Julia process
     then simply inherits the ambient environment.
     """
 
-    from jutul_agent.agent.render_profile import managed_display, should_wrap_xvfb
+    from jutul_agent.display import managed_display, should_wrap_xvfb
 
     if not should_wrap_xvfb():
         return None
     try:
         display = stack.enter_context(managed_display())
-    except Exception as exc:  # Xvfb missing or slow to start — don't block the session.
+    except Exception as exc:  # Xvfb missing or slow to start; don't block the session.
         print(
             f"warning: could not start a virtual display for plotting ({exc}); "
             "GLMakie plotting will be unavailable. Run `jutul-agent doctor` for help.",
@@ -229,13 +226,13 @@ def _warn_if_plotting_unavailable() -> None:
     """One-line heads-up at launch when GLMakie has no display here.
 
     On headless Linux without ``xvfb-run`` (or with it opted out), the native
-    plotters can't render and ``julia_plot`` errors at use-time — but simulation,
+    plotters can't render and ``julia_plot`` errors at use-time; but simulation,
     eval, and the file tools all still work, so this is a warning, not a failure.
     Surfacing it at launch means the user learns before their first plot, not
     mid-session when a ``plot_reservoir`` call fails.
     """
 
-    from jutul_agent.agent.render_profile import (
+    from jutul_agent.display import (
         plotting_display_available,
         xvfb_opted_out,
     )
@@ -255,221 +252,7 @@ def _warn_if_plotting_unavailable() -> None:
     )
 
 
-def _prepare_existing_env(
-    adapter: Any,
-    ws: Path,
-    julia_project: Path,
-    sim_name: str | None,
-) -> None:
-    """Ready an existing workspace env for the active simulator.
-
-    A workspace holds one simulator. A managed env (``.jutul-agent/julia-env``)
-    built for a *different* simulator can't be reconciled — e.g. BattMo and
-    JutulDarcy pin incompatible shared deps — so we rebuild it from the active
-    template rather than merging into an unsatisfiable env. A user-owned root
-    ``Project.toml`` is never touched. Otherwise we just pick up new template
-    deps and heal an un-instantiated manifest.
-    """
-
-    if not (ws / "Project.toml").exists():
-        foreign = _foreign_simulator(julia_project, adapter)
-        if foreign is not None:
-            _rebuild_managed_env(adapter, ws, sim_name, reason=f"was built for {foreign}")
-            return
-
-    _sync_workspace_env(adapter, ws, julia_project, sim_name)
-    _ensure_simulator_installed(adapter, ws, julia_project, sim_name)
-    _ensure_env_warmed(adapter, ws, julia_project, sim_name)
-
-
-def _foreign_simulator(julia_project: Path, adapter: Any) -> str | None:
-    """Display name of another simulator whose package this env declares.
-
-    Shared Jutul-stack packages (e.g. JutulDarcy for Fimbul) are in the active
-    adapter's ``package_imports`` and don't count — only a different
-    simulator's primary package marks the env as built for something else.
-    """
-
-    from jutul_agent.simulators import registry
-    from jutul_agent.simulators.env_setup import project_has_package
-
-    for name in registry.names():
-        other = registry.get(name)
-        if other.name == adapter.name or other.primary_package in adapter.package_imports:
-            continue
-        if project_has_package(julia_project, other.primary_package):
-            return other.display_name
-    return None
-
-
-def _rebuild_managed_env(adapter: Any, ws: Path, sim_name: str | None, *, reason: str) -> None:
-    """Replace the managed workspace env with the active simulator's template."""
-
-    from jutul_agent.simulators.env_setup import EnvSetupError, bootstrap_workspace
-
-    print(
-        f"Workspace Julia env {reason}; rebuilding it for {adapter.display_name} "
-        "from the template (one-time, can take a few minutes)...",
-        flush=True,
-    )
-    try:
-        bootstrap_workspace(adapter, workspace=ws, force=True, precompile=True)
-    except EnvSetupError as exc:
-        _warn_rebuild(adapter.primary_package, sim_name, exc)
-
-
-def _warn_rebuild(pkg: str, sim_name: str | None, exc: Exception) -> None:
-    rebuild = "jutul-agent init --force --precompile"
-    if sim_name:
-        rebuild += f" --sim {sim_name}"
-    print(
-        f"warning: could not prepare {pkg} ({exc}).\n"
-        f"         The agent may fail to load it. Rebuild the env with:\n"
-        f"             {rebuild}",
-        file=sys.stderr,
-    )
-
-
-def _sync_workspace_env(
-    adapter: Any,
-    ws: Path,
-    julia_project: Path,
-    sim_name: str | None,
-) -> None:
-    """Bring the workspace env up to date with its simulator template, then install.
-
-    Self-healing: when an upstream change adds packages to the template (e.g. the
-    JutulAgent warm-up packages), ``sync_julia_env_with_template`` brings the deps
-    — and the ``[sources]`` paths and package directories they need — into the env,
-    so a plain ``git pull`` + launch keeps working without a manual rebuild. We only
-    resolve and instantiate here so the install is quick; the warm-up bake runs
-    afterwards in :func:`_ensure_env_warmed` (with visible progress).
-
-    Best-effort: if the install fails (e.g. the new deps conflict with what is
-    pinned), we roll the Project.toml back so the env is no worse than before and
-    point at the clean-rebuild command. Either way we proceed to launch.
-    """
-
-    from jutul_agent.simulators.env_setup import EnvSetupError, resolve_and_instantiate
-
-    project_toml = julia_project / "Project.toml"
-    before = project_toml.read_text(encoding="utf-8") if project_toml.exists() else None
-
-    try:
-        added = sync_julia_env_with_template(adapter.julia_env_template_path, workspace=ws)
-    except Exception as exc:
-        print(f"warning: env sync failed: {exc}", file=sys.stderr)
-        return
-
-    if not added:
-        return
-
-    print(f"Updating workspace env with {', '.join(added)} (added upstream)...", flush=True)
-    try:
-        resolve_and_instantiate(julia_project, precompile=False, capture=True)
-    except EnvSetupError as exc:
-        if before is not None:
-            project_toml.write_text(before, encoding="utf-8")
-        rebuild = "jutul-agent init --force --precompile"
-        if sim_name:
-            rebuild += f" --sim {sim_name}"
-        print(
-            f"warning: could not install {', '.join(added)} — rolled the env back, so it "
-            "still works as before and the agent will start normally.\n"
-            f"         To rebuild it cleanly, run: {rebuild}\n"
-            f"         (cause: {exc})",
-            file=sys.stderr,
-        )
-
-
-def _ensure_simulator_installed(
-    adapter: Any, ws: Path, julia_project: Path, sim_name: str | None
-) -> None:
-    """Install the simulator package if the env declares but never resolved it.
-
-    Catches the "`jutul-agent doctor` is happy but `using <Sim>` fails" trap:
-    the Project lists the package but the Manifest never resolved it, so it
-    loads neither at startup nor in the agent's first call. Cheap when the env
-    is healthy (a manifest read); only pays the install cost when needed. If
-    the resolve itself fails on a managed env (a broken or conflicted manifest),
-    rebuild it from the template. Best-effort — on failure we warn and launch.
-    """
-
-    from jutul_agent.simulators.env_setup import (
-        EnvSetupError,
-        manifest_has_package,
-        resolve_and_instantiate,
-    )
-
-    pkg = adapter.primary_package
-    # Placeholder simulators (e.g. vocsim) declare a primary package they don't
-    # actually load; only verify packages the agent will `using`.
-    if pkg not in adapter.package_imports:
-        return
-    if manifest_has_package(julia_project, pkg):
-        return
-
-    print(
-        f"Workspace Julia env has not resolved {pkg} yet — installing "
-        "(one-time, can take a few minutes)...",
-        flush=True,
-    )
-    try:
-        # Resolve + install only; the warm-up bake is _ensure_env_warmed's job.
-        resolve_and_instantiate(julia_project, precompile=False)
-    except EnvSetupError as exc:
-        # A user-owned root env is theirs to fix; only rebuild the managed env.
-        if not (ws / "Project.toml").exists():
-            _rebuild_managed_env(adapter, ws, sim_name, reason="could not be resolved")
-            return
-        _warn_rebuild(pkg, sim_name, exc)
-
-
-def _ensure_env_warmed(adapter: Any, ws: Path, julia_project: Path, sim_name: str | None) -> None:
-    """Precompile the managed env before launch, but only when something changed.
-
-    The per-simulator ``JutulAgent<Sim>`` package's precompile runs the
-    ``@recompile_invalidations`` solve that makes the first real solve fast
-    (seconds instead of ~30 s). When the env changed (a fresh install, or new deps
-    pulled in) we bake it here — blocking launch until it's ready, and streaming
-    Julia's progress so it reads as work in progress, not a silent hang in the first
-    eval. When nothing changed, a marker check skips it with no Julia process, so a
-    plain launch stays fast. Best-effort: on failure the agent still starts.
-    """
-
-    from jutul_agent.simulators.env_setup import EnvSetupError, precompile_env
-    from jutul_agent.workspace import (
-        env_declares_warm_packages,
-        env_precompile_is_current,
-        mark_env_precompiled,
-    )
-
-    # Only the managed env carries the warm-up packages; a user-owned env is theirs.
-    if (ws / "Project.toml").exists() or not env_declares_warm_packages(julia_project):
-        return
-    if env_precompile_is_current(julia_project):
-        return  # nothing changed since the last bake — skip without spawning Julia
-
-    print(
-        "Precompiling the Julia env (one-time after a change; can take a few minutes)...",
-        flush=True,
-    )
-    try:
-        precompile_env(julia_project)
-    except EnvSetupError as exc:
-        retry = "jutul-agent init --precompile"
-        if sim_name:
-            retry += f" --sim {sim_name}"
-        print(
-            f"warning: env precompile did not finish ({exc}); the agent will start, "
-            f"but the first solve may be slow. Retry with: {retry}",
-            file=sys.stderr,
-        )
-        return
-    mark_env_precompiled(julia_project)
-
-
-async def _resolve_package_sources(adapter: Any, julia_project: Path, config: Any) -> list[Any]:
+async def _resolve_package_sources(julia_project: Path) -> list[Any]:
     """Resolve the source dirs to mount under ``/packages/`` for this session.
 
     Enumerates every package the environment resolves so the agent can browse
@@ -477,37 +260,18 @@ async def _resolve_package_sources(adapter: Any, julia_project: Path, config: An
     ``/packages/<Package>/``. It is fully populated before the first turn. A
     ``Pkg.develop`` checkout is mounted writable (the agent can edit it);
     registry installs stay read-only. Resolution is one fast, no-compile Julia
-    call run off the event loop.
-
-    Falls back to just the simulator's key packages if the full enumeration
-    can't run (e.g. an unresolved manifest); ``PackageMounts`` then fills in the
-    rest after the first REPL call.
+    call run off the event loop. If it can't run (e.g. an unresolved manifest),
+    ``PackageMounts`` re-enumerates through the live kernel after each REPL
+    call and fills the routes in as soon as the env resolves.
     """
 
     from jutul_agent.agent.builder import PackageSource
-    from jutul_agent.simulators.env_setup import (
-        resolve_env_package_sources,
-        resolve_package_sources,
-    )
+    from jutul_agent.simulators.env_setup import resolve_env_package_sources
 
     env = await asyncio.to_thread(resolve_env_package_sources, julia_project)
-    if env:
-        return [
-            PackageSource(name=name, path=path, writable=is_dev)
-            for name, (path, is_dev) in sorted(env.items())
-        ]
-
-    sources = await asyncio.to_thread(
-        resolve_package_sources, julia_project, adapter.package_imports
-    )
-    primary_developed = config.simulator_config(adapter.name).source_path is not None
     return [
-        PackageSource(
-            name=name,
-            path=path,
-            writable=primary_developed and name == adapter.primary_package,
-        )
-        for name, path in sources.items()
+        PackageSource(name=name, path=path, writable=is_dev)
+        for name, (path, is_dev) in sorted(env.items())
     ]
 
 
@@ -545,7 +309,7 @@ async def _run_with_backend(
     from jutul_agent.agent.approval import parse_approval_mode
     from jutul_agent.agent.builder import build_agent, resolve_model
     from jutul_agent.agent.mounts import mounted_dirs
-    from jutul_agent.agent.render_profile import can_open_windows
+    from jutul_agent.display import can_open_windows
     from jutul_agent.juliakernel import JuliaKernel
     from jutul_agent.session import Session
     from jutul_agent.user_config import load_user_config
@@ -574,9 +338,7 @@ async def _run_with_backend(
                     user_model=user_config.model,
                 )
                 approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
-                package_sources = await _resolve_package_sources(
-                    adapter, kernel_config.julia_project, config
-                )
+                package_sources = await _resolve_package_sources(kernel_config.julia_project)
                 extra_dirs = _resolve_add_dirs(args.add_dir, kernel_config.cwd)
 
                 def build(model_id: str, dirs: Any) -> Any:

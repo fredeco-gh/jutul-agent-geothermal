@@ -4,7 +4,7 @@ Three intentional layers:
 
 - ``test_julia_plot_captures_figure_shapes`` and ``..._view_returns_image_blocks``
   exercise *our* capture/view machinery against plain Makie. They don't touch a
-  simulator's plotters, so they stay stable across upstream changes — they guard
+  simulator's plotters, so they stay stable across upstream changes; they guard
   the code we own.
 - ``test_native_plotters_render_to_png`` is a *canary* over JutulDarcy's own
   plotters: it confirms the end-to-end wiring works today, and it embeds
@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from jutul_agent.agent.julia_plot import make_julia_plot_tool
-from jutul_agent.agent.render_profile import has_display, managed_display, xvfb_available
+from jutul_agent.display import has_display, managed_display, xvfb_available
 from jutul_agent.juliakernel import JuliaKernel, KernelConfig
 from jutul_agent.session import Session
 from jutul_agent.simulators.env_setup import manifest_has_package
@@ -51,7 +51,7 @@ def _materialize_shared_package() -> None:
 
     It lives once in ``julia_runtime/`` and is copied into an env at bootstrap;
     these tests instantiate the template directly, so sync it here too (idempotent).
-    Skipped when the env was never instantiated — those tests skip anyway.
+    Skipped when the env was never instantiated; those tests skip anyway.
     """
     if (JUTULDARCY_ENV / "Project.toml").exists():
         sync_shared_julia_package(JUTULDARCY_ENV)
@@ -64,7 +64,7 @@ def plot_display():
     GLMakie needs an OpenGL context; with none, its ``save`` *hard-crashes* the
     Julia process (a GL abort, not a catchable Julia error), surfaced as "the
     Julia kernel exited unexpectedly". Production gives the kernel a private Xvfb
-    display via ``render_profile.managed_display`` (passed through ``DISPLAY``);
+    display via ``display.managed_display`` (passed through ``DISPLAY``);
     the test does the same, so it doesn't depend on the outer process owning one.
     Yields ``None`` when a real display is already present (use the ambient one).
     """
@@ -196,7 +196,7 @@ async def test_julia_plot_view_returns_image_blocks(tmp_path: Path, plot_display
 # Canary over JutulDarcy's own native plotters: confirms the end-to-end wiring works
 # today. These embed JutulDarcy's setup/plotter API (note the setup_reservoir_model
 # return convention and the GraphMakie extension), so they may need updating when
-# upstream changes — that is expected for a canary.
+# upstream changes; that is expected for a canary.
 _NATIVE_PLOTTERS = {
     "reservoir_domain": "plot_reservoir(domain)",
     "reservoir_model": "plot_reservoir(model)",

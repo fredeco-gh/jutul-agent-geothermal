@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from jutul_agent.agent.render_profile import (
+from jutul_agent.display import (
     can_open_windows,
     has_display,
     managed_display,
@@ -29,12 +29,12 @@ def test_interactive_without_display_renders_offscreen() -> None:
 
 @pytest.mark.parametrize("system", ["Windows", "Darwin"])
 def test_has_display_true_on_desktop_os(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
-    monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: system)
+    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: system)
     assert has_display() is True
 
 
 def test_has_display_linux_depends_on_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: "Linux")
+    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     assert has_display() is False
@@ -44,8 +44,8 @@ def test_has_display_linux_depends_on_env(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def _headless_linux(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Put render_profile in a headless-Linux baseline (no display, no opt-out)."""
-    monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: "Linux")
+    """Put the display module in a headless-Linux baseline (no display, no opt-out)."""
+    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("JUTUL_AGENT_NO_XVFB", raising=False)
@@ -53,7 +53,7 @@ def _headless_linux(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _set_xvfb_run(monkeypatch: pytest.MonkeyPatch, present: bool) -> None:
     monkeypatch.setattr(
-        "jutul_agent.agent.render_profile.shutil.which",
+        "jutul_agent.display.shutil.which",
         lambda name: "/usr/bin/xvfb-run" if (present and name == "xvfb-run") else None,
     )
 
@@ -78,7 +78,7 @@ def test_should_wrap_xvfb_only_on_headless_linux_with_xvfb(
     assert should_wrap_xvfb() is False
     monkeypatch.delenv("DISPLAY", raising=False)
 
-    monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Darwin")
     assert should_wrap_xvfb() is False
 
 
@@ -86,8 +86,8 @@ def test_managed_display_raises_cleanly_when_xvfb_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The startup path treats a missing Xvfb as "no plotting here" (a caught
-    # RuntimeError), not a hard crash — so failing fast and clearly matters.
-    monkeypatch.setattr("jutul_agent.agent.render_profile.shutil.which", lambda _: None)
+    # RuntimeError), not a hard crash; so failing fast and clearly matters.
+    monkeypatch.setattr("jutul_agent.display.shutil.which", lambda _: None)
     with pytest.raises(RuntimeError, match="Xvfb"), managed_display():
         pass
 
@@ -100,12 +100,12 @@ def test_managed_display_closes_pipe_when_xvfb_fails_to_start(
 
     if not os.path.isdir("/proc/self/fd"):
         pytest.skip("fd-count check needs /proc (Linux)")
-    monkeypatch.setattr("jutul_agent.agent.render_profile.xvfb_available", lambda: True)
+    monkeypatch.setattr("jutul_agent.display.xvfb_available", lambda: True)
 
     def _boom(*_args: object, **_kwargs: object) -> None:
         raise PermissionError("fork denied")
 
-    monkeypatch.setattr("jutul_agent.agent.render_profile.subprocess.Popen", _boom)
+    monkeypatch.setattr("jutul_agent.display.subprocess.Popen", _boom)
 
     before = len(os.listdir("/proc/self/fd"))
     with pytest.raises(PermissionError), managed_display():
@@ -115,7 +115,7 @@ def test_managed_display_closes_pipe_when_xvfb_fails_to_start(
 
 def test_plotting_display_available_on_desktop_os(monkeypatch: pytest.MonkeyPatch) -> None:
     # Desktop OSes always have a display, so plotting is available regardless of xvfb.
-    monkeypatch.setattr("jutul_agent.agent.render_profile.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Darwin")
     _set_xvfb_run(monkeypatch, present=False)
     assert plotting_display_available() is True
 

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.tools import tool
 
 from jutul_agent.juliakernel.result import OnChunk, OutputChunk
-from jutul_agent.paths import resolve_workspace_path, workspace_root
+from jutul_agent.paths import resolve_in_workspace, workspace_root
 from jutul_agent.session import Session
 
 if TYPE_CHECKING:
@@ -274,10 +274,15 @@ def make_write_report_tool(session: Session):
         from jutul_agent.open_file import open_path
         from jutul_agent.transcript.report import render_report
 
-        if output_path is None:
+        note = ""
+        out = resolve_in_workspace(output_path) if output_path else None
+        if out is None:
             out = session.output_dir / "report.html"
-        else:
-            out = resolve_workspace_path(output_path)
+            if output_path:
+                note = (
+                    f" (requested path {output_path!r} is outside the workspace; "
+                    "wrote to the session output directory instead)"
+                )
         out.parent.mkdir(parents=True, exist_ok=True)
 
         ws = workspace_root()
@@ -298,6 +303,6 @@ def make_write_report_tool(session: Session):
             artifact_dirs=artifact_dirs,
         )
         open_path(out)
-        return str(out)
+        return str(out) + note
 
     return write_report

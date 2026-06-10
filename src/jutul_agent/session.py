@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jutul_agent.agent.memory import create_ephemeral_memory_dir, remove_ephemeral_memory_dir
 from jutul_agent.julia.session import JuliaSession
 from jutul_agent.paths import session_output_dir, workspace_state_dir
 from jutul_agent.simulators.base import SimulatorAdapter
@@ -111,7 +112,10 @@ class Session:
             "session_start",
             {"session_id": sid, "simulator": simulator.name},
         )
-        ephemeral_dir = create_ephemeral_memory_dir() if ephemeral_memory else None
+        # The agent builder seeds the memory index when it mounts the dir.
+        ephemeral_dir = (
+            Path(tempfile.mkdtemp(prefix="jutul-agent-ephemeral-")) if ephemeral_memory else None
+        )
         return cls(
             julia=julia,
             state_dir=dir_,
@@ -133,6 +137,6 @@ class Session:
     def finalize(self) -> None:
         self.trace.append("session_end", {"session_id": self.session_id})
         self.trace.close()
-        if self.ephemeral_memory:
-            remove_ephemeral_memory_dir(self._ephemeral_memory_dir)
+        if self.ephemeral_memory and self._ephemeral_memory_dir is not None:
+            shutil.rmtree(self._ephemeral_memory_dir, ignore_errors=True)
             self._ephemeral_memory_dir = None

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from jutul_agent.interfaces.tui._rendering import fenced_block, truncate_preview
+from jutul_agent.paths import resolve_in_workspace
 
 __all__ = [
     "SUPPORTED_APPROVAL_DECISIONS",
@@ -18,7 +19,6 @@ __all__ = [
     "compute_unified_diff",
     "fenced_block",
     "render_interrupt_cards",
-    "resolve_workspace_path",
     "truncate_preview",
 ]
 
@@ -185,7 +185,7 @@ def _write_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> 
     sections: list[str] = []
     path_str = str(tool_args.get("file_path") or tool_args.get("path") or "")
     content = str(tool_args.get("content") or "")
-    physical_path = resolve_workspace_path(path_str, workspace_root=workspace_root)
+    physical_path = resolve_in_workspace(path_str, workspace=workspace_root)
     existing_text = _safe_read(physical_path) if physical_path and physical_path.exists() else None
 
     if existing_text is None:
@@ -206,7 +206,7 @@ def _write_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> 
 
 def _edit_file_sections(tool_args: dict[str, Any], *, workspace_root: Path) -> list[str]:
     path_str = str(tool_args.get("file_path") or tool_args.get("path") or "")
-    physical_path = resolve_workspace_path(path_str, workspace_root=workspace_root)
+    physical_path = resolve_in_workspace(path_str, workspace=workspace_root)
     if physical_path is None:
         return ["> Preview unavailable: unable to resolve the target path inside the workspace."]
     if not physical_path.exists():
@@ -272,29 +272,6 @@ def _apply_edit_preview(
         else existing_text.replace(old_string, new_string, 1)
     )
     return updated, occurrences, None
-
-
-def resolve_workspace_path(path_str: str | None, *, workspace_root: Path) -> Path | None:
-    """Resolve a workspace-virtual or relative path to a physical path.
-
-    deepagents' filesystem tools speak workspace-virtual absolute paths
-    (e.g. ``/notes.txt``) that are anchored at ``workspace_root``. We treat
-    a leading ``/`` as that virtual anchor; anything else must be a
-    relative path. Any resolved path that lands outside the workspace is
-    rejected so a preview can't accidentally read the user's home dir.
-    """
-
-    if not path_str:
-        return None
-
-    root = workspace_root.resolve()
-    relative = path_str.lstrip("/") if path_str.startswith("/") else path_str
-    resolved = (root / relative).resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError:
-        return None
-    return resolved
 
 
 def compute_unified_diff(before: str, after: str, display_path: str) -> str | None:

@@ -42,7 +42,7 @@ def test_bootstrap_copies_template_into_workspace(tmp_path: Path) -> None:
 
     assert project == workspace_julia_env(workspace)
     assert (project / "Project.toml").read_text(encoding="utf-8").startswith("[deps]")
-    # The template's Manifest.toml is intentionally NOT carried over — the workspace
+    # The template's Manifest.toml is intentionally NOT carried over; the workspace
     # resolves its own at instantiate (a stale template manifest would omit newly
     # added deps like the per-sim warm package).
     assert not (project / "Manifest.toml").exists()
@@ -244,3 +244,61 @@ def test_bootstrap_skips_dev_when_workspace_is_source(
         _adapter(module_dir), workspace=workspace, source_path=tmp_path / "elsewhere"
     )
     assert called is False
+
+
+def test_prepare_workspace_env_bootstraps_missing_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_dir = _make_template(tmp_path)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    installs: list[Path] = []
+    monkeypatch.setattr(
+        env_setup, "resolve_and_instantiate", lambda project, **kw: installs.append(project)
+    )
+
+    project = workspace_julia_env(workspace)
+    env_setup.prepare_workspace_env(
+        _adapter(module_dir), workspace=workspace, julia_project=project
+    )
+
+    assert (project / "Project.toml").exists()
+    # The simulator was declared but never resolved, so it gets installed.
+    assert installs == [project]
+
+
+def test_prepare_workspace_env_rebuilds_foreign_managed_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A managed env built for another simulator is replaced from the template."""
+    module_dir = _make_template(tmp_path)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    env = workspace_julia_env(workspace)
+    env.mkdir(parents=True)
+    (env / "Project.toml").write_text('[deps]\nJutulDarcy = "uuid"\n', encoding="utf-8")
+    monkeypatch.setattr(env_setup, "_run_pkg", lambda *a, **k: None)
+
+    env_setup.prepare_workspace_env(_adapter(module_dir), workspace=workspace, julia_project=env)
+
+    text = (env / "Project.toml").read_text(encoding="utf-8")
+    assert "Foo" in text
+    assert "JutulDarcy" not in text
+
+
+def test_prepare_workspace_env_leaves_user_root_project_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module_dir = _make_template(tmp_path)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    root = workspace / "Project.toml"
+    root.write_text('[deps]\nFoo = "uuid"\n', encoding="utf-8")
+    (workspace / "Manifest.toml").write_text("[deps.Foo]\n", encoding="utf-8")
+
+    env_setup.prepare_workspace_env(
+        _adapter(module_dir), workspace=workspace, julia_project=workspace
+    )
+
+    assert root.read_text(encoding="utf-8") == '[deps]\nFoo = "uuid"\n'
+    assert not workspace_julia_env(workspace).exists()

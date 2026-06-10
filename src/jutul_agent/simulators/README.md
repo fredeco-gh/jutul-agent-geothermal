@@ -6,7 +6,7 @@ self-contained:
 ```
 simulators/<name>/
   adapter.py          # the SimulatorAdapter instance, exported from __init__.py
-  julia_env/          # Project.toml (+ optional Manifest.toml, plots.jl)
+  julia_env/          # Project.toml + JutulAgent<Sim>/ warm package
   skills/             # one sub-folder per skill, each with a SKILL.md
 ```
 
@@ -18,21 +18,21 @@ of the active simulator.
 1. Create `simulators/<name>/`.
 2. Write `adapter.py` exporting a `SimulatorAdapter`. Set
    `module_dir = Path(__file__).resolve().parent` — the base class derives
-   `julia_env_template_path`, `skills_dir`, and `plot_helpers_path` from
-   that.
+   `julia_env_template_path` and `skills_dir` from that.
 3. Add `julia_env/Project.toml` with the deps the agent should be able to
-   `using`. The kernel needs no special dep (its server is stdlib-only). Copy the
-   bundled `JutulAgent/` package from an existing env (with its `[deps]` and
-   `[sources]` entries) so the env ships the agent's Julia runtime (figure capture,
-   ensemble helpers, plotting warm-up). A new simulator can also get a per-sim
-   precompile extension in `JutulAgent/ext/` — see
-   `docs/design/warmup-and-jutulagent-package.md`. Pin a `Manifest.toml` alongside
-   when the dep graph needs locking (e.g. Makie version pins).
-4. Optionally add a `julia_env/plots.jl` with thin Makie helpers — the
-   adapter picks it up automatically; the agent loads it on the first
-   `julia_plot` call.
+   `using`. The kernel needs no special dep (its server is stdlib-only).
+   Declare the shared `JutulAgent` package as a relative `[sources]` path dep
+   (copy the entry from an existing env) — its single source lives in
+   `src/jutul_agent/julia_runtime/` and is copied into the env at bootstrap.
+   Do not commit a `Manifest.toml`; it is generated on instantiate.
+4. Add a `julia_env/JutulAgent<Sim>/` warm package (start from an existing
+   simulator's) and set the adapter's `warm_package`. Its
+   `@recompile_invalidations` + `@compile_workload` bake the simulator's
+   GLMakie-aware solve/plot into the precompile cache, so the agent's first
+   solve is seconds instead of half a minute.
 5. Add at least one skill at `skills/<name>-overview/SKILL.md`.
-6. Register the adapter in `simulators/registry.py`.
+6. Register the adapter in `simulators/registry.py` and add the simulator to
+   the `simulators.yml` CI matrix.
 
 ## Bootstrapping a workspace
 

@@ -2,7 +2,7 @@
 
 Memory is a per-workspace, index-based note system the agent maintains
 itself across sessions. Only the index file (``MEMORY.md``) is loaded
-into every system prompt — individual notes live as sibling markdown
+into every system prompt; individual notes live as sibling markdown
 files the agent reads on demand via ``read_file`` and edits via
 ``edit_file`` / ``write_file``.
 
@@ -23,8 +23,6 @@ global tier can be added by mounting a second backend route under
 from __future__ import annotations
 
 import re
-import shutil
-import tempfile
 from pathlib import Path
 
 from deepagents.backends import FilesystemBackend
@@ -131,20 +129,6 @@ def ensure_memory_dir(memory_dir: Path) -> Path:
     if not index.exists():
         index.write_text(_INDEX_SEED, encoding="utf-8")
     return memory_dir
-
-
-def create_ephemeral_memory_dir() -> Path:
-    """Create a throwaway memory directory for one session."""
-    memory_dir = Path(tempfile.mkdtemp(prefix="jutul-agent-ephemeral-"))
-    ensure_memory_dir(memory_dir)
-    return memory_dir
-
-
-def remove_ephemeral_memory_dir(memory_dir: Path | None) -> None:
-    """Remove a temp memory directory created by ``create_ephemeral_memory_dir``."""
-    if memory_dir is None:
-        return
-    shutil.rmtree(memory_dir, ignore_errors=True)
 
 
 def memory_backend_route(memory_dir: Path) -> tuple[str, FilesystemBackend]:

@@ -6,17 +6,17 @@ approval cards, and a compact input bar.
 
 Slash commands typed into the input box:
 
-- ``/transcript`` — render the current session's trace to HTML on disk.
-- ``/transcript md`` — render the transcript as markdown instead.
-- ``/add-dir <path>`` — mount an extra folder so the agent can read/edit it.
-- ``/model [provider:model]`` — open the model selector, or switch directly.
-- ``/clear`` — clear the visible log and restore the welcome card.
-- ``/approve`` — approve the currently pending tool actions.
-- ``/reject [reason]`` — reject the currently pending tool actions.
-- ``/respond <message>`` — answer on behalf of the pending tool actions.
-- ``/approval-mode [ask|workspace|auto]`` — cycle or set permission mode (Shift+Tab cycles).
-- ``/quit`` — quit the app (same as Ctrl+D).
-- ``/help`` — list available commands.
+- ``/transcript``: render the current session's trace to HTML on disk.
+- ``/transcript md``: render the transcript as markdown instead.
+- ``/add-dir <path>``: mount an extra folder so the agent can read/edit it.
+- ``/model [provider:model]``: open the model selector, or switch directly.
+- ``/clear``: clear the visible log and restore the welcome card.
+- ``/approve``: approve the currently pending tool actions.
+- ``/reject [reason]``: reject the currently pending tool actions.
+- ``/respond <message>``: answer on behalf of the pending tool actions.
+- ``/approval-mode [ask|workspace|auto]``: cycle or set permission mode (Shift+Tab cycles).
+- ``/quit``: quit the app (same as Ctrl+D).
+- ``/help``: list available commands.
 """
 
 from __future__ import annotations
@@ -31,12 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    HumanMessage,
-    ToolMessage,
-)
+from langchain_core.messages import AIMessageChunk
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -68,6 +63,7 @@ from jutul_agent.interfaces.tui.commands import (
     InputHistory,
     SlashCommandSpec,
     active_commands,
+    find_command,
     matching_specs,
 )
 from jutul_agent.interfaces.tui.model_menu import (
@@ -90,7 +86,7 @@ from jutul_agent.paths import workspace_root
 from jutul_agent.recent_models import record_recent_model
 from jutul_agent.session import Session
 from jutul_agent.trace import TraceLog
-from jutul_agent.trace.messages import content_to_str, reasoning_to_str
+from jutul_agent.trace.messages import content_to_str
 from jutul_agent.transcript import render_html, render_markdown
 
 if TYPE_CHECKING:
@@ -115,7 +111,7 @@ class _AssistantStream:
     Only genuine assistant text reaches here: the turn runner streams
     text/reasoning from the model node alone, so tool results and
     middleware-injected messages never arrive as prose (no content filtering
-    is needed — see ``jutul_agent.agent.turns``).
+    is needed; see ``jutul_agent.agent.turns``).
     """
 
     prose: MessageBlock | None = None
@@ -248,6 +244,7 @@ class TUIApp(App[None]):
         self._julia_running_on_cancel = False
         self._pending_interrupts: list[TurnInterrupt] = []
         self._tool_blocks: list[ToolBlock] = []
+        self._tools_expanded = False
         self._active_approval_blocks: list[ApprovalBlock] = []
         self._history = InputHistory()
         self._setting_prompt_value = False
@@ -304,7 +301,7 @@ class TUIApp(App[None]):
         """Clear the 'warming up' indicator once the background warm-up ends.
 
         ``asyncio.shield`` keeps the warm-up running if this watcher is torn
-        down — ``run.py`` owns the task's lifecycle and cancels it on exit.
+        down; ``run.py`` owns the task's lifecycle and cancels it on exit.
         """
         task = self._warmup_task
         if task is None:
@@ -461,6 +458,7 @@ class TUIApp(App[None]):
         self.query_one("#status", StatusBar).set_state(
             pending_count=len(self._pending_interrupts),
             tool_toggle_available=any(block.expandable for block in self._tool_blocks),
+            tools_expanded=self._tools_expanded,
             approval_mode_label=self._approval_mode.display_label(),
         )
         self._refresh_prompt_guide()
@@ -492,9 +490,6 @@ class TUIApp(App[None]):
             return
 
         if self._pending_interrupts:
-            if text.startswith("/"):
-                await self._handle_command(text)
-                return
             await self._note("approval is pending. Use the menu above or a slash command.")
             return
 
@@ -550,93 +545,83 @@ class TUIApp(App[None]):
         self._refresh_prompt_guide()
 
     async def _handle_command(self, command: str) -> None:
+        """Dispatch a slash command to its ``_command_<name>`` handler.
+
+        The handler method is named by the spec (``SlashCommandSpec.handler_attr``),
+        so declaring a spec in ``commands.py`` and defining the method here is all
+        it takes to add a command.
+        """
         head, _, tail = command.partition(" ")
-        head = head.lower()
-        tail = tail.strip()
-
-        if head == "/transcript":
-            fmt = tail.lower()
-            if fmt in ("", "html"):
-                target = self._session.output_dir / "transcript.html"
-                with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
-                    content = render_html(log_db.iter_events())
-            elif fmt in ("md", "markdown"):
-                target = self._session.output_dir / "transcript.md"
-                with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
-                    content = render_markdown(log_db.iter_events())
-            else:
-                await self._note("usage: /transcript [md]")
-                return
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-            open_path(target)
-            await self._note(f"transcript written to {target}")
+        spec = find_command(head.lower())
+        if spec is None:
+            await self._note(f"unknown command: {head}. Try /help.")
             return
+        await getattr(self, spec.handler_attr)(tail.strip())
 
-        if head == "/copy":
-            await self._copy_last_assistant_message()
+    async def _command_transcript(self, arg: str) -> None:
+        fmt = arg.lower()
+        if fmt in ("", "html"):
+            target = self._session.output_dir / "transcript.html"
+            with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
+                content = render_html(log_db.iter_events())
+        elif fmt in ("md", "markdown"):
+            target = self._session.output_dir / "transcript.md"
+            with TraceLog(self._session.state_dir / "trace.sqlite") as log_db:
+                content = render_markdown(log_db.iter_events())
+        else:
+            await self._note("usage: /transcript [md]")
             return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        open_path(target)
+        await self._note(f"transcript written to {target}")
 
-        if head == "/add-dir":
-            await self._handle_add_dir(tail)
+    async def _command_copy(self, _arg: str) -> None:
+        await self._copy_last_assistant_message()
+
+    async def _command_clear(self, _arg: str) -> None:
+        await self._clear_visible_log()
+
+    async def _command_quit(self, _arg: str) -> None:
+        self.exit()
+
+    async def _command_approve(self, _arg: str) -> None:
+        await self._resume_pending({"type": "approve"})
+
+    async def _command_reject(self, arg: str) -> None:
+        decision: dict[str, str] = {"type": "reject"}
+        if arg:
+            decision["message"] = arg
+        await self._resume_pending(decision)
+
+    async def _command_respond(self, arg: str) -> None:
+        if not arg:
+            await self._note("usage: /respond <message>")
             return
+        await self._resume_pending({"type": "respond", "message": arg})
 
-        if head == "/model":
-            await self._handle_model(tail)
-            return
+    async def _command_help(self, _arg: str) -> None:
+        lines = [f"{spec.name:<11} — {spec.description}" for spec in self._command_specs()]
+        await self._note("\n".join(lines))
 
-        if head == "/clear":
-            await self._clear_visible_log()
-            return
-
-        if head == "/quit":
-            self.exit()
-            return
-
-        if head == "/approve":
-            await self._resume_pending({"type": "approve"})
-            return
-
-        if head == "/reject":
-            decision: dict[str, str] = {"type": "reject"}
-            if tail:
-                decision["message"] = tail
-            await self._resume_pending(decision)
-            return
-
-        if head == "/respond":
-            if not tail:
-                await self._note("usage: /respond <message>")
-                return
-            await self._resume_pending({"type": "respond", "message": tail})
-            return
-
-        if head == "/help":
-            lines = [f"{spec.name:<11} — {spec.description}" for spec in self._command_specs()]
-            await self._note("\n".join(lines))
-            return
-
-        if head == "/approval-mode":
-            if not tail:
-                await self._note(
-                    f"approval mode is `{self._approval_mode.value}`. "
-                    "Usage: /approval-mode ask|workspace|auto"
-                )
-                return
-            try:
-                self._approval_mode = parse_approval_mode(tail)
-            except ValueError as exc:
-                await self._note(str(exc))
-                return
+    async def _command_approval_mode(self, arg: str) -> None:
+        if not arg:
             await self._note(
-                f"approval mode set to `{self._approval_mode.value}` for this session. "
-                "Restart jutul-agent to change which tools interrupt at build time."
+                f"approval mode is `{self._approval_mode.value}`. "
+                "Usage: /approval-mode ask|workspace|auto"
             )
-            await self._auto_approve_pending_if_allowed()
-            self._refresh_prompt_guide()
             return
-
-        await self._note(f"unknown command: {head}. Try /help.")
+        try:
+            self._approval_mode = parse_approval_mode(arg)
+        except ValueError as exc:
+            await self._note(str(exc))
+            return
+        await self._note(
+            f"approval mode set to `{self._approval_mode.value}` for this session. "
+            "Restart jutul-agent to change which tools interrupt at build time."
+        )
+        await self._auto_approve_pending_if_allowed()
+        self._refresh_prompt_guide()
 
     async def _note(self, text: str) -> None:
         await self._log.mount(MessageBlock("System", "system", text))
@@ -657,7 +642,7 @@ class TUIApp(App[None]):
         self.copy_to_clipboard(assistant_blocks[-1].content_text)
         await self._note("copied the last assistant message to the clipboard")
 
-    async def _handle_add_dir(self, raw: str) -> None:
+    async def _command_add_dir(self, raw: str) -> None:
         """Mount a folder into the agent filesystem, or list mounted folders.
 
         With no argument, lists the folders already mounted this session; with a
@@ -693,7 +678,7 @@ class TUIApp(App[None]):
             f"absolute path `{mount.path}`."
         )
 
-    async def _handle_model(self, raw: str) -> None:
+    async def _command_model(self, raw: str) -> None:
         """Open the selector, or switch directly to a given ``provider:model``."""
         target = raw.strip().strip("\"'")
         if not target:
@@ -723,7 +708,7 @@ class TUIApp(App[None]):
             await self._note(f"already using `{model_id}`.")
             return
 
-        from jutul_agent.agent.models import is_local
+        from jutul_agent.models import is_local
 
         if is_local(model_id):
             await self._prepare_local_model(model_id, scope)
@@ -742,7 +727,7 @@ class TUIApp(App[None]):
         then switch. Reports if the server is down; pulls the model if missing.
         """
         from jutul_agent import ollama_client
-        from jutul_agent.agent.models import is_ollama_cloud
+        from jutul_agent.models import is_ollama_cloud
 
         if not await ollama_client.is_reachable():
             await self._note(
@@ -773,7 +758,7 @@ class TUIApp(App[None]):
         self.push_screen(OllamaPullModal(model_name=name), _after_pull)
 
     async def _apply_local_if_tool_capable(self, model_id: str, scope: str, name: str) -> None:
-        """Switch only if the daemon exposes tool calling for the model — the
+        """Switch only if the daemon exposes tool calling for the model; the
         agent is tool-driven, so a tool-less model can't run here."""
         from jutul_agent import ollama_client
 
@@ -788,7 +773,7 @@ class TUIApp(App[None]):
 
     def _prompt_api_key(self, model_id: str, scope: str, env_var: str) -> None:
         """Collect the provider key in a modal, store it, then resume the switch."""
-        from jutul_agent.agent.models import provider_info
+        from jutul_agent.models import provider_info
 
         info = provider_info(model_id)
         label = info.label if info else model_id
@@ -988,7 +973,7 @@ class TUIApp(App[None]):
 
     async def _finish_turn(self) -> None:
         # The kernel self-heals a cancelled eval (SIGINT + drain, keeping state), so
-        # there's no force-restart here anymore — see ``JuliaKernel.eval``.
+        # there's no force-restart here anymore; see ``JuliaKernel.eval``.
         self._cancel_requested = False
         self._julia_running_on_cancel = False
         self._busy = False
@@ -1035,9 +1020,8 @@ class TUIApp(App[None]):
         return names
 
     async def _render_message(self, msg: Any) -> None:
-        if isinstance(msg, HumanMessage):
-            return
-
+        # TurnRunner emits exactly these three event types (see agent/turns.py);
+        # tool results arrive as TurnToolEvents, never as raw ToolMessages.
         if isinstance(msg, TurnReasoningDelta):
             await self._render_reasoning_delta(msg)
             return
@@ -1048,41 +1032,6 @@ class TUIApp(App[None]):
 
         if isinstance(msg, AIMessageChunk):
             await self._render_message_chunk(msg)
-            return
-
-        if isinstance(msg, AIMessage):
-            await self._flush_stream()
-            reasoning = reasoning_to_str(msg.content).strip()
-            if reasoning:
-                await self._log.mount(MessageBlock("Reasoning", "reasoning", reasoning))
-            content = content_to_str(msg.content).strip()
-            if content:
-                await self._log.mount(
-                    MessageBlock("Assistant", "assistant", content, markdown=True)
-                )
-            for call in msg.tool_calls or []:
-                await self._mount_tool_call(call)
-            self._schedule_scroll_end()
-            return
-
-        if isinstance(msg, ToolMessage):
-            await self._flush_stream()
-            name = getattr(msg, "name", None) or "tool"
-            content = content_to_str(msg.content)
-            block = self._matching_tool_block(
-                tool_call_id=getattr(msg, "tool_call_id", None),
-                tool_name=name,
-            )
-            if block is not None and block.has_output:
-                return
-            is_error = content.startswith("ERROR:")
-            if block is None:
-                block = ToolBlock(name)
-                await self._log.mount(block)
-                self._tool_blocks.append(block)
-            await block.set_result(content, is_error=is_error)
-            self._schedule_scroll_end()
-            self._set_status("thinking…")
 
     async def _render_reasoning_delta(self, msg: TurnReasoningDelta) -> None:
         await self._stream.append_reasoning(self._log, msg.text)
@@ -1098,7 +1047,7 @@ class TUIApp(App[None]):
                 tool_name=msg.tool_name,
             )
             if block is None:
-                block = ToolBlock(msg.tool_name, tool_call_id=msg.tool_call_id)
+                block = self._new_tool_block(msg.tool_name, tool_call_id=msg.tool_call_id)
                 self._tool_blocks.append(block)
                 await self._log.mount(block)
             await block.append_output(msg.content)
@@ -1117,7 +1066,7 @@ class TUIApp(App[None]):
             tool_name=msg.tool_name,
         )
         if block is None:
-            block = ToolBlock(msg.tool_name, tool_call_id=msg.tool_call_id)
+            block = self._new_tool_block(msg.tool_name, tool_call_id=msg.tool_call_id)
             await self._log.mount(block)
             self._tool_blocks.append(block)
         await block.set_result(msg.content, is_error=msg.event == "error")
@@ -1151,7 +1100,7 @@ class TUIApp(App[None]):
         if existing is not None:
             return
 
-        block = ToolBlock(
+        block = self._new_tool_block(
             name,
             call.get("args") if isinstance(call.get("args"), dict) else None,
             tool_call_id=tool_call_id,
@@ -1281,11 +1230,12 @@ class TUIApp(App[None]):
         await self._clear_visible_log()
 
     async def action_toggle_tool_output(self) -> None:
-        block = self._latest_expandable_tool_block()
-        if block is None:
-            return
-        await block.toggle_output()
+        """Ctrl+O: toggle verbose tool output for every tool card in the log."""
+        self._tools_expanded = not self._tools_expanded
+        for block in list(self._tool_blocks):
+            await block.set_expanded(self._tools_expanded)
         self._set_status(self._status_text)
+        self._schedule_scroll_end()
 
     async def _clear_visible_log(self) -> None:
         if self._busy:
@@ -1355,11 +1305,12 @@ class TUIApp(App[None]):
         value = self._prompt.value
         if value.startswith("/"):
             return self._command_guide(value)
-        tool_hint = (
-            " · Ctrl+O latest tool details"
-            if self._latest_expandable_tool_block() is not None
-            else ""
-        )
+        if self._tools_expanded:
+            tool_hint = " · Ctrl+O collapse tool output"
+        elif any(block.expandable for block in self._tool_blocks):
+            tool_hint = " · Ctrl+O expand tool output"
+        else:
+            tool_hint = ""
         mode_hint = f" · {self._approval_mode.display_label()}"
         return (
             "Enter send · Shift+Enter newline · Ctrl+P/↑ history · Shift+Tab cycle mode"
@@ -1420,11 +1371,15 @@ class TUIApp(App[None]):
             }
         return payload
 
-    def _latest_expandable_tool_block(self) -> ToolBlock | None:
-        for block in reversed(self._tool_blocks):
-            if block.expandable:
-                return block
-        return None
+    def _new_tool_block(
+        self,
+        name: str,
+        args: dict[str, Any] | None = None,
+        *,
+        tool_call_id: str | None = None,
+    ) -> ToolBlock:
+        """Construct a tool card that honours the current verbose mode."""
+        return ToolBlock(name, args, tool_call_id=tool_call_id, expanded=self._tools_expanded)
 
     def _matching_tool_block(
         self,

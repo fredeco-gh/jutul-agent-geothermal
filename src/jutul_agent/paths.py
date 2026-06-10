@@ -2,12 +2,12 @@
 
 Three roots, cleanly separated:
 
-- ``PACKAGE_ROOT`` — computed from this file. Read-only at runtime; per-
+- ``PACKAGE_ROOT``: computed from this file. Read-only at runtime; per-
   simulator assets (julia envs, skills, adapter modules) live under
   ``PACKAGE_ROOT / "simulators" / <name>``.
-- ``workspace_root()`` — the user's working directory at invocation time
+- ``workspace_root()``: the user's working directory at invocation time
   (or an explicit override). Read/write; default for shell and file tools.
-- ``state_home()`` — sessions, traces, per-workspace state. Defaults to
+- ``state_home()``: sessions, traces, per-workspace state. Defaults to
   ``$XDG_DATA_HOME/jutul-agent`` or ``~/.local/share/jutul-agent``.
 
 The workspace and state-home anchors are runtime-mutable so the CLI can set
@@ -63,42 +63,62 @@ def user_config_path() -> Path:
     return state_home() / "config.toml"
 
 
-def resolve_workspace_path(raw: str | Path) -> Path:
-    """Resolve a user-supplied path to a real workspace path.
+def is_host_path(text: str) -> bool:
+    """Whether ``text`` names a real host location rather than a virtual workspace path.
 
-    The agent often passes virtual paths (``/experiments/...``,
-    ``/workspace/experiments/...``) that match the deepagents virtual
-    filesystem rather than the host filesystem. This helper accepts both
-    virtual and real paths and returns a real path under the workspace.
+    A Windows drive (``C:\\...``) is unambiguous. On POSIX a leading-slash path
+    can still be virtual (``/model.jl`` means a workspace file), so it only
+    counts as a host path when its first segment is a real top-level directory
+    (``/etc``, ``/home``, ``/tmp``, …).
+    """
 
-    Cross-platform note: on POSIX a leading-slash string is host-absolute
-    and ``Path.is_absolute()`` catches it; on Windows the same string is
-    *not* absolute (no drive letter) and joining it onto the workspace
-    silently collapses to a drive root (``ws / "/foo" -> C:\\foo``). We
-    therefore route any leading-slash, non-absolute string through the
+    if Path(text).drive:
+        return True
+    first = text.lstrip("/").split("/", 1)[0] if text.startswith("/") else ""
+    return bool(first) and Path("/" + first).is_dir()
+
+
+def resolve_in_workspace(raw: str | Path, *, workspace: Path | None = None) -> Path | None:
+    """Map an agent-visible path to the real path inside the workspace, or ``None``.
+
+    The one place that knows the agent's path model. Accepts every form the
+    agent uses (workspace-relative ``model.jl``, virtual absolute ``/model.jl``
+    or ``/workspace/model.jl``, and the file's real absolute path) and returns
+    the corresponding real path. Returns ``None`` when the path points outside
+    the workspace (a real host path like ``/tmp/x``, or a ``..`` escape): the
+    same rule the workspace file tools enforce, so previews and tools agree
+    about which file a path means.
+
+    Cross-platform note: on POSIX a leading-slash string is host-absolute and
+    ``Path.is_absolute()`` catches it; on Windows the same string is *not*
+    absolute (no drive letter), so leading-slash strings are routed through the
     virtual-path branch explicitly.
     """
 
-    ws = workspace_root()
+    ws = (workspace or workspace_root()).resolve()
     text = str(raw)
+    if not text:
+        return None
     p = Path(text)
-
-    def _under_workspace(rel: str) -> Path:
-        if rel.startswith("workspace/"):
-            rel = rel[len("workspace/") :]
-        return ws / rel
-
-    if text.startswith("/") and not p.is_absolute():
-        return _under_workspace(text.lstrip("/"))
 
     if p.is_absolute():
         try:
-            p.resolve().relative_to(ws.resolve())
-            return p
-        except ValueError:
-            return _under_workspace(text.lstrip("/"))
+            p.resolve().relative_to(ws)
+            return p  # the file's real path, already inside the workspace
+        except (ValueError, OSError):
+            pass
+        if is_host_path(text):
+            return None  # a real machine path outside the workspace
 
-    return ws / text
+    rel = text.lstrip("/")
+    if rel.startswith("workspace/"):
+        rel = rel[len("workspace/") :]
+    candidate = ws / rel
+    try:
+        candidate.resolve().relative_to(ws)
+    except (ValueError, OSError):
+        return None  # `..` escape
+    return candidate
 
 
 def workspace_hash(workspace: Path | None = None) -> str:

@@ -9,8 +9,9 @@ through ``DISPLAY``, so GLMakie draws offscreen there.
 
 We launch ``Xvfb`` directly rather than via ``xvfb-run`` for the Julia *session*:
 ``xvfb-run`` runs its command with ``2>&1`` (stderr folded into stdout), which
-would collapse the kernel's separate stdout/stderr channels. (One-shot ``Pkg``
-precompile subprocesses, which don't use that protocol, still use ``xvfb-run``.)
+would blur the kernel's startup diagnostics (and a long-lived session shouldn't
+hinge on a wrapper script anyway). One-shot ``Pkg`` precompile subprocesses
+still use ``xvfb-run``.
 """
 
 from __future__ import annotations
@@ -66,13 +67,13 @@ def xvfb_available() -> bool:
 def managed_display(*, screen: str = "1280x1024x24", timeout: float = 30.0) -> Iterator[str]:
     """Start a private ``Xvfb`` server and yield its ``DISPLAY`` (e.g. ``":7"``).
 
-    Gives headless GLMakie an OpenGL context without ``xvfb-run`` — we launch
+    Gives headless GLMakie an OpenGL context without ``xvfb-run``; we launch
     ``Xvfb`` directly so the Julia process keeps its stdout and stderr on the
     separate pipes the kernel protocol needs (``xvfb-run`` runs its command with
     ``2>&1``, merging them, which deadlocks the kernel's per-eval stderr sentinel).
 
     Uses ``Xvfb -displayfd`` so the server picks a free display number itself and
-    reports it back — no ``:N`` lock-file guessing or races. The server is torn
+    reports it back; no ``:N`` lock-file guessing or races. The server is torn
     down on exit. Raises ``RuntimeError`` if ``Xvfb`` is missing or never reports a
     display; callers treat that as "no plotting here" rather than a hard failure.
     """
@@ -179,7 +180,7 @@ def should_wrap_xvfb() -> bool:
 def plotting_display_available() -> bool:
     """Whether GLMakie will have a display to render against.
 
-    A real X/Wayland display — or any desktop macOS/Windows session — works
+    A real X/Wayland display (or any desktop macOS/Windows session) works
     directly; headless Linux relies on the xvfb-wrapped worker. When this is
     False, ``julia_plot`` cannot render and reports a clear error, but the rest
     of the agent (simulate, eval, file tools) still works.

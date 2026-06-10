@@ -13,15 +13,12 @@ from textual.containers import Vertical
 from textual.widgets import Markdown, Static
 
 from jutul_agent.agent.tool_output import is_interrupt_payload, normalize_tool_output
-from jutul_agent.interfaces.tui._rendering import (
-    shorten,
-    shorten_single_line,
-    truncate_preview,
-)
+from jutul_agent.interfaces.tui._rendering import shorten, shorten_single_line
 from jutul_agent.interfaces.tui.approval import ApprovalCard, approval_ui_hints
 from jutul_agent.interfaces.tui.tool_display import (
     display_path,
     display_tool_body,
+    is_expandable,
     uses_compact_display,
 )
 from jutul_agent.juliakernel.text import render_terminal_output
@@ -29,16 +26,6 @@ from jutul_agent.juliakernel.text import render_terminal_output
 if TYPE_CHECKING:
     from textual.widgets._markdown import MarkdownStream
 
-_TOOL_LANGUAGES: dict[str, str] = {
-    "julia_eval": "julia",
-    "execute": "sh",
-}
-_PREVIEW_LINES = 3
-_PREVIEW_CHARS = 240
-_TOOL_PREVIEW_LIMITS: dict[str, tuple[int, int]] = {
-    "execute": (6, 1200),
-    "julia_eval": (14, 2200),
-}
 _TODO_PREVIEW_ITEMS = 3
 _TODO_PREVIEW_TEXT = 72
 _TODO_FULL_TEXT = 140
@@ -396,6 +383,7 @@ class StatusBar(Static):
         self._model_label = model_label
         self._pending_count = 0
         self._tool_toggle_available = False
+        self._tools_expanded = False
         self._approval_mode_label = "default"
 
     def set_state(
@@ -403,10 +391,12 @@ class StatusBar(Static):
         *,
         pending_count: int = 0,
         tool_toggle_available: bool = False,
+        tools_expanded: bool = False,
         approval_mode_label: str = "default",
     ) -> None:
         self._pending_count = pending_count
         self._tool_toggle_available = tool_toggle_available
+        self._tools_expanded = tools_expanded
         self._approval_mode_label = approval_mode_label
         self.refresh()
 
@@ -437,8 +427,11 @@ class StatusBar(Static):
             text.append(f"{self._pending_count} {label}", style="yellow")
 
         # Live state (turn status, warm-up, Ctrl+G cancel) lives in the bottom
-        # bar next to the input — see ``_activity_label`` / the prompt guide.
-        if self._tool_toggle_available:
+        # bar next to the input; see ``_activity_label`` / the prompt guide.
+        if self._tools_expanded:
+            text.append(" · ", style="dim")
+            text.append("verbose", style="cyan")
+        elif self._tool_toggle_available:
             text.append(" · ", style="dim")
             text.append("details available", style="dim")
 
@@ -491,6 +484,7 @@ class ToolBlock(Vertical):
         args: dict[str, Any] | None = None,
         *,
         tool_call_id: str | None = None,
+        expanded: bool = False,
     ) -> None:
         super().__init__()
         self._tool_name = tool_name
@@ -499,7 +493,7 @@ class ToolBlock(Vertical):
         self._status = "running"
         self._output = ""
         self._streamed = ""
-        self._expanded = False
+        self._expanded = expanded
         self._is_error = False
         self._reject_reason: str | None = None
         self._body_widget: Markdown | None = None
@@ -558,7 +552,7 @@ class ToolBlock(Vertical):
     def expandable(self) -> bool:
         if not self._output:
             return False
-        return _is_expandable(self._output, tool_name=self._tool_name)
+        return is_expandable(self._output, tool_name=self._tool_name)
 
     @property
     def has_output(self) -> bool:
@@ -614,10 +608,11 @@ class ToolBlock(Vertical):
             self._status = "error" if is_error else "success"
         await self._refresh()
 
-    async def toggle_output(self) -> None:
-        if not self.expandable:
+    async def set_expanded(self, expanded: bool) -> None:
+        """Show full output (verbose) or the compact per-tool preview."""
+        if self._expanded == expanded:
             return
-        self._expanded = not self._expanded
+        self._expanded = expanded
         await self._refresh()
 
     async def _refresh(self) -> None:
@@ -788,45 +783,6 @@ def _format_tool_display(tool_name: str, args: dict[str, Any]) -> str:
     if len(args) > 3:
         rendered_args += ", ..."
     return f"{tool_name}({rendered_args})"
-
-
-def _preview_limits(tool_name: str | None) -> tuple[int, int]:
-    if tool_name is None:
-        return (_PREVIEW_LINES, _PREVIEW_CHARS)
-    return _TOOL_PREVIEW_LIMITS.get(tool_name, (_PREVIEW_LINES, _PREVIEW_CHARS))
-
-
-def _truncate_preview(text: str, *, tool_name: str | None = None) -> str:
-    line_limit, char_limit = _preview_limits(tool_name)
-    return truncate_preview(
-        text,
-        max_lines=line_limit,
-        max_chars=char_limit,
-        marker="\n... [output truncated]",
-    )
-
-
-def _is_expandable(text: str, *, tool_name: str | None = None) -> bool:
-    line_limit, char_limit = _preview_limits(tool_name)
-    return len(text) > char_limit or text.count("\n") + 1 > line_limit
-
-
-def _summarize_output(text: str) -> str:
-    line_count = max(1, text.count("\n") + 1)
-    line_label = "line" if line_count == 1 else "lines"
-    char_count = len(text)
-    char_label = "char" if char_count == 1 else "chars"
-    return f"{line_count} {line_label} · {char_count} {char_label}"
-
-
-def _quote_block(text: str) -> str:
-    if not text:
-        return ">"
-    return "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
-
-
-def _prefer_fenced_preview(tool_name: str) -> bool:
-    return tool_name in {"julia_eval"}
 
 
 def _tool_title(tool_name: str) -> str:

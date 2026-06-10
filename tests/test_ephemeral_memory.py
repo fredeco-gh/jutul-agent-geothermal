@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fakes import FakeJulia, make_fake_adapter
-from jutul_agent.agent.memory import MEMORY_INDEX_FILENAME
+from jutul_agent.agent.memory import MEMORY_INDEX_FILENAME, ensure_memory_dir
 from jutul_agent.paths import workspace_memory_dir
 from jutul_agent.session import Session
 
@@ -27,8 +27,9 @@ def test_ephemeral_memory_uses_temp_dir(tmp_path: Path, monkeypatch) -> None:
 
     mem = session.memory_dir(workspace_memory=workspace_memory_dir())
     assert mem.exists()
-    assert (mem / MEMORY_INDEX_FILENAME).exists()
     assert "jutul-agent-ephemeral-" in str(mem)
+    # The agent builder seeds the index when it mounts the dir.
+    assert (ensure_memory_dir(mem) / MEMORY_INDEX_FILENAME).exists()
 
     session.finalize()
     assert not mem.exists()

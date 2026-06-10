@@ -12,7 +12,37 @@ from __future__ import annotations
 from pathlib import Path
 
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
-from deepagents.backends.protocol import EditResult, GrepResult, WriteResult
+from deepagents.backends.protocol import EditResult, ExecuteResponse, GrepResult, WriteResult
+
+from jutul_agent.paths import is_host_path
+
+_BLOCKED_INTERPRETERS = frozenset({"julia"})
+
+
+def interpreter_invocation(command: str, names: frozenset[str] | tuple[str, ...]) -> str | None:
+    """Name of the interpreter a shell command launches, or ``None``.
+
+    Looks at the executable position of each pipeline/sequence segment, so
+    ``julia -e ...`` and ``echo x | julia`` match while an interpreter name
+    appearing as data (``ls ~/.julia/...``, ``grep julia src/``) does not.
+    Shared by the workspace backend's execute guard (which blocks only
+    ``julia``, the session kernel exists precisely for it) and the bench
+    scorers that audit recorded execute calls.
+    """
+    import re
+
+    for segment in re.split(r"[;|&]+|\$\(", command):
+        head = segment.strip().split()
+        if head and Path(head[0]).name in names:
+            return Path(head[0]).name
+    return None
+
+
+_NO_JULIA_SHELL_MSG = (
+    "Error: spawning `julia` through the shell is disabled. Julia code runs in "
+    "the persistent session via `julia_eval`: shared state, streamed output, no "
+    'cold start. Use `julia_eval` for code and `include("file.jl")` for scripts.'
+)
 
 _READ_ONLY_MSG = (
     "Error: '{path}' is read-only package source mounted under /packages/. "
@@ -20,21 +50,6 @@ _READ_ONLY_MSG = (
     "Write your own code in the workspace, or to change the package itself, "
     "`Pkg.develop` it (jutul-agent init --source-path ...) and edit the checkout."
 )
-
-
-def _is_host_path(key: str) -> bool:
-    """Whether ``key`` is a real host path rather than a virtual workspace path.
-
-    A Windows drive (``C:\\...``) is unambiguous. On POSIX a leading-slash path
-    can still be virtual (``/model.jl`` means a workspace file), so it only counts
-    as a host path when its first segment is a real top-level directory
-    (``/etc``, ``/home``, …).
-    """
-
-    if Path(key).drive:
-        return True
-    first = key.lstrip("/").split("/", 1)[0] if key.startswith("/") else ""
-    return bool(first) and Path("/" + first).is_dir()
 
 
 def _recursive_glob(glob: str | None) -> str | None:
@@ -104,7 +119,25 @@ class WorkspaceShellBackend(LocalShellBackend):
     An absolute path outside the workspace (``/root/x.jl``, ``/tmp/...``) is the
     agent mistaking the file tools for the real filesystem; ``write``/``edit``
     reject it with a corrective message.
+
+    ``execute`` refuses to launch ``julia``: Julia belongs in the session
+    kernel, where state persists and output streams; a shell julia is a cold
+    process that shares nothing with the session. A prompt rule alone does not
+    reliably stop models from shelling out; the tool guaranteeing it does.
+    Other interpreters are deliberately not blocked: shell python and friends
+    are part of general competence, and scientific results are kept honest by
+    the bench's trace checks, not by a blanket ban.
     """
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
+            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
+        return super().execute(command, timeout=timeout)
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
+            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
+        return await super().aexecute(command, timeout=timeout)
 
     def _resolve_path(self, key: str) -> Path:
         if self.virtual_mode:
@@ -136,10 +169,10 @@ class WorkspaceShellBackend(LocalShellBackend):
             return None  # workspace-relative
         try:
             path.relative_to(self.cwd)
-            return None  # inside the workspace — _resolve_path handles it
+            return None  # inside the workspace; _resolve_path handles it
         except ValueError:
             pass
-        if not _is_host_path(key):
+        if not is_host_path(key):
             return None
         name = key.rstrip("/").rstrip("\\").replace("\\", "/").rsplit("/", 1)[-1] or "file"
         return (

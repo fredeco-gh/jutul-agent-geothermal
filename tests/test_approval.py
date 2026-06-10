@@ -6,7 +6,6 @@ from jutul_agent.interfaces.tui.approval import (
     _apply_edit_preview,
     allowed_decisions_for_interrupt,
     render_interrupt_cards,
-    resolve_workspace_path,
 )
 
 
@@ -157,12 +156,6 @@ def test_allowed_decisions_intersection() -> None:
 
 def test_allowed_decisions_defaults_when_malformed() -> None:
     assert allowed_decisions_for_interrupt(None) == frozenset({"approve", "reject", "respond"})
-
-
-def test_resolve_workspace_path_rejects_escape(tmp_path: Path) -> None:
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    assert resolve_workspace_path("/../outside/secret.txt", workspace_root=tmp_path) is None
 
 
 def test_apply_edit_preview_reports_ambiguous_match() -> None:

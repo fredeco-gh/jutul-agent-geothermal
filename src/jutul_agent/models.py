@@ -3,7 +3,7 @@
 The in-app selector is built by *discovery*: ``discover_models()`` reads the
 tool-calling models each installed provider package ships in its bundled
 ``data/_profiles.py`` (the same metadata LangChain uses), so new models appear
-when the provider package updates — no hardcoded list to maintain. Ollama has
+when the provider package updates; no hardcoded list to maintain. Ollama has
 no static profiles and is discovered from the daemon by the selector. Any
 ``provider:model`` string ``init_chat_model`` accepts also works via free-text.
 
@@ -70,12 +70,12 @@ def is_local(model_id: str) -> bool:
 
 
 def is_ollama_cloud(model_id: str) -> bool:
-    """Ollama-hosted (``:cloud``) models run remotely — no local pull needed."""
+    """Ollama-hosted (``:cloud``) models run remotely; no local pull needed."""
     return provider_of(model_id) == "ollama" and model_id.endswith(":cloud")
 
 
 # Ollama ships no profile data, so unlike the cloud providers it has no
-# discoverable catalog — a short hand-maintained list is the only way to offer
+# discoverable catalog; a short hand-maintained list is the only way to offer
 # browse-and-pull. This is the one curated list we keep; edit it as the local
 # landscape moves. Local tags are pulled on first use; cloud models are hosted
 # by Ollama (`ollama signin`) and switch directly.
@@ -84,7 +84,7 @@ def is_ollama_cloud(model_id: str) -> bool:
 # 27B dense leads its size class on agentic-coding benchmarks (~17 GB at Q4),
 # and the 35B-A3B MoE (~3B active) decodes far faster with long context, good
 # for batched eval rollouts. NB: all open-weight models are Python-centric, so
-# Julia/JutulDarcy tool-use is their weak axis — validate on real tasks.
+# Julia/JutulDarcy tool-use is their weak axis; validate on real tasks.
 RECOMMENDED_OLLAMA_LOCAL: tuple[str, ...] = (
     "qwen3.6:27b",
     "qwen3.6:35b-a3b",

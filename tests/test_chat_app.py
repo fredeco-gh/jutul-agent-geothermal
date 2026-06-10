@@ -60,7 +60,8 @@ def _stub_agent() -> ScriptedV3Agent:
 
 
 def _long_tool_agent() -> ScriptedV3Agent:
-    long_output = "\n".join(f"line {index}" for index in range(20))
+    # Must exceed the julia_eval preview budget (see tool_display.is_expandable).
+    long_output = "\n".join(f"line {index}" for index in range(60))
     return ScriptedV3Agent(
         tool_call_events(
             tool_name="julia_eval",
@@ -253,7 +254,7 @@ async def test_chat_app_renders_streamed_julia_output(session: Session) -> None:
         assert "→ 42" in tool_blocks[0]._output
 
 
-async def test_chat_app_toggles_latest_tool_output(session: Session) -> None:
+async def test_chat_app_toggles_all_tool_output(session: Session) -> None:
     app = TUIApp(agent=_long_tool_agent(), session=session)
 
     async with app.run_test() as pilot:
@@ -262,12 +263,19 @@ async def test_chat_app_toggles_latest_tool_output(session: Session) -> None:
         tool_blocks = list(app.query(ToolBlock))
         assert len(tool_blocks) == 1
         assert tool_blocks[0].expandable is True
+        assert tool_blocks[0]._expanded is False
 
         await pilot.press("ctrl+o")
         await wait_until_ready(app)
 
-        tool_blocks = list(app.query(ToolBlock))
-        assert tool_blocks[0].expandable is True
+        assert app._tools_expanded is True
+        assert all(block._expanded for block in app.query(ToolBlock))
+
+        await pilot.press("ctrl+o")
+        await wait_until_ready(app)
+
+        assert app._tools_expanded is False
+        assert not any(block._expanded for block in app.query(ToolBlock))
 
 
 async def test_tui_streams_into_single_assistant_block(session: Session) -> None:
@@ -993,3 +1001,12 @@ async def test_assistant_stream_survives_flush_during_append() -> None:
         stream.prose = None
         await block.append_content("Hello")
         assert block._content == "Hello"
+
+
+def test_every_command_spec_has_a_handler() -> None:
+    """Declaring a spec in commands.py requires the matching TUIApp method."""
+    from jutul_agent.interfaces.tui.commands import ALL_COMMANDS
+
+    for spec in ALL_COMMANDS:
+        handler = getattr(TUIApp, spec.handler_attr, None)
+        assert callable(handler), f"{spec.name} has no handler {spec.handler_attr}"

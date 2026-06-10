@@ -7,14 +7,12 @@ from jutul_agent.simulators.battmo import BATTMO
 from jutul_agent.simulators.fimbul import FIMBUL
 from jutul_agent.simulators.jutuldarcy import JUTULDARCY
 from jutul_agent.simulators.mocca import MOCCA
-from jutul_agent.simulators.vocsim import VOCSIM
 
 _REGISTRY: dict[str, SimulatorAdapter] = {
     JUTULDARCY.name: JUTULDARCY,
     BATTMO.name: BATTMO,
     FIMBUL.name: FIMBUL,
     MOCCA.name: MOCCA,
-    VOCSIM.name: VOCSIM,
 }
 
 

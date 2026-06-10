@@ -46,7 +46,7 @@ def test_julia_eval_body_shows_code_then_output() -> None:
         expanded=False,
         is_error=False,
     )
-    # Both the code the agent ran and the simulator output are visible — the
+    # Both the code the agent ran and the simulator output are visible; the
     # output isn't allowed to replace the code, and Jutul's iteration tables
     # would survive untouched if they were present.
     assert "**Code**" in body
@@ -155,3 +155,16 @@ def test_task_delegate_summary() -> None:
         is_error=False,
     )
     assert summary.startswith("Delegated → report ·")
+
+
+def test_display_tool_body_handles_unparseable_todos() -> None:
+    """write_todos output that isn't a todo list still renders as text, not None."""
+    body = display_tool_body(
+        "write_todos",
+        {},
+        output="Updated the plan.",
+        expanded=False,
+        is_error=False,
+    )
+    assert isinstance(body, str)
+    assert "Updated the plan." in body

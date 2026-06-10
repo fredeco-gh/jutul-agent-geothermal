@@ -16,8 +16,6 @@ work on the Jutul ecosystem.
   concurrency.
 - Prefer Deep Agents memory and skills for reusable guidance; keep custom
   Python focused on Julia execution, simulator inspection, and trace capture.
-- Workspace memory layout and stock Deep Agents wiring:
-  [docs/design/memory.md](docs/design/memory.md).
 
 ## Validation
 
@@ -31,8 +29,6 @@ work on the Jutul ecosystem.
 - Python style (matches CI): `uv run ruff check .` then `uv run ruff format .`
 - After editing Python, run `uv run ruff format` on touched paths (or rely on
   format-on-save / pre-commit if installed).
-
-See [docs/testing.md](docs/testing.md) for the full testing guide.
 
 ## Continuous integration
 
@@ -54,18 +50,26 @@ and check on staged `.py` files. To verify the whole tree like CI:
 
 ## Important paths
 
-- `src/jutul_agent/paths.py` — the three runtime anchors: `PACKAGE_ROOT`
-  (install), `workspace_root()` (CWD), `state_home()` (sessions).
+- `src/jutul_agent/paths.py` — the three runtime anchors (`PACKAGE_ROOT`
+  (install), `workspace_root()` (CWD), `state_home()` (sessions)) and the
+  virtual-path policy (`resolve_in_workspace`, `is_host_path`) — the one
+  place that maps agent-visible paths to real files.
 - `src/jutul_agent/workspace.py` — workspace config
   (`.jutul-agent/config.toml`), simulator auto-detect, Julia-env bootstrap.
 - `src/jutul_agent/session.py` — `Session`, the unit of work for one
   invocation.
+- `src/jutul_agent/models.py` — provider metadata and the model catalog
+  discovery. `src/jutul_agent/display.py` — display detection and Xvfb
+  management for headless plotting.
 - `src/jutul_agent/agent/builder.py` — deepagents wiring: composite backend,
   HarnessProfile registration, `build_agent` entry point. Custom tools sit
-  alongside (`tools.py`, `julia_plot.py` + `julia_plot.jl`, `memory.py`,
-  `approval.py`, `turns.py`, `mounts.py` — the `/add-dir` route mounting).
-- `src/jutul_agent/simulators/` — adapter dataclass, registry, env bootstrap,
-  shared skills, and one folder per simulator (see below).
+  alongside (`tools.py`, `julia_plot.py`, `memory.py`, `approval.py`,
+  `turns.py`, `mounts.py` — the `/add-dir` route mounting); the Julia-side
+  plot capture lives in the `julia_runtime/JutulAgent` package. The full
+  system prompt is assembled in `prompts.py` (each rule stated once).
+- `src/jutul_agent/simulators/` — adapter dataclass, registry, env bootstrap +
+  launch-time preparation (`env_setup.prepare_workspace_env`), shared skills,
+  and one folder per simulator (see below).
 - `src/jutul_agent/julia/` — the `JuliaSession` Protocol (`session.py`) and the
   Julia toolchain checks (`requirements.py`).
 - `src/jutul_agent/juliakernel/` — the backend: a self-contained, supervised
@@ -87,7 +91,7 @@ exactly three things:
 
 - `adapter.py` — constructs the `SimulatorAdapter`. Set
   `module_dir = Path(__file__).resolve().parent` so the base class can
-  derive `julia_env_template_path`, `skills_dir`, and `plot_helpers_path`.
+  derive `julia_env_template_path` and `skills_dir`.
 - `julia_env/` — `Project.toml` declaring the deps the agent can `using`, plus a
   per-simulator `JutulAgent<Sim>/` warm package (a local `[sources]` path dep whose
   `@recompile_invalidations` + `@compile_workload` bakes that simulator's
@@ -104,3 +108,22 @@ exactly three things:
 Add a simulator by creating that folder and one entry in
 `simulators/registry.py`. Custom subagent factories, when they land, go on
 the adapter's `subagent_factories` tuple.
+
+## deepagents / langgraph private-surface contacts
+
+We pin deepagents (see `[tool.uv] exclude-newer` in `pyproject.toml`) and
+touch a few non-public surfaces. When bumping the pin, re-verify each:
+
+- `agent/tools.py` — reads `langgraph.pregel._tools._tool_call_writer`
+  (ContextVar) to stream live Julia output as tool-output deltas.
+  Import-guarded: if it moves, streaming silently disables.
+- `agent/turns.py` + `tests/fakes.py` — consume the v3 `astream_events`
+  typed projections (`run.messages` / `run.tool_calls` / `run.interrupts` /
+  `run.output`); the fakes mirror that shape, so a projection change shows up
+  as test failures.
+- `agent/mounts.py` and `agent/packages_backend.py` — mutate a
+  `CompositeBackend`'s `routes` / `sorted_routes` in place (longest-prefix
+  ordering) and read `FilesystemBackend.cwd`.
+- `tests/test_builder.py` — imports
+  `deepagents.profiles.harness.harness_profiles._harness_profile_for_model`
+  to assert our profile resolves for built model instances.

@@ -26,6 +26,18 @@ class SlashCommandSpec:
 
         return self.name.removeprefix("/")
 
+    @property
+    def handler_attr(self) -> str:
+        """Name of the TUIApp coroutine that executes this command.
+
+        Derived from the command name (``/add-dir`` → ``_command_add_dir``), so
+        declaring a spec here and defining that method is all it takes to add a
+        command; help text, completion, and dispatch stay in sync by
+        construction (a test asserts every spec resolves to a handler).
+        """
+
+        return "_command_" + self.decision.replace("-", "_")
+
 
 BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/help", "show available commands"),
@@ -55,6 +67,19 @@ APPROVAL_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/reject", "reject the pending tool actions", "[reason]"),
     SlashCommandSpec("/respond", "reply to the pending tool actions", "<message>"),
 )
+
+ALL_COMMANDS: tuple[SlashCommandSpec, ...] = BASE_COMMANDS + APPROVAL_COMMANDS
+
+
+def find_command(name: str) -> SlashCommandSpec | None:
+    """The spec for ``name``, searched across every command.
+
+    Dispatch matches against all commands (not just the active ones) so an
+    approval command typed with nothing pending reaches its handler and gets
+    the precise "no approval is pending" answer instead of "unknown command".
+    """
+
+    return next((spec for spec in ALL_COMMANDS if spec.name == name), None)
 
 
 def active_commands(allowed_decisions: frozenset[str]) -> list[SlashCommandSpec]:

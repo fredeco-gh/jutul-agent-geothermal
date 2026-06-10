@@ -6,7 +6,7 @@ import hashlib
 from pathlib import Path
 
 from jutul_agent.paths import (
-    resolve_workspace_path,
+    resolve_in_workspace,
     set_state_home,
     set_workspace_root,
     state_home,
@@ -52,25 +52,38 @@ def test_workspace_state_dir_under_state_home(tmp_path: Path) -> None:
     assert workspace_state_dir() == state / "workspaces" / workspace_hash(ws)
 
 
-def test_resolve_workspace_path_handles_virtual_paths(tmp_path: Path) -> None:
+def test_resolve_in_workspace_handles_virtual_paths(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
     set_workspace_root(ws)
 
     # Relative paths stay relative to the workspace.
-    assert resolve_workspace_path("experiments/report.html") == ws / "experiments/report.html"
+    assert resolve_in_workspace("experiments/report.html") == ws / "experiments/report.html"
 
     # Leading-slash virtual paths (from the agent's view) map to workspace root.
-    assert resolve_workspace_path("/experiments/report.html") == ws / "experiments/report.html"
+    assert resolve_in_workspace("/experiments/report.html") == ws / "experiments/report.html"
     assert (
-        resolve_workspace_path("/workspace/experiments/report.html")
-        == ws / "experiments/report.html"
+        resolve_in_workspace("/workspace/experiments/report.html") == ws / "experiments/report.html"
     )
 
     # Real absolute paths inside the workspace are preserved.
     inside = ws / "x" / "y.html"
-    assert resolve_workspace_path(str(inside)) == inside
+    assert resolve_in_workspace(str(inside)) == inside
 
-    # Real absolute paths outside the workspace also map back to workspace root,
-    # so a stray /tmp/... can never escape and write at filesystem root.
-    assert resolve_workspace_path("/tmp/random.html") == ws / "tmp/random.html"
+
+def test_resolve_in_workspace_rejects_outside_paths(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    set_workspace_root(ws)
+
+    # Real host paths outside the workspace are rejected, matching the file
+    # tools' rule, rather than silently rerooted under the workspace.
+    assert resolve_in_workspace("/tmp/random.html") is None
+    assert resolve_in_workspace(str(tmp_path / "elsewhere.txt")) is None
+
+    # `..` escapes are rejected whatever their form.
+    assert resolve_in_workspace("../outside/secret.txt") is None
+    assert resolve_in_workspace("/../outside/secret.txt") is None
+
+    # Empty input resolves to nothing rather than the workspace root.
+    assert resolve_in_workspace("") is None

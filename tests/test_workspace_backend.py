@@ -199,3 +199,21 @@ def test_build_backend_skips_missing_and_absent_sources(tmp_path: Path) -> None:
         package_sources=[PackageSource(name="Ghost", path=tmp_path / "nope")],
     )
     assert backend.routes["/packages/"].package_names() == []
+
+
+def test_execute_refuses_shell_julia_only(tmp_path) -> None:
+    from jutul_agent.agent.backend import WorkspaceShellBackend
+
+    backend = WorkspaceShellBackend(root_dir=tmp_path, virtual_mode=True)
+    for command in (
+        "julia -e 'include(\"analysis.jl\")'",
+        "pwd && julia script.jl",
+        "echo hi | julia",
+    ):
+        result = backend.execute(command)
+        assert result.exit_code == 2, command
+        assert "julia_eval" in result.output
+
+    # Only the head token of a shell segment counts as an invocation.
+    for command in ("python3 -c 'print(1)'", "grep -r julia . || true"):
+        assert backend.execute(command).exit_code != 2, command

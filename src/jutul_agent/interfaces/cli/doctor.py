@@ -1,4 +1,4 @@
-"""``jutul-agent doctor`` — diagnose a workspace's setup.
+"""``jutul-agent doctor``: diagnose a workspace's setup.
 
 One command a user can run (and paste the output of) when launch fails.
 Each check prints PASS / WARN / FAIL with a one-line remediation, so the
@@ -13,8 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from jutul_agent.agent.models import key_env_var, provider_info, provider_of
-from jutul_agent.agent.render_profile import (
+from jutul_agent.display import (
     has_display,
     plotting_display_available,
     xvfb_opted_out,
@@ -24,6 +23,7 @@ from jutul_agent.interfaces.cli._helpers import (
     known_packages_map,
 )
 from jutul_agent.julia.requirements import MIN_JULIA_VERSION, check_julia
+from jutul_agent.models import key_env_var, provider_info, provider_of
 from jutul_agent.paths import workspace_root
 from jutul_agent.simulators import registry
 from jutul_agent.workspace import (
@@ -84,7 +84,7 @@ def run(args: argparse.Namespace) -> int:
     _check_simulator_installed(report, project, sim_name)
     _check_plotting_display(report)
 
-    # Confirm Julia actually boots in this env — catches a broken/half-resolved
+    # Confirm Julia actually boots in this env; catches a broken/half-resolved
     # manifest before the agent starts the kernel. Only when the cheap checks
     # passed, else the error would just restate what we already reported.
     if julia.ok and project is not None:
@@ -171,7 +171,7 @@ def _check_ollama(report: _Report, model_id: str) -> None:
     import asyncio
 
     from jutul_agent import ollama_client
-    from jutul_agent.agent.models import is_ollama_cloud
+    from jutul_agent.models import is_ollama_cloud
 
     name = ollama_client.model_name(model_id)
     if not asyncio.run(ollama_client.is_reachable()):
@@ -268,9 +268,6 @@ def _check_simulator_installed(report: _Report, project: Path | None, sim_name: 
 
     adapter = registry.get(sim_name)
     pkg = adapter.primary_package
-    # Placeholder simulators (e.g. vocsim) declare a package they don't load.
-    if pkg not in adapter.package_imports:
-        return
     if manifest_has_package(project, pkg):
         report.line(PASS, f"{pkg} resolved in env")
         return
@@ -286,7 +283,7 @@ def _check_plotting_display(report: _Report) -> None:
     """Warn when GLMakie has no display here, so plotting will be unavailable.
 
     Plotting is optional: simulation, eval, and the file tools work without it.
-    So this only ever WARNs — a real display (any desktop OS, or X/Wayland on
+    So this only ever WARNs; a real display (any desktop OS, or X/Wayland on
     Linux) passes; headless Linux passes when ``xvfb-run`` is on PATH (the kernel
     wraps the Julia process in it). It warns when headless Linux has neither, with the
     one command that fixes it.

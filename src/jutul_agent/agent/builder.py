@@ -2,12 +2,12 @@
 
 This module wires everything ``create_deep_agent`` needs in one place:
 
-- ``build_backend`` — the CompositeBackend mounting the workspace plus the
+- ``build_backend``: the CompositeBackend mounting the workspace plus the
   skill/memory/session routes.
-- ``register_provider_profiles`` — provider-specific ``HarnessProfile``
-  registration (disables the default general-purpose subagent, appends a
-  short prompt suffix).
-- ``build_agent`` — the entry point used by the CLI/TUI. Returns the agent
+- ``register_provider_profiles``: ``HarnessProfile`` registration per
+  provider (disables the default general-purpose subagent; all prompt text
+  lives in ``agent.prompts``).
+- ``build_agent``: the entry point used by the CLI/TUI. Returns the agent
   together with its live backend, so callers can mount extra folders
   mid-session (``/add-dir``).
 """
@@ -40,7 +40,6 @@ from jutul_agent.agent.memory import (
     make_remember_tool,
     memory_backend_route,
 )
-from jutul_agent.agent.models import PROVIDERS, provider_of
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
@@ -50,6 +49,7 @@ from jutul_agent.agent.tools import (
     make_reset_julia_tool,
     make_write_report_tool,
 )
+from jutul_agent.models import PROVIDERS, provider_of
 from jutul_agent.paths import SHARED_SKILLS_DIR, workspace_memory_dir, workspace_root
 from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
@@ -66,37 +66,6 @@ _SIMULATOR_SKILLS_ROUTE = "/skills/simulator/"
 _SESSION_ROUTE = "/session/"
 _PACKAGES_ROUTE = "/packages/"
 
-
-# Appended to the base deepagents prompt closest to the conversation. Keep
-# provider-specific divergence here; the static prompt assembled in
-# ``agent.prompts`` stays simulator-bound.
-_PROMPT_SUFFIX = (
-    "When any tool or Julia call fails, read the full error output before continuing. "
-    "Diagnose the root cause (wrong path, missing package, API mismatch, stale REPL "
-    "state) and retry with a concrete fix — do not repeat the same failing call. "
-    "The REPL's working directory is the workspace, so refer to files you create "
-    "by a plain workspace-relative path (`model.jl`, `experiments/foo.csv`) — it "
-    "resolves to the same file in the file tools and in `julia_eval` / `execute` "
-    '(`include("model.jl")`); the file\'s real absolute path works in both too. '
-    "Don't pass a leading-slash virtual path like `/model.jl` to Julia, and don't "
-    "invent a `/workspace/` subfolder. The installed source of every package the "
-    "environment resolves — the simulator, what it builds on, and anything you "
-    "`Pkg.add` — is browsable under `/packages/<Package>/` (e.g. "
-    "`/packages/JutulDarcy/`); `read_file`, `glob`, and `grep` it to study "
-    "examples (`/packages/<Package>/examples/`) and source "
-    "(`/packages/<Package>/src/`) with the same tools you use for workspace files. "
-    "Folders the user adds to the session "
-    "are mounted writable at `/dirs/<name>/` — read, grep, write, and edit them with "
-    "the file tools (in `julia_eval` / `execute` use their absolute on-disk paths, "
-    "not the `/dirs/` virtual path). Use `julia_eval` `@doc` / `methods` / "
-    "`names` for exact signatures and docstrings. If a Julia package is missing, "
-    "check what is already in the workspace env, use a stdlib alternative, "
-    "or `Pkg.add` it when the task needs it. Prefer reading "
-    "`/packages/`, probing the REPL, or reading skills over guessing. "
-    "Never invoke `julia` (or `julia --project ...`, `julia -e ...`) through "
-    "`execute`; use `julia_eval` / `julia_plot` for all Julia code. `execute` "
-    "is for non-Julia shell work only (grep, find, ls, git)."
-)
 
 _provider_profiles_registered = False
 
@@ -121,7 +90,9 @@ def register_provider_profiles() -> None:
     """Register the base HarnessProfile for every provider, once per process.
 
     deepagents has no wildcard profile key, so the same profile is registered
-    under each provider in ``models.PROVIDERS``.
+    under each provider in ``models.PROVIDERS``. The profile only disables the
+    stock general-purpose subagent; every prompt rule lives in
+    ``agent.prompts`` so each is stated exactly once.
     """
 
     global _provider_profiles_registered
@@ -130,7 +101,6 @@ def register_provider_profiles() -> None:
 
     profile = HarnessProfile(
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        system_prompt_suffix=_PROMPT_SUFFIX,
     )
     for provider in PROVIDERS:
         register_harness_profile(provider, profile)
@@ -138,7 +108,7 @@ def register_provider_profiles() -> None:
 
 
 def _ollama_ctx_budget(default: int = 65536) -> int:
-    """Most context (KV cache) to allocate for a local model — a memory cap,
+    """Most context (KV cache) to allocate for a local model; a memory cap,
     overridable with ``$JUTUL_AGENT_OLLAMA_NUM_CTX``."""
     try:
         return int(os.environ["JUTUL_AGENT_OLLAMA_NUM_CTX"])

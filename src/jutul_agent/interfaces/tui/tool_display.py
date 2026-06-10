@@ -103,9 +103,9 @@ def display_tool_body(
     ):
         return f"_{summary}_"
 
-    if tool_name == "write_todos":
-        return None
-
+    # write_todos normally renders as a checklist in widgets._render_todo_output;
+    # reaching here means its output didn't parse, so fall through to the
+    # generic rendering rather than returning nothing.
     code_section = _julia_code_section(tool_name, args)
     full = strip_read_file_line_numbers(output) if tool_name == "read_file" else output
     language = _TOOL_LANGUAGES.get(tool_name, "")
@@ -120,7 +120,7 @@ def display_tool_body(
             fenced_block(full, language=language),
         )
 
-    expandable = _is_expandable(full, tool_name=tool_name)
+    expandable = is_expandable(full, tool_name=tool_name)
     if expandable:
         preview = (
             _truncate_preview_tail(full, tool_name=tool_name)
@@ -167,7 +167,7 @@ def _truncate_preview_tail(text: str, *, tool_name: str | None = None) -> str:
 
     Julia outputs put the meaningful bit (the ``→ return value`` and the
     ``[X.YZs]`` timing) at the bottom. Head-truncation hides exactly the
-    part the agent — and the human reading the TUI — care about.
+    part the agent; and the human reading the TUI; care about.
     """
 
     line_limit, char_limit = _preview_limits(tool_name)
@@ -253,8 +253,8 @@ def _task_summary(args: dict[str, Any], output: str, *, is_error: bool) -> str:
 
 
 def _record_attempt_summary(output: str) -> str:
-    # ``record_attempt`` returns ``"attempt #N (parent #M) · key=val · id=<uuid>"``
-    # — keep the leading "attempt #N..." part so the card body shows the index
+    # ``record_attempt`` returns ``"attempt #N (parent #M) · key=val · id=<uuid>"``;
+    # keep the leading "attempt #N..." part so the card body shows the index
     # and primary metric inline.
     head = output.strip().splitlines()[0] if output.strip() else ""
     if head.startswith("attempt"):
@@ -287,18 +287,6 @@ def _julia_plot_summary(args: dict[str, Any], output: str) -> str:
     if caption:
         return f"{head} · {shorten_single_line(str(caption), 48)}"
     return head
-
-
-def _extract_json_field(text: str, field: str) -> str | None:
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(payload, dict):
-        value = payload.get(field)
-        if isinstance(value, str):
-            return value
-    return None
 
 
 def _parse_path_list(output: str) -> list[str]:
@@ -380,7 +368,13 @@ def _truncate_preview(text: str, *, tool_name: str | None = None) -> str:
     )
 
 
-def _is_expandable(text: str, *, tool_name: str | None = None) -> bool:
+def is_expandable(text: str, *, tool_name: str | None = None) -> bool:
+    """Whether ``text`` exceeds the tool's preview budget (so expanding shows more).
+
+    The single source of the preview limits: ``ToolBlock.expandable`` and the
+    body renderer both call this, so the toggle is offered exactly when the
+    expanded body actually differs from the preview.
+    """
     line_limit, char_limit = _preview_limits(tool_name)
     return len(text) > char_limit or text.count("\n") + 1 > line_limit
 

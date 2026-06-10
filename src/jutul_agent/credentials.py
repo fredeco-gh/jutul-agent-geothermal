@@ -15,7 +15,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv, set_key
 
-from jutul_agent.agent.models import key_env_var
+from jutul_agent.models import key_env_var
 from jutul_agent.paths import state_home
 
 

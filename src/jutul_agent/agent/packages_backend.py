@@ -1,8 +1,8 @@
 """A single ``/packages/`` route that mirrors the active Julia environment.
 
 Its sub-routes are derived from what the environment resolves
-(``Pkg.dependencies()``): every package the agent can ``using`` — simulator,
-dependency, or just-installed — is browsable at ``/packages/<Package>/``,
+(``Pkg.dependencies()``): every package the agent can ``using``; simulator,
+dependency, or just-installed; is browsable at ``/packages/<Package>/``,
 matching where Julia keeps it on disk. ``PackageMounts`` refreshes the set when
 the env's ``Manifest.toml`` changes, so an install made through ``julia_eval``
 shows up on the next call. Registry installs are read-only; ``Pkg.develop``
@@ -21,16 +21,7 @@ from deepagents.backends.protocol import BackendProtocol
 
 from jutul_agent.agent.backend import ReadOnlyFilesystemBackend
 from jutul_agent.julia.session import JuliaSession
-
-# One tab-separated line per resolved package: name, on-disk source dir, and
-# whether it is a `Pkg.develop` checkout (writable) rather than a registry install.
-_ENUMERATE_CODE = (
-    "import Pkg\n"
-    "for (_u, _i) in Pkg.dependencies()\n"
-    "    _i.source === nothing && continue\n"
-    '    println("JPKG\\t", _i.name, "\\t", _i.source, "\\t", _i.is_tracking_path ? 1 : 0)\n'
-    "end\n"
-)
+from jutul_agent.simulators.env_setup import ENUMERATE_PACKAGES_CODE, parse_enumerated_packages
 
 
 @dataclass(frozen=True)
@@ -127,16 +118,10 @@ class PackageMounts:
         self._populated = True
 
     async def _enumerate(self) -> dict[str, PackageSource]:
-        result = await self._julia.eval(_ENUMERATE_CODE)
+        result = await self._julia.eval(ENUMERATE_PACKAGES_CODE)
         if result.error:
             return {}
-        sources: dict[str, PackageSource] = {}
-        for line in result.output.splitlines():
-            parts = line.split("\t")
-            if len(parts) != 4 or parts[0] != "JPKG":
-                continue
-            _, name, source, is_dev = parts
-            path = Path(source)
-            if path.is_dir():
-                sources[name] = PackageSource(name=name, path=path, writable=is_dev == "1")
-        return sources
+        return {
+            name: PackageSource(name=name, path=path, writable=is_dev)
+            for name, (path, is_dev) in parse_enumerated_packages(result.output).items()
+        }

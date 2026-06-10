@@ -79,13 +79,13 @@ def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.Mo
     # Cloud stays a spec string so deepagents resolves it + applies its profiles.
     assert _resolve_model_for_agent("openai:gpt-5.4-mini") == "openai:gpt-5.4-mini"
     # A version-tagged Ollama id (>1 colon) becomes a built instance whose context
-    # is sized from the model and capped at the budget, and — crucially — our
+    # is sized from the model and capped at the budget, and; crucially; our
     # harness profile now resolves for it (it does NOT for such a spec as a string).
     model = _resolve_model_for_agent("ollama:qwen3.6:27b")
     assert isinstance(model, BaseChatModel)
     assert getattr(model, "num_ctx", None) == 65536  # min(262144, budget)
     profile = _harness_profile_for_model(model, None)
-    assert profile.system_prompt_suffix
+    assert not profile.system_prompt_suffix  # all prompt text lives in agent.prompts
     assert profile.general_purpose_subagent.enabled is False
 
 
