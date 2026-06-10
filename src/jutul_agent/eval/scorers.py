@@ -249,6 +249,49 @@ def numeric_close(expected: float, tol: float) -> Scorer:
 
 
 @scorer(metrics=[accuracy()])
+def investigation_recorded(min_attempts: int = 3, metric: str | None = None) -> Scorer:
+    """Pass when the trace holds a well-formed recorded investigation.
+
+    Checks the ``attempt`` events that ``record_attempt`` writes: at least
+    ``min_attempts`` of them, each with a rationale, at least one linked to
+    a parent so the attempts form a tree rather than a flat after-the-fact
+    dump, and, when ``metric`` is given, that metric present on every
+    attempt. This grades the recorded process: a model that explored
+    without recording fails even if its final answer is right.
+    """
+    from jutul_agent.trace import TraceLog
+
+    async def score(state: TaskState, target: Target) -> Score:
+        path = state.store.get(STORE_TRACE_DB)
+        attempts: list[dict] = []
+        if path and Path(path).exists():
+            log = TraceLog(Path(path))
+            try:
+                attempts = [event.payload for event in log.iter_events() if event.kind == "attempt"]
+            finally:
+                log.close()
+        problems: list[str] = []
+        if len(attempts) < min_attempts:
+            problems.append(f"{len(attempts)} attempts recorded, need {min_attempts}")
+        if any(not str(a.get("rationale") or "").strip() for a in attempts):
+            problems.append("attempt without a rationale")
+        ids = {a.get("id") for a in attempts}
+        linked = [a for a in attempts if a.get("parent_id")]
+        if attempts and not any(a.get("parent_id") in ids for a in linked):
+            problems.append("no attempt links a parent (flat list, not a tree)")
+        if metric is not None:
+            missing = sum(1 for a in attempts if metric not in (a.get("metrics") or {}))
+            if missing:
+                problems.append(f"{missing} attempts lack the '{metric}' metric")
+        return Score(
+            value=CORRECT if not problems else INCORRECT,
+            explanation="; ".join(problems) or f"{len(attempts)} attempts form a tree",
+        )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
 def no_numeric_claim(low: float, high: float, *, ignore: tuple[str, ...] = ()) -> Scorer:
     """Pass when the answer does NOT report a number in ``(low, high)``.
 

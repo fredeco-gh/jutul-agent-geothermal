@@ -205,6 +205,37 @@ def test_eval_cli_model_defaults_to_the_agent_default() -> None:
     assert ":" not in default.split("/", 1)[0]
 
 
+async def test_investigation_recorded_requires_a_linked_tree(tmp_path: Path) -> None:
+    from jutul_agent.eval.scorers import investigation_recorded
+
+    def attempt(i: int, parent: str | None = None, metrics: dict | None = None):
+        payload = {
+            "id": f"a{i}",
+            "parent_id": parent,
+            "rationale": f"try configuration {i}",
+            "metrics": {"rmse": 1.0 / i} if metrics is None else metrics,
+        }
+        return ("attempt", payload)
+
+    tree = _state(tmp_path / "a", [attempt(1), attempt(2, "a1"), attempt(3, "a2")])
+    scored = await investigation_recorded(min_attempts=3, metric="rmse")(tree, Target(""))
+    assert scored.value == "C"
+
+    flat = _state(tmp_path / "b", [attempt(1), attempt(2), attempt(3)])
+    assert (await investigation_recorded(min_attempts=3)(flat, Target(""))).value == "I"
+
+    few = _state(tmp_path / "c", [attempt(1), attempt(2, "a1")])
+    assert (await investigation_recorded(min_attempts=3)(few, Target(""))).value == "I"
+
+    wrong_metric = _state(
+        tmp_path / "d",
+        [attempt(1, metrics={"loss": 1.0}), attempt(2, "a1"), attempt(3, "a2")],
+    )
+    scored = await investigation_recorded(min_attempts=3, metric="rmse")(wrong_metric, Target(""))
+    assert scored.value == "I"
+    assert "rmse" in (scored.explanation or "")
+
+
 async def test_numeric_answer_checks_range_count_and_order() -> None:
     from inspect_ai.model import ModelOutput
 
