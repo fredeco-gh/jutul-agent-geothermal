@@ -1,8 +1,7 @@
 """Mocca suite: CO2-capture workflows against the real environment.
 
 These instantiate the Mocca workspace environment (``needs_env``), so the
-first run on a cold depot takes minutes. Checks are structural until
-goldens are captured from trusted baseline runs.
+first run on a cold depot takes minutes.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from inspect_ai.dataset import Sample
 from jutul_agent.eval.scorers import (
     no_interpreters_via_execute,
     no_numeric_claim,
-    numeric_answer,
+    numeric_close,
     used_tools,
 )
 from jutul_agent.eval.solver import jutul_agent_solver, load_eval_credentials
@@ -24,14 +23,23 @@ load_eval_credentials()
 @task
 def mocca() -> Task:
     samples = [
-        # Recall-and-run: the standard VSA cycle. Purity and recovery are
-        # fractions by definition, which makes the structural check tight.
+        # Recall-and-run with goldens: the shipped cyclic VSA example fixes
+        # every knob (200 cells, 3 cycles, stage times 15/15/30/40 s), so
+        # "exactly as shipped" makes the endpoint deterministic without the
+        # prompt enumerating any of it. Captured agent-free (2026-06-11) by
+        # running the example's observables directly in the instantiated
+        # env: final feed-end CO2 mole fraction 0.6560, peak temperature
+        # 353.75 K. Pointwise state values only; purity and recovery are
+        # deliberately not asked because Mocca does not provide them.
         Sample(
-            id="mc1-vsa-purity-recovery",
+            id="mc1-vsa-cyclic-golden",
             input=(
-                "Using Mocca, run the standard vacuum swing adsorption (VSA) "
-                "CO2-capture cycle example. Report the CO2 product purity "
-                "and the CO2 recovery, both as fractions between 0 and 1."
+                "Using Mocca, run the cyclic vacuum swing adsorption (VSA) "
+                "CO2-capture example that ships with the package (the "
+                "Haghpanah setup), exactly as shipped. Report two numbers: "
+                "the CO2 gas mole fraction at the feed end of the column in "
+                "the final state, and the maximum temperature reached in "
+                "the column over the whole simulation, in kelvin."
             ),
             metadata={"needs_env": True},
         ),
@@ -40,7 +48,8 @@ def mocca() -> Task:
         dataset=samples,
         solver=jutul_agent_solver(simulator="mocca"),
         scorer=[
-            numeric_answer(0.0, 1.0, count=2),
+            numeric_close(0.6560, 0.01),
+            numeric_close(353.75, 1.0),
             used_tools(["julia_eval"]),
             no_interpreters_via_execute(),
         ],

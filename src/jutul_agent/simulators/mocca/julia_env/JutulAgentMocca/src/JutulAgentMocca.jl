@@ -14,7 +14,7 @@ end
 
 function _warm_solve()
     json_dir = joinpath(dirname(pathof(Mocca)), "../models/json/")
-    constants, info = Mocca.parse_input(joinpath(json_dir, "haghpanah_DCB_input_simple.json"))
+    constants, info = Mocca.parse_input(joinpath(json_dir, "dcb_haghpanah_2013_co2_n2_input_simple.json"))
     case, ts_config = Mocca.setup_mocca_case(constants, info)
     states, timesteps =
         Mocca.simulate_process(case; timestep_selector_cfg = ts_config, info_level = 0)
