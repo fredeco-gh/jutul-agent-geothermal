@@ -1,0 +1,204 @@
+/* jutul-agent docs styling on top of Material. */
+
+:root {
+  --md-primary-fg-color: #0f4c5c;
+  --md-primary-fg-color--light: #2a6f97;
+  --md-primary-fg-color--dark: #0a3540;
+  --md-accent-fg-color: #e36414;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f4c5c;
+  --md-accent-fg-color: #fb8b24;
+  --md-default-bg-color: #14181d;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  color: var(--md-default-fg-color);
+}
+
+.md-typeset h2 {
+  font-weight: 600;
+}
+
+/* Landing-page hero: gradient panel with the tagline and a terminal mockup */
+.ja-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.6rem 2.4rem;
+  margin: 1rem 0 2rem;
+  padding: 2.2rem 2.4rem;
+  border-radius: 0.7rem;
+  background: linear-gradient(135deg, #0f4c5c 0%, #14607a 55%, #0a3540 100%);
+}
+
+.ja-hero-text {
+  flex: 1 1 21rem;
+}
+
+.ja-hero h1 {
+  color: #ffffff;
+  font-size: 2.2rem;
+  font-weight: 700;
+  margin: 0 0 0.6rem;
+}
+
+.ja-hero .ja-tagline {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.86rem;
+  line-height: 1.6;
+  margin: 0 0 1.2rem;
+}
+
+.ja-hero .ja-tagline a {
+  color: #ffd9b3;
+}
+
+.ja-hero .md-button {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.55);
+  margin-right: 0.5rem;
+}
+
+.ja-hero .md-button:hover {
+  border-color: #ffffff;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+.ja-hero .md-button--primary {
+  background-color: #e36414;
+  border-color: #e36414;
+}
+
+.ja-hero .md-button--primary:hover {
+  background-color: #fb8b24;
+  border-color: #fb8b24;
+}
+
+/* Terminal mockup */
+.ja-terminal {
+  flex: 1 1 23rem;
+  max-width: 30rem;
+  border-radius: 0.55rem;
+  overflow: hidden;
+  box-shadow: 0 0.7rem 2rem rgba(0, 0, 0, 0.35);
+  font-size: 0.68rem;
+}
+
+.ja-terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.38rem;
+  background: #1c2128;
+  padding: 0.5rem 0.8rem;
+}
+
+.ja-terminal-bar > span {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.ja-terminal-bar > span:nth-child(1) { background: #ff5f57; }
+.ja-terminal-bar > span:nth-child(2) { background: #febc2e; }
+.ja-terminal-bar > span:nth-child(3) { background: #28c840; }
+
+.ja-terminal-title {
+  color: #8b949e;
+  font-size: 0.62rem;
+  margin: 0 auto;
+  transform: translateX(-0.9rem);
+}
+
+.ja-terminal pre {
+  margin: 0;
+  padding: 1rem 1.1rem 1.1rem;
+  background: #0d1117;
+}
+
+.ja-terminal pre code {
+  background: none;
+  color: #e6edf3;
+  font-size: 0.68rem;
+  line-height: 1.75;
+  padding: 0;
+}
+
+.ja-t-dim { color: #8b949e; }
+.ja-t-prompt { color: #fb8b24; font-weight: 700; }
+.ja-t-tool { color: #79c0ff; }
+.ja-t-ok { color: #56d364; }
+
+/* Simulator logo strip */
+.ja-logos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 2.4rem;
+  margin: 1.2rem 0 1.4rem;
+}
+
+.ja-logos img {
+  height: 2.1rem;
+  width: auto;
+}
+
+[data-md-color-scheme="slate"] .ja-logos img {
+  background: #ffffff;
+  border-radius: 0.3rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* Card grid (used with Material's grid cards) */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 0.45rem;
+  transition: box-shadow 125ms, border-color 125ms, transform 125ms;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 0.2rem 0.8rem rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+}
+
+/* Mermaid diagrams: give them room and center them */
+.md-typeset .mermaid {
+  text-align: center;
+}
+
+/* Color legend under diagrams */
+.ja-legend {
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.ja-legend .ja-dot {
+  display: inline-block;
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  margin: 0 0.35em 0 1.1em;
+  vertical-align: baseline;
+}
+
+.ja-legend .ja-dot:first-child {
+  margin-left: 0;
+}
+
+/* Tables: slightly tighter than body text, full width */
+.md-typeset table:not([class]) {
+  font-size: 0.76rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+.ja-terminal .md-clipboard {
+  display: none;
+}

@@ -1,0 +1,185 @@
+# Installation and usage
+
+## Installation
+
+You need two tools on PATH:
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which
+  installs Python and the project environment
+- Julia 1.10 or newer, via [juliaup](https://github.com/JuliaLang/juliaup)
+
+On headless Linux, plotting also needs `xvfb`.
+
+```sh
+git clone https://github.com/SINTEF-agentlab/jutul-agent
+cd jutul-agent
+uv sync
+```
+
+API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
+your environment or a `.env`. jutul-agent also prompts for a missing key and
+saves it to the user-global `.env`. Local models through
+[Ollama](https://ollama.com) need no key. `uv run jutul-agent doctor`
+verifies the whole setup and prints a fix per finding.
+
+## Workspaces
+
+`jutul-agent` runs in the directory you invoke it from. That directory is the
+workspace: the agent reads and writes files there, and the Julia environment
+lives in `.jutul-agent/julia-env/` inside it. Start it from a project folder,
+not from the jutul-agent checkout. Initialise once per folder:
+
+```sh
+mkdir my-reservoir-study && cd my-reservoir-study
+uv run jutul-agent init --sim jutuldarcy --precompile
+```
+
+`init` writes `.jutul-agent/config.toml` and copies the simulator's Julia env
+template. `--precompile` instantiates the env and warms the precompile caches
+up front. The first time can take a while (Julia compiles the simulator and
+the plotting stack), after which sessions start in seconds. Useful variants:
+
+```sh
+uv run jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
+uv run jutul-agent init --sim jutuldarcy --force --precompile
+```
+
+`--source-path` dev-links the simulator to a local checkout, mounted writable
+so the agent can edit the package source. `--force` rebuilds the env from the
+template, the standard fix after upgrading jutul-agent. `setup` is an alias
+for `init`. If you skip `init` entirely, the first run bootstraps the
+workspace and auto-detects the simulator from a `Project.toml` when it can.
+
+One simulator per workspace. Different simulators have incompatible Julia
+dependencies, so use a separate folder for each. Pointing an existing
+workspace at another simulator rebuilds the env from the new template on the
+next run.
+
+## Adding folders
+
+Mount folders outside the workspace so the agent can use them with the same
+file tools:
+
+```sh
+uv run jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
+```
+
+Inside the TUI, `/add-dir <path>` mounts one immediately and `/add-dir` lists
+the current mounts. Each appears at `/dirs/<name>/` for the file tools, while
+in `julia_eval` and `execute` the agent uses the folder's real absolute path.
+Mounts last for the session and are not written to config.
+
+## The TUI
+
+```sh
+uv run jutul-agent
+```
+
+| Command | Effect |
+|---|---|
+| `/model` | Open the model selector (or `/model <provider:model>`) |
+| `/approval-mode` | Set approval policy: `ask`, `workspace`, `auto` |
+| `/add-dir <path>` | Mount an extra folder |
+| `/transcript` | Write the session transcript (add `md` for markdown) |
+| `/copy` | Copy the last assistant message |
+| `/clear` | Clear the visible log |
+| `/help` | List commands |
+| `/quit` | Exit |
+
+| Key | Effect |
+|---|---|
+| `Ctrl+C` | Interrupt the running turn. With text selected, copy. Twice when idle, exit |
+| `Ctrl+G` | Cancel the in-flight turn (resets Julia if needed) |
+| `Ctrl+O` | Toggle all tool blocks between preview and full output |
+| `Ctrl+L` | Clear the visible log |
+| `Shift+Tab` | Cycle approval mode |
+| `Ctrl+P` / `↑` | Previous history entry |
+
+Approval modes: `ask` (default) prompts before shell commands and file edits,
+`workspace` auto-allows file writes inside the workspace, `auto` allows all
+side-effecting tools.
+
+## Headless turns
+
+Pass the prompt as a positional argument to run one turn and exit:
+
+```sh
+uv run jutul-agent --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
+```
+
+Headless mode cannot pause for approval, so use `--approval-mode auto` (the
+run exits with an error if it would have needed to ask). `--ephemeral-memory`
+gives the run a throwaway memory directory.
+
+## Transcripts
+
+Every session appends an event log to
+`$XDG_DATA_HOME/jutul-agent/workspaces/<hash>/sessions/<id>/trace.sqlite`:
+prompts, responses, every tool call with arguments and output, artifacts,
+token usage. Render one:
+
+```sh
+uv run jutul-agent transcript                   # last session, HTML
+uv run jutul-agent transcript <id>              # specific session
+uv run jutul-agent transcript --format markdown
+uv run jutul-agent transcript --bundle          # zip with artifacts included
+```
+
+## Models
+
+Model ids are `provider:model` strings. Resolution precedence: `--model`
+flag, workspace config, user config (`Ctrl+A` in the selector), the
+`JUTUL_AGENT_MODEL` environment variable, then the default.
+
+`/model` opens the selector: bundled OpenAI, Anthropic, Google, and Ollama
+models, plus anything `init_chat_model` supports typed as `provider:model`.
+Switching mid-session keeps the conversation. Missing API keys are prompted
+for and saved to a user-global `.env` (never to config files).
+
+### Local models (Ollama)
+
+Pick an `ollama:` model in the selector. No key is needed. The list shows
+recommended models, your installed ones, and Ollama Cloud models, and pulls
+anything missing. Requirements and caveats:
+
+- The model must support tool calling (`ollama show <model>` lists `tools`
+  under Capabilities). Keep Ollama itself current: an outdated Ollama can
+  fail to parse a new model's template and silently lose tool support.
+- The agent's prompt is large. Local models load with a context window sized
+  to what the model supports, capped by a memory budget (64K by default,
+  lowered with `JUTUL_AGENT_OLLAMA_NUM_CTX` on tight hardware).
+
+### Other providers
+
+Install the provider's LangChain package (for example
+`uv add langchain-openrouter`), then use its `provider:model` id. If the
+package is missing, jutul-agent names the exact one to install.
+
+## Troubleshooting
+
+Start with the built-in check:
+
+```sh
+uv run jutul-agent doctor
+```
+
+It verifies Julia is on PATH and 1.10+, the active model's key is set (or
+Ollama is running for a local model), which Julia project the workspace
+resolves to, that the simulator package is actually resolved in the env
+manifest, that a display (or xvfb) is available for plotting, and that Julia
+boots cleanly in the env. Each failure comes with a one-line fix.
+
+Common cases:
+
+- Workspace versus launch directory: the workspace is where you launch from,
+  not where you ran `init`. `cd` there or pass `--workspace <path>`.
+- A `Project.toml` at the workspace root takes precedence over
+  `.jutul-agent/julia-env/`. If that root project lacks the simulator
+  packages, `using <Sim>` fails even though Julia starts. `doctor` flags
+  this.
+- "Julia failed to start before the kernel was ready": the Julia subprocess
+  crashed during startup. The message includes Julia's own error and the
+  path to `julia-startup.log`. This is usually a stale env, rebuilt with
+  `init --sim <name> --force --precompile`.
+- Headless Linux without `xvfb`: simulation works, plotting errors. Install
+  it (`sudo apt-get install -y xvfb`).

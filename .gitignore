@@ -36,3 +36,4 @@ src/jutul_agent/simulators/*/julia_env/JutulAgent/
 # OS
 .DS_Store
 Thumbs.db
+site/

@@ -1,0 +1,82 @@
+# Configuration
+
+Three layers, each optional: workspace config, user config, environment.
+For the model, precedence is `--model` flag, then workspace, then user
+config, then `$JUTUL_AGENT_MODEL`, then the built-in default.
+
+## Workspace config
+
+`.jutul-agent/config.toml` in the workspace, written by `init` and by the
+TUI when you save a choice:
+
+```toml
+simulator = "jutuldarcy"           # active simulator for this workspace
+model = "<provider:model>"         # optional, overrides the user default
+approval_mode = "workspace"        # optional: ask | workspace | auto
+
+[simulators.jutuldarcy]
+source_path = "/path/to/JutulDarcy.jl"  # dev-link, set by init --source-path
+```
+
+This file is safe to commit: API keys never go here.
+
+## User config
+
+`<state home>/config.toml` (default `~/.local/share/jutul-agent/config.toml`)
+holds user-wide defaults, currently the model:
+
+```toml
+model = "<provider:model>"
+```
+
+Set it from the TUI model selector with `Ctrl+A` (save for all workspaces).
+
+## API keys
+
+Keys are read from the process environment, a `.env` in the working
+directory, and the user-global `<state home>/.env`, in that order of
+precedence. The global file is what the interactive key prompts write to
+(`init` and the model selector), with owner-only permissions. Recognized:
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`. Ollama needs none.
+
+## Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `JUTUL_AGENT_MODEL` | Default model when no flag or config sets one (useful in CI) |
+| `JUTUL_AGENT_OLLAMA_NUM_CTX` | Memory cap for local models' context window (default 64K tokens, lower on tight hardware) |
+| `JUTUL_AGENT_NO_XVFB` | Opt out of starting a virtual display on headless Linux (plotting then errors at use) |
+| `JUTUL_AGENT_NO_OPEN` | Never open artifacts in the OS default application (CI, tests) |
+| `XDG_DATA_HOME` | Relocates the state home (`<value>/jutul-agent`) |
+
+## What lives where
+
+In the workspace:
+
+```
+<workspace>/
+  .jutul-agent/
+    config.toml          # workspace config (committable)
+    julia-env/           # the simulator's Julia environment
+  jutul-agent-output/
+    sessions/<date>-<id>/
+      artifacts/         # plots and reports the agent saved
+```
+
+In the state home (default `~/.local/share/jutul-agent/`):
+
+```
+config.toml              # user config
+.env                     # saved API keys (owner-only)
+workspaces/<hash>/
+  memory/                # the workspace's agent-maintained memory
+  sessions/<id>/
+    trace.sqlite         # the session event log
+    checkpoints.sqlite   # conversation state (resume, model switching)
+    julia-startup.log    # kernel boot log, referenced by error messages
+eval-logs/               # Inspect logs from jutul-agent eval
+eval-envs/<sim>/         # golden envs the bench copies per sample
+```
+
+The state home is keyed by a hash of the workspace path, so the same folder
+always maps to the same memory and session history.

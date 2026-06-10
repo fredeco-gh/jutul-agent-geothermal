@@ -1,0 +1,114 @@
+# Development
+
+This page is the practical reference: setup, layout, tests, CI, policies.
+The reasoning behind much of it, a codebase built with coding agents from
+the start, is its own page: [agent-first development](agent-first.md).
+
+## Setup
+
+```sh
+git clone <this-repo> && cd jutul-agent
+uv sync --extra eval
+uv run pre-commit install
+```
+
+`uv sync` creates `.venv/` from `pyproject.toml` + `uv.lock`. Re-run it
+when those change. The `eval` extra adds Inspect AI for the bench.
+
+## Repository layout
+
+```
+src/jutul_agent/
+  paths.py         install / workspace / state-home anchors, virtual-path policy
+  workspace.py     config loader, simulator auto-detect, env bootstrap helpers
+  session.py       Session: the unit of one invocation
+  models.py        provider metadata, model catalog
+  credentials.py   user-global API-key storage
+  display.py       display detection, managed Xvfb for headless plotting
+  agent/           deepagents wiring: builder, prompts, tools, turns, memory
+  simulators/      adapter base + registry, one data folder per simulator
+  julia/           JuliaSession protocol, Julia toolchain checks
+  juliakernel/     the supervised Julia runtime (kernel.py + server.jl)
+  julia_runtime/   the shared JutulAgent Julia package, synced into envs
+  trace/           append-only SQLite event log + recorder middleware
+  transcript/      HTML / markdown / report renderers
+  eval/            jutul-bench: solver, scorers, runconfig, task suites
+  interfaces/      cli/ and tui/
+tests/             unit suite (integration/ and live/ are opt-in)
+docs/              this documentation
+```
+
+## Tests
+
+```sh
+uv run pytest                    # unit tests (integration and live deselected)
+uv run pytest -m integration     # adds Julia-requiring tests
+uv run pytest tests/live/        # one real-LLM smoke (needs a provider key)
+uv run pytest --snapshot-update  # accept changed syrupy snapshots, deliberately
+```
+
+How the tiers, gating, fakes, snapshots, and TUI pilot tests fit together
+is its own page: [testing](testing.md).
+
+## CI
+
+Two workflows:
+
+- `ci.yml`, on every PR: lint (ruff check + format), the unit suite on
+  Linux/macOS/Windows, a Julia kernel integration job, and a plot
+  integration job that instantiates the JutulDarcy env under xvfb and
+  renders a real GLMakie figure.
+- `simulators.yml`, on PRs and weekly: one job per simulator that
+  instantiates its env template against the latest compatible upstream
+  releases and smoke-tests that the package and the warm package load. The
+  weekly run is the canary for upstream breakage, since envs ship no
+  version pins.
+
+Both instantiate steps run an explicit `Pkg.precompile()`, which throws if
+a direct dependency fails to precompile. A bare `Pkg.instantiate()` only
+auto-precompiles best-effort and exits 0, which can leave a lane green
+while every env on the runner is broken.
+
+## The bench in the dev loop
+
+Before and after a change to the prompt, a skill, or a tool, run the cheap
+suites on the default model:
+
+```sh
+uv run jutul-agent eval canary guardrails
+```
+
+See [evaluation](evaluation.md) for scorers, RunConfig attribution, and
+adding tasks.
+
+## Dependency policy
+
+Dependencies are locked (`uv.lock`). Upgrade deliberately with
+`uv lock --upgrade-package <name>` and run the suite. deepagents in
+particular is pinned to a known-good version: it moves fast, and its
+middleware/streaming internals have broken us before. Treat any deepagents
+bump as a change that needs the live smoke and a TUI pilot pass.
+
+## The docs site
+
+The documentation in `docs/` doubles as an MkDocs Material site
+(`mkdocs.yml` at the repo root):
+
+```sh
+uv sync --group docs
+uv run mkdocs serve     # live-preview at http://127.0.0.1:8000
+uv run mkdocs build --strict
+```
+
+Publishing is the `Docs` workflow, which builds the site and deploys it to
+GitHub Pages.
+
+The architecture diagram is TikZ source (`docs/assets/architecture.tex`)
+compiled offline to `architecture-light.svg` and `architecture-dark.svg`.
+To change it, edit the `.tex`, regenerate, preview on the built site in
+both palettes (`uv run mkdocs serve`), then commit the `.tex` and both SVGs.
+Requires `latex` and `dvisvgm` (Debian: `texlive-latex-base`, `dvisvgm`):
+
+```sh
+docs/assets/render-architecture.sh
+```
