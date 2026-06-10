@@ -36,6 +36,11 @@ class TraceRecorder(AgentMiddleware):
         content = content_to_str(last.content)
         if content.strip():
             self._trace.append("message_assistant", {"content": content})
+        usage = getattr(last, "usage_metadata", None)
+        if usage:
+            # Token accounting per model turn; cost and efficiency analyses
+            # read these events instead of re-deriving counts from text.
+            self._trace.append("model_usage", dict(usage))
         return None
 
     async def awrap_tool_call(
@@ -51,8 +56,8 @@ class TraceRecorder(AgentMiddleware):
         try:
             result = await handler(request)
         except GraphBubbleUp:
-            # Control-flow signals — approval interrupts, parent commands,
-            # graph-drain bubbles — must propagate untouched. (Cancellation and
+            # Control-flow signals (approval interrupts, parent commands,
+            # graph-drain bubbles) must propagate untouched. (Cancellation and
             # KeyboardInterrupt are BaseException, so `except Exception` below
             # never catches them.)
             raise

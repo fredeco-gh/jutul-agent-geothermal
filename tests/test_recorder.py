@@ -57,7 +57,7 @@ async def test_trace_recorder_logs_tool_round_trip(tmp_path) -> None:
 
 
 async def test_raising_tool_is_converted_to_error_message(tmp_path) -> None:
-    """A tool that raises must not abort the turn — the model gets the error."""
+    """A tool that raises must not abort the turn; the model gets the error."""
 
     log = TraceLog(tmp_path / "trace.sqlite")
     recorder = TraceRecorder(log)
@@ -93,3 +93,27 @@ async def test_control_flow_exceptions_propagate(tmp_path) -> None:
     with pytest.raises(GraphInterrupt):
         await recorder.awrap_tool_call(request, handler)
     log.close()
+
+
+async def test_trace_recorder_logs_model_usage(tmp_path) -> None:
+    log = TraceLog(tmp_path / "trace.sqlite")
+    recorder = TraceRecorder(log)
+
+    state = {
+        "messages": [
+            AIMessage(
+                content="done",
+                usage_metadata={
+                    "input_tokens": 120,
+                    "output_tokens": 15,
+                    "total_tokens": 135,
+                },
+            ),
+        ]
+    }
+    await recorder.aafter_model(state, runtime=None)
+
+    events = {event.kind: event.payload for event in log.iter_events()}
+    log.close()
+    assert events["model_usage"]["input_tokens"] == 120
+    assert events["model_usage"]["output_tokens"] == 15
