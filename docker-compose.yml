@@ -1,0 +1,35 @@
+# jutul-bench in a container.
+#
+#   docker compose build
+#   docker compose run --rm eval canary --model openai/gpt-5.4-mini
+#   docker compose run --rm eval battmo --model anthropic/claude-haiku-4-5
+#
+# Provider keys come from ./.env (OPENAI_API_KEY, ANTHROPIC_API_KEY,
+# GOOGLE_API_KEY). host networking lets ollama/<model> reach the host's
+# Ollama at localhost:11434. The named volumes hold Julia's depot and the
+# jutul-agent state home (golden eval envs, eval logs), so only the first
+# run per simulator pays the instantiate + precompile cost.
+#
+# Parallelism: run one container per (suite, model) pair — samples inside a
+# container are serial by design. Example:
+#   docker compose run -d --rm eval jutuldarcy --model openai/gpt-5.4-mini
+#   docker compose run -d --rm eval battmo --model openai/gpt-5.4-mini
+# Containers share the depot volume; Julia's package manager handles
+# concurrent access with its own locks.
+
+services:
+  eval:
+    build: .
+    env_file:
+      - .env
+    network_mode: host
+    # Bound the solver: 4 CPUs covers the kernel plus its pumps comfortably.
+    cpus: 4
+    mem_limit: 12g
+    volumes:
+      - julia-depot:/depot
+      - jutul-state:/state
+
+volumes:
+  julia-depot:
+  jutul-state:
