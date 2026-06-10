@@ -42,6 +42,15 @@ For idiomatic "how do I do X" patterns, the examples directory is the
 authoritative reference. `setup_well` and `setup_vertical_well` are the
 recommended well constructors.
 
+Industry-standard `.DATA` decks run through `setup_case_from_data_file`;
+the classic SPE benchmark decks ship with GeoEnergyIO's test data:
+
+```julia
+pth = GeoEnergyIO.test_input_file_path("SPE1", "SPE1.DATA")
+case = setup_case_from_data_file(pth)
+result = simulate_reservoir(case)
+```
+
 ## Result unpacking
 
 ```julia

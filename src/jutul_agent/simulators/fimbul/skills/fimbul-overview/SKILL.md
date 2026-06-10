@@ -70,6 +70,21 @@ Well data (`result.wells`) and reservoir states follow the same
 conventions as JutulDarcy. See `jutuldarcy-overview` for result unpacking
 and `jutuldarcy-wells` for well construction details that apply here too.
 
+Produced-water quantities come from the well series, not the reservoir
+field: `result.states[end][:Temperature]` is the grid; what a well delivers
+over time is
+
+```julia
+prod_T = result.wells.wells[:Producer][:temperature]   # K, one value per step
+```
+
+(`keys(result.wells.wells)` lists the well names of the active case.)
+
+All quantities are SI: temperatures are **Kelvin**, not Celsius. When the
+user asks for degrees Celsius, convert (`T - 273.15`) before reporting; a
+"temperature" near 350 in a geothermal answer is almost certainly an
+unconverted Kelvin value.
+
 ## Plotting
 
 Fimbul reuses JutulDarcy's **native plotters** (GLMakie, the default backend),
