@@ -76,6 +76,11 @@ def build_parser(prog: str = "jutul-agent eval") -> argparse.ArgumentParser:
         help="Repetitions per sample, for variance (default 1).",
     )
     parser.add_argument(
+        "--epochs-reducer",
+        help="How to combine scores across epochs, comma-separated Inspect "
+        "reducer names: mean, median, max, pass_at_2, at_least_2, ...",
+    )
+    parser.add_argument(
         "--max-samples",
         type=int,
         default=1,
@@ -152,12 +157,17 @@ def run(args: argparse.Namespace) -> int:
 
     log_dir = args.log_dir or (state_home() / "eval-logs")
 
+    from inspect_ai import Epochs
     from inspect_ai import eval as inspect_eval
+
+    epochs: int | Epochs = args.epochs
+    if args.epochs_reducer:
+        epochs = Epochs(args.epochs, args.epochs_reducer.split(","))
 
     logs = inspect_eval(
         tasks=resolved,
         model=model.split(","),
-        epochs=args.epochs,
+        epochs=epochs,
         max_samples=args.max_samples,
         limit=args.limit,
         log_dir=str(log_dir),
