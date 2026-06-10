@@ -1,18 +1,16 @@
 """A supervised, persistent Julia runtime with live output and interrupt.
 
-``JuliaKernel`` owns one Julia subprocess and talks to it over three channels:
-the process's **stdout** and **stderr** pipes (raw user output, streamed live as
-it is produced) and a loopback-TCP **control** channel carrying length-framed
-requests and authoritative ``OK``/``ERR``/``INT`` results. Evaluation runs
-*in-process* in that Julia process, so a ``Distributed`` worker pool launched
+``JuliaKernel`` owns one Julia subprocess and talks to it over a single
+loopback-TCP control connection carrying length-prefixed frames: code out,
+live output and one authoritative ``ok``/``err``/``int`` result back per eval
+(see :mod:`.connection` for the framing). Output is captured *inside* the Julia
+process at the fd level, so an eval's result frame arrives only after all of
+its output; completion is one event, ordered by TCP. Evaluation runs
+in-process in that Julia process, so a ``Distributed`` worker pool launched
 from user code uses it the normal way (the process is the cluster master). The
 kernel is the supervisor: it spawns, interrupts (SIGINT), and respawns the
 process, so a reset never takes the surrounding Python session down with it.
-
-The channel plumbing (draining the pipes, splitting them into per-eval segments,
-framing control results) lives in :class:`KernelChannels`; ``JuliaKernel`` itself
-supervises the process and drives the eval protocol. The package depends only on
-the standard library.
+The package depends only on the standard library.
 """
 
 from __future__ import annotations
@@ -26,14 +24,14 @@ import socket
 from pathlib import Path
 from typing import IO, Self
 
-from .channels import KernelChannels
 from .config import KernelConfig
+from .connection import KernelConnection, PendingEval
 from .result import EvalResult, OnChunk
 from .text import render_terminal_output
 
 _SERVER_JL = Path(__file__).resolve().parent / "server.jl"
-# After cancelling an eval we SIGINT it and wait this long for it to stop and emit
-# its result frame; past this we treat it as wedged and restart.
+# After cancelling an eval we SIGINT it and wait this long for its result frame;
+# past this we treat it as wedged and restart.
 _INTERRUPT_DRAIN_TIMEOUT = 10.0
 
 
@@ -82,7 +80,7 @@ class JuliaKernel:
         self._config = config or KernelConfig()
         self._proc: asyncio.subprocess.Process | None = None
         self._listener: socket.socket | None = None
-        self._channels: KernelChannels | None = None
+        self._conn: KernelConnection | None = None
         self._watch_task: asyncio.Task[None] | None = None
         self._stderr_fh: IO[bytes] | None = None
         self._token = ""
@@ -103,8 +101,8 @@ class JuliaKernel:
         return (
             self._proc is not None
             and self._proc.returncode is None
-            and self._channels is not None
-            and not self._channels.closed.is_set()
+            and self._conn is not None
+            and not self._conn.closed.is_set()
         )
 
     async def reset(self) -> EvalResult:
@@ -140,50 +138,40 @@ class JuliaKernel:
             raise RuntimeError("JuliaKernel must be used inside an `async with` block")
         if not self.running:
             raise RuntimeError("the Julia kernel is not running")
-        channels = self._channels
-        assert channels is not None
+        conn = self._conn
+        assert conn is not None
         async with self._lock:
-            channels.on_chunk = on_chunk
-            got_frame = got_out = False
+            pending = conn.begin_eval(on_chunk)
             try:
-                await channels.send(code)
-                frame = await channels.frame()
-                got_frame = True
-                out_raw = await channels.segment("stdout")
-                got_out = True
-                err_raw = await channels.segment("stderr")
+                await conn.send_exec(pending, code)
+                # Shielded: cancelling this task must not cancel the result slot
+                # itself; the recovery below still needs the result frame to
+                # land in it (a cancelled future could never be resolved).
+                status, payload = await asyncio.shield(pending.future)
             except asyncio.CancelledError:
-                # The caller was cancelled mid-eval. Interrupt the eval and drain its
-                # result so the process stays in protocol sync with its REPL state,
-                # rather than restarting. Shielded so the cancellation can't abort the
+                # The caller was cancelled mid-eval. Interrupt the eval and wait
+                # for its one result frame so the session stays usable, rather
+                # than restarting. Shielded so the cancellation can't abort the
                 # recovery itself.
-                channels.on_chunk = None
-                await asyncio.shield(self._recover_from_cancel(got_frame, got_out))
+                await asyncio.shield(self._recover_from_cancel(pending))
                 raise
             finally:
-                channels.on_chunk = None
-        return self._build_result(frame, out_raw, err_raw)
+                conn.end_eval(pending)
+        return self._build_result(status, payload, pending)
 
-    async def _recover_from_cancel(self, got_frame: bool, got_out: bool) -> None:
+    async def _recover_from_cancel(self, pending: PendingEval) -> None:
         """Leave the session usable after an eval was cancelled mid-flight.
 
-        If the eval is still running (no result frame yet), SIGINT it, then consume
-        exactly the frame and segments it still owes so the next eval doesn't read a
-        stale one. If it ignores the interrupt or the process dies, fall back to a
-        restart (the only case where REPL state is lost).
+        If the eval is still running (its future is unresolved), SIGINT it and
+        wait for its result frame; the connection drops that stale result. If it
+        ignores the interrupt or the process dies, fall back to a restart (the
+        only case where REPL state is lost).
         """
-        channels = self._channels
-        if channels is None:
-            return
-        if not got_frame:
+        if not pending.future.done():
             await self.interrupt()
         try:
             async with asyncio.timeout(_INTERRUPT_DRAIN_TIMEOUT):
-                if not got_frame:
-                    await channels.frame()
-                if not got_out:
-                    await channels.segment("stdout")
-                await channels.segment("stderr")
+                await pending.future
             self._cancel_preserved_state = True
         except Exception:
             self._cancel_preserved_state = False
@@ -195,12 +183,12 @@ class JuliaKernel:
         """Whether the last cancelled eval kept REPL state (vs. forced a restart)."""
         return self._cancel_preserved_state
 
-    def _build_result(self, frame: tuple[str, str], out_raw: str, err_raw: str) -> EvalResult:
-        tag, payload = frame
-        out = render_terminal_output(out_raw)
-        err = render_terminal_output(err_raw)
+    def _build_result(self, status: str, payload: bytes, pending: PendingEval) -> EvalResult:
+        out = render_terminal_output(bytes(pending.out).decode("utf-8", "replace"))
+        err = render_terminal_output(bytes(pending.err).decode("utf-8", "replace"))
+        text = payload.decode("utf-8", "replace")
         # REPL-style text the user code produced, whatever the outcome: stdout, then
-        # stderr under a heading. On OK this gets the value's repr appended; on an
+        # stderr under a heading. On ok this gets the value's repr appended; on an
         # error or interrupt it is the output printed before the eval stopped, kept
         # so the caller can surface it next to the error.
         parts: list[str] = []
@@ -208,7 +196,7 @@ class JuliaKernel:
             parts.append(out.rstrip("\n"))
         if err.strip():
             parts.append("[stderr]\n" + err.rstrip("\n"))
-        if tag == "INT":
+        if status == "int":
             return EvalResult(
                 output="\n".join(parts),
                 error="InterruptException: evaluation was interrupted",
@@ -216,14 +204,14 @@ class JuliaKernel:
                 stderr=err,
                 interrupted=True,
             )
-        if tag == "ERR":
-            return EvalResult(output="\n".join(parts), error=payload, stdout=out, stderr=err)
-        # OK — append the value's repr.
-        if payload:
-            parts.append(payload)
+        if status == "err":
+            return EvalResult(output="\n".join(parts), error=text, stdout=out, stderr=err)
+        # ok; append the value's repr.
+        if text:
+            parts.append(text)
         return EvalResult(
             output="\n".join(parts),
-            value_repr=payload or None,
+            value_repr=text or None,
             stdout=out,
             stderr=err,
         )
@@ -264,23 +252,20 @@ class JuliaKernel:
             ) from exc
 
         assert self._proc.stdout is not None and self._proc.stderr is not None
-        self._channels = KernelChannels(
+        self._conn = KernelConnection(
             self._proc.stdout, self._proc.stderr, stderr_fh=self._stderr_fh
         )
-        self._watch_task = asyncio.create_task(self._watch_proc(self._proc, self._channels))
+        self._watch_task = asyncio.create_task(self._watch_proc(self._proc, self._conn))
 
         try:
             conn = await self._accept_control(loop, port)
-            await self._channels.attach_control(conn)
+            await self._conn.attach_control(conn)
             await self._await_ready()
-            # Drain the startup-preamble segment the server emits after READY.
-            await self._channels.segment("stdout")
-            await self._channels.segment("stderr")
         except JuliaStartupError:
             await self._teardown(graceful=False)
             raise
         except BaseException as exc:
-            tail = self._channels.stderr_tail.decode("utf-8", "replace") if self._channels else ""
+            tail = self._conn.stderr_tail.decode("utf-8", "replace") if self._conn else ""
             await self._teardown(graceful=False)
             raise JuliaStartupError(
                 "the Julia process exited before it was ready (see Julia output below)",
@@ -291,9 +276,9 @@ class JuliaKernel:
             ) from exc
 
     async def _accept_control(self, loop: asyncio.AbstractEventLoop, port: int) -> socket.socket:
-        assert self._listener is not None and self._channels is not None
+        assert self._listener is not None and self._conn is not None
         accept = asyncio.ensure_future(loop.sock_accept(self._listener))
-        dead = asyncio.ensure_future(self._channels.closed.wait())
+        dead = asyncio.ensure_future(self._conn.closed.wait())
         done, _ = await asyncio.wait(
             {accept, dead},
             timeout=self._config.startup_timeout,
@@ -303,15 +288,13 @@ class JuliaKernel:
             accept.cancel()
             dead.cancel()
             why = (
-                "the Julia process exited"
-                if self._channels.closed.is_set()
-                else "timed out connecting"
+                "the Julia process exited" if self._conn.closed.is_set() else "timed out connecting"
             )
             raise JuliaStartupError(
                 f"{why} before the control channel came up",
                 julia_executable=self._config.julia_executable,
                 julia_project=self._config.julia_project,
-                stderr_tail=self._channels.stderr_tail.decode("utf-8", "replace"),
+                stderr_tail=self._conn.stderr_tail.decode("utf-8", "replace"),
                 log_file=self._config.stderr_file,
             )
         dead.cancel()
@@ -319,25 +302,25 @@ class JuliaKernel:
         return conn
 
     async def _await_ready(self) -> None:
-        assert self._channels is not None
-        tag, payload = await self._channels.frame()
-        if tag != "READY" or payload != self._token:
+        assert self._conn is not None
+        token = await self._conn.ready_token()
+        if token != self._token:
             raise JuliaStartupError(
                 "the control handshake failed (token mismatch)",
                 julia_executable=self._config.julia_executable,
                 julia_project=self._config.julia_project,
             )
 
-    async def _watch_proc(self, proc: asyncio.subprocess.Process, channels: KernelChannels) -> None:
+    async def _watch_proc(self, proc: asyncio.subprocess.Process, conn: KernelConnection) -> None:
         with contextlib.suppress(Exception):
             await proc.wait()
-        channels.closed.set()
+        conn.closed.set()
 
     async def _teardown(self, *, graceful: bool) -> None:
         proc = self._proc
         if proc is not None and proc.returncode is None:
-            if graceful and self._channels is not None and self._channels.has_control:
-                self._channels.close_control()  # clean EOF exit for the server
+            if graceful and self._conn is not None and self._conn.has_control:
+                self._conn.close_control()  # clean EOF exit for the server
                 with contextlib.suppress(TimeoutError, Exception):
                     await asyncio.wait_for(proc.wait(), timeout=5)
             if proc.returncode is None:
@@ -350,9 +333,9 @@ class JuliaKernel:
             with contextlib.suppress(BaseException):
                 await self._watch_task
             self._watch_task = None
-        if self._channels is not None:
-            await self._channels.aclose()
-            self._channels = None
+        if self._conn is not None:
+            await self._conn.aclose()
+            self._conn = None
         if self._listener is not None:
             with contextlib.suppress(Exception):
                 self._listener.close()
@@ -371,8 +354,7 @@ class JuliaKernel:
             args.append(f"--project={cfg.julia_project}")
         if cfg.sysimage is not None:
             args.append(f"--sysimage={cfg.sysimage}")
-        if cfg.threads is not None:
-            args.append(f"--threads={cfg.threads}")
+        args.append(f"--threads={_thread_flag(cfg.threads)}")
         args.extend(cfg.extra_args)
         args.extend([str(_SERVER_JL), str(port)])
 
@@ -382,3 +364,19 @@ class JuliaKernel:
         env["JK_TOKEN"] = self._token
 
         return cfg.julia_executable, args, env
+
+
+def _thread_flag(threads: str | None) -> str:
+    """The ``--threads`` value, always reserving an interactive thread.
+
+    The server pins its eval loop to the interactive thread and its output
+    pumps to the default pool; SIGINT delivery relies on that separation (a
+    pump sharing the eval's thread could swallow the InterruptException). So
+    a plain thread count N becomes ``N,1``. ``auto`` already implies one
+    interactive thread, and an explicit ``N,M`` is respected as given.
+    """
+    if threads is None:
+        return "1,1"
+    if threads == "auto" or "," in threads:
+        return threads
+    return f"{threads},1"

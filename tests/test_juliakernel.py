@@ -1,6 +1,6 @@
 """Tests for the JuliaKernel backend.
 
-The integration tests need only ``julia`` on PATH — the kernel runs against base
+The integration tests need only ``julia`` on PATH; the kernel runs against base
 Julia, no instantiated env required (a strict improvement over the old backend,
 which needed a built env to test at all).
 """
@@ -8,14 +8,17 @@ which needed a built env to test at all).
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import shutil
+import socket
 from pathlib import Path
 
 import pytest
 
 from jutul_agent.juliakernel import JuliaKernel, KernelConfig, OutputChunk
-from jutul_agent.juliakernel.channels import _SENTINEL, KernelChannels, _parse_frame
-from jutul_agent.juliakernel.kernel import JuliaStartupError
+from jutul_agent.juliakernel.connection import KernelConnection
+from jutul_agent.juliakernel.kernel import JuliaStartupError, _thread_flag
 
 _HAS_JULIA = shutil.which("julia") is not None
 needs_julia = pytest.mark.skipif(not _HAS_JULIA, reason="requires `julia` on PATH")
@@ -46,15 +49,12 @@ def test_build_launch_assembles_flags(tmp_path: Path) -> None:
     assert "JK_TOKEN" in env
 
 
-def test_parse_frame_handles_every_tag() -> None:
-    import base64
-
-    assert _parse_frame(b"READY\tdeadbeef\n") == ("READY", "deadbeef")
-    assert _parse_frame(b"INT\n") == ("INT", "")
-    ok = b"OK\t" + base64.b64encode(b"2") + b"\n"
-    assert _parse_frame(ok) == ("OK", "2")
-    err = b"ERR\t" + base64.b64encode(b"DomainError") + b"\n"
-    assert _parse_frame(err) == ("ERR", "DomainError")
+def test_thread_flag_always_reserves_an_interactive_thread() -> None:
+    """The eval loop must end up alone on the interactive thread (SIGINT routing)."""
+    assert _thread_flag(None) == "1,1"
+    assert _thread_flag("4") == "4,1"
+    assert _thread_flag("auto") == "auto"  # auto already implies 1 interactive
+    assert _thread_flag("4,2") == "4,2"  # explicit pools are respected
 
 
 async def test_startup_error_for_missing_julia() -> None:
@@ -65,38 +65,80 @@ async def test_startup_error_for_missing_julia() -> None:
     assert kernel._listener is None
 
 
-async def test_channels_split_a_segment_across_two_reads() -> None:
-    """A SENTINEL straddling a read boundary still closes the segment cleanly.
+class _Wire:
+    """A KernelConnection wired to an in-process socket playing the Julia side."""
 
-    Drives KernelChannels with bare StreamReaders (no Julia): the parser must
-    reassemble the sentinel from two reads and stream the pre-sentinel bytes.
-    """
-    out, err = asyncio.StreamReader(), asyncio.StreamReader()
-    channels = KernelChannels(out, err)
-    streamed: list[str] = []
-    channels.on_chunk = lambda chunk: streamed.append(chunk.text)
+    def __init__(self) -> None:
+        self.log = io.BytesIO()
+        self.conn: KernelConnection = None  # type: ignore[assignment]
+        self.writer: asyncio.StreamWriter = None  # type: ignore[assignment]
 
-    data = b"hello world" + _SENTINEL + b"leftover"
-    mid = len(b"hello world") + 3  # split inside the SENTINEL
-    out.feed_data(data[:mid])
-    out.feed_data(data[mid:])
+    async def __aenter__(self) -> _Wire:
+        self.out_pipe, self.err_pipe = asyncio.StreamReader(), asyncio.StreamReader()
+        self.conn = KernelConnection(self.out_pipe, self.err_pipe, stderr_fh=self.log)
+        ours, theirs = socket.socketpair()
+        await self.conn.attach_control(ours)
+        _, self.writer = await asyncio.open_connection(sock=theirs)
+        return self
 
-    assert await channels.segment("stdout") == "hello world"
-    assert "".join(streamed) == "hello world"  # streamed, not the held-back tail
-    out.feed_eof()
-    err.feed_eof()
-    await channels.aclose()
+    async def __aexit__(self, *exc: object) -> None:
+        with contextlib.suppress(Exception):
+            self.writer.close()
+        await self.conn.aclose()
+
+    async def send(self, raw: bytes) -> None:
+        self.writer.write(raw)
+        await self.writer.drain()
 
 
-async def test_channels_segment_raises_when_the_pipe_closes() -> None:
-    """A read blocked on a dead channel wakes with an error instead of hanging."""
-    out, err = asyncio.StreamReader(), asyncio.StreamReader()
-    channels = KernelChannels(out, err)
-    out.feed_eof()
-    err.feed_eof()
-    with pytest.raises(RuntimeError):
-        await channels.segment("stdout")
-    await channels.aclose()
+async def test_connection_routes_frames_to_the_pending_eval() -> None:
+    """OUT frames fill the in-flight eval's buffers/sink; RES resolves its future."""
+    async with _Wire() as wire:
+        await wire.send(b"RDY deadbeef 0\n")
+        assert await asyncio.wait_for(wire.conn.ready_token(), 5) == "deadbeef"
+
+        chunks: list[OutputChunk] = []
+        pending = wire.conn.begin_eval(chunks.append)
+        await wire.send(b"OUT stdout 5\nhelloOUT stderr 4\noopsRES 1 ok 1\n2")
+        assert await asyncio.wait_for(pending.future, 5) == ("ok", b"2")
+        wire.conn.end_eval(pending)
+        assert bytes(pending.out) == b"hello"
+        assert bytes(pending.err) == b"oops"
+        assert [(c.stream, c.text) for c in chunks] == [("stdout", "hello"), ("stderr", "oops")]
+
+        # Output with no eval in flight lands in the log, not in anyone's result.
+        await wire.send(b"OUT stdout 4\nlate")
+        async with asyncio.timeout(5):
+            while b"late" not in wire.log.getvalue():
+                await asyncio.sleep(0.01)
+
+
+async def test_connection_drops_a_stale_result() -> None:
+    """The RES of an abandoned eval must not resolve the next eval's future."""
+    async with _Wire() as wire:
+        await wire.send(b"RDY t 0\n")
+        abandoned = wire.conn.begin_eval(None)
+        wire.conn.end_eval(abandoned)  # cancelled and recovered from
+        await wire.send(b"RES 1 int 0\n")
+        pending = wire.conn.begin_eval(None)
+        await wire.send(b"RES 2 ok 1\n5")
+        assert await asyncio.wait_for(pending.future, 5) == ("ok", b"5")
+        assert not abandoned.future.done()
+
+
+async def test_connection_poisons_waiters_when_the_socket_closes() -> None:
+    """A blocked eval wakes with a clean error instead of hanging forever."""
+    async with _Wire() as wire:
+        await wire.send(b"RDY t 0\n")
+        pending = wire.conn.begin_eval(None)
+        wire.writer.close()
+        with pytest.raises(RuntimeError, match="exited"):
+            await asyncio.wait_for(pending.future, 5)
+        assert wire.conn.closed.is_set()
+        # Evals started after death fail immediately, with the same message.
+        late = wire.conn.begin_eval(None)
+        with pytest.raises(RuntimeError, match="exited"):
+            await late.future
 
 
 # ---- integration tests (need Julia) ----------------------------------------
@@ -148,9 +190,9 @@ async def test_eval_persistence_streaming_and_error() -> None:
 async def test_huge_error_frame_does_not_kill_session() -> None:
     """A giant error payload comes back as a normal error, not a false death.
 
-    A deep error's base64 frame can exceed asyncio's 64 KiB readline default, which
-    would look like the process died. The kernel raises the transport limit and caps
-    the payload server-side, so the error returns bounded and the session survives.
+    Frames are length-prefixed so size alone can't break the transport; the
+    server additionally caps the result payload so a pathological error message
+    returns bounded and readable.
     """
     async with JuliaKernel(KernelConfig()) as k:
         r = await k.eval('error("X" ^ 200_000)')
@@ -236,15 +278,17 @@ async def test_cancelled_eval_interrupts_and_preserves_state() -> None:
     async with JuliaKernel(KernelConfig()) as k:
         await k.eval("kept = 123")  # state that must survive the cancel
         task = asyncio.create_task(k.eval("for i in 1:1000; sleep(0.1); end; 1"))
-        await asyncio.sleep(1.0)  # let it enter the loop
+        await asyncio.sleep(0.3)  # let it enter the loop
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         assert k.running, "the session must survive a cancelled eval"
         assert k.cancel_preserved_state, "state should be preserved, not restarted"
         # No protocol desync (results align with their code) and state is intact.
-        assert (await k.eval("kept + 1")).output == "124"
-        assert (await k.eval("2 + 2")).output == "4"
+        # Bounded waits: recovery must come from the interrupt, not from the
+        # 100-second loop quietly running to completion.
+        assert (await asyncio.wait_for(k.eval("kept + 1"), timeout=15)).output == "124"
+        assert (await asyncio.wait_for(k.eval("2 + 2"), timeout=15)).output == "4"
 
 
 @pytest.mark.integration
@@ -263,11 +307,59 @@ async def test_reset_and_restart_clear_state() -> None:
 
 @pytest.mark.integration
 @needs_julia
-async def test_killed_process_surfaces_as_error_not_a_hang() -> None:
-    """If the process dies mid-eval, the blocked read wakes with a clean error.
+async def test_ccall_output_is_captured() -> None:
+    """Output written by C code (fd 1, bypassing Julia's IO) is still captured.
 
-    The pump feeding a channel pushes a poison marker when it exits, so a read
-    waiting on the dead channel raises instead of hanging forever.
+    The server redirects the fds themselves (dup2), so printf from a solver's C
+    or Fortran dependency lands in the eval's output like any println.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        r = await k.eval(
+            'ccall(:printf, Cint, (Cstring,), "from-c\\n"); Libc.flush_cstdio(); nothing'
+        )
+        assert r.error is None
+        assert "from-c" in r.output
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_interrupt_during_heavy_printing_repeatedly() -> None:
+    """SIGINT lands in the eval; never swallowed by the output pumps; under load.
+
+    Regression test for interrupt misdelivery: the pumps live on the default
+    thread pool, away from the eval loop's interactive thread, so an interrupt
+    arriving mid-flood must reliably stop the eval and leave the session in
+    protocol sync. Repeated because misdelivery was a race, not a certainty.
+    """
+    async with JuliaKernel(KernelConfig()) as k:
+        for i in range(3):
+            task = asyncio.create_task(k.eval("for i in 1:10_000_000; println(i); end"))
+            await asyncio.sleep(0.4)
+            await k.interrupt()
+            r = await asyncio.wait_for(task, timeout=15)
+            assert r.interrupted, f"iteration {i}: expected an interrupt result"
+            clean = await asyncio.wait_for(k.eval('"clean"'), timeout=15)
+            assert clean.value_repr == '"clean"', f"iteration {i}: protocol out of sync"
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_background_task_output_stays_out_of_the_result() -> None:
+    """Output printed by a task after its eval returned isn't in that result."""
+    async with JuliaKernel(KernelConfig()) as k:
+        r = await k.eval('@async (sleep(0.6); println("LATE")); nothing')
+        assert "LATE" not in r.output
+        await asyncio.sleep(1.0)  # the stray print lands while idle, into the log
+        assert (await k.eval("1 + 1")).value_repr == "2"
+
+
+@pytest.mark.integration
+@needs_julia
+async def test_killed_process_surfaces_as_error_not_a_hang() -> None:
+    """If the process dies mid-eval, the blocked eval wakes with a clean error.
+
+    The connection poisons the pending eval's future when the control socket or
+    the process pipes close, so the await raises instead of hanging forever.
     """
     async with JuliaKernel(KernelConfig()) as k:
         task = asyncio.create_task(k.eval("sleep(60)"))
