@@ -47,19 +47,32 @@ jobs:
       - name: Cache Julia artifacts
         uses: julia-actions/cache@v2
 
+      # The envs include GLMakie, which needs an OpenGL context even to
+      # precompile; the runner is headless, so provide a virtual X server plus
+      # Mesa software GL (same recipe as the plot-integration lane).
+      - name: Install headless OpenGL (xvfb + Mesa)
+        run: sudo apt-get update && sudo apt-get install -y xvfb xorg-dev mesa-utils libgl1 libgl1-mesa-dri
+
       # Sync the shared JutulAgent package into the template (it lives once in
       # julia_runtime/ and is copied in at bootstrap; an in-place instantiate must
       # do the same so the env's relative [sources] resolves). Then refresh the
       # registry so a fresh resolve sees the latest releases and instantiate from
-      # Project + [sources].
+      # Project + [sources]. Precompilation is split out as an explicit
+      # Pkg.precompile(), which throws when a direct dependency fails — a bare
+      # Pkg.instantiate() only auto-precompiles best-effort and exits 0 even if
+      # GLMakie and the warm packages all failed, turning the lane green on a
+      # broken env.
       - name: Instantiate ${{ matrix.simulator }} env
         run: >
           uv run python -c "from pathlib import Path; from jutul_agent.workspace import
           sync_shared_julia_package as s;
           s(Path('src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env'))" &&
-          julia --project=src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env
+          xvfb-run -a julia
+          --project=src/jutul_agent/simulators/${{ matrix.simulator }}/julia_env
           --startup-file=no
-          -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'
+          -e 'using Pkg; Pkg.Registry.update();
+          withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end;
+          Pkg.precompile()'
 
       - name: Smoke test (env loads + using ${{ matrix.simulator }})
         run: uv run pytest tests/test_simulators_smoke.py -k ${{ matrix.simulator }} -ra

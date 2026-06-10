@@ -45,7 +45,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync --locked --extra eval
 
       # The `integration` tests need a live Julia runtime (and, for the plot
       # tests, a GLMakie-instantiated JutulDarcy env). That's too heavy for the
@@ -130,7 +130,9 @@ jobs:
           s(Path('src/jutul_agent/simulators/jutuldarcy/julia_env'))" &&
           xvfb-run -a julia
           --project=src/jutul_agent/simulators/jutuldarcy/julia_env --startup-file=no
-          -e 'using Pkg; Pkg.Registry.update(); Pkg.instantiate()'
+          -e 'using Pkg; Pkg.Registry.update();
+          withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end;
+          Pkg.precompile()'
 
       - name: Test (plot integration)
         run: uv run pytest tests/integration/test_julia_plot_integration.py -v
