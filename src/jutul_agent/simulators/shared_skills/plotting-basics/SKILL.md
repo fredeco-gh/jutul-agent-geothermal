@@ -1,6 +1,6 @@
 ---
 name: plotting-basics
-description: How to plot with julia_plot: native plotters, live windows, and seeing your own plots
+description: "How to plot with julia_plot: native plotters, live windows, and seeing your own plots"
 ---
 
 # Plotting basics

@@ -93,3 +93,25 @@ def test_every_simulator_has_env_template_and_overview_skill() -> None:
         overview = adapter.skills_dir / f"{name}-overview" / "SKILL.md"
         assert overview.exists(), f"missing overview skill for {name}: {overview}"
 
+
+def test_every_skill_frontmatter_parses_with_name_and_description() -> None:
+    """A malformed frontmatter makes deepagents silently skip the skill.
+
+    An unquoted colon in ``description:`` is enough; the skill then never
+    reaches the agent, with only a session-time warning to show for it.
+    """
+    import yaml
+
+    skill_files = list(SHARED_SKILLS_DIR.glob("*/SKILL.md"))
+    for name in registry.names():
+        skill_files.extend(registry.get(name).skills_dir.glob("*/SKILL.md"))
+    assert skill_files
+
+    for skill in skill_files:
+        text = skill.read_text(encoding="utf-8")
+        assert text.startswith("---\n"), f"{skill}: missing frontmatter"
+        frontmatter = text.split("---\n", 2)[1]
+        meta = yaml.safe_load(frontmatter)
+        assert isinstance(meta, dict), f"{skill}: frontmatter is not a mapping"
+        assert meta.get("name"), f"{skill}: frontmatter lacks name"
+        assert meta.get("description"), f"{skill}: frontmatter lacks description"

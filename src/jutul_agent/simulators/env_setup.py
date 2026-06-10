@@ -152,6 +152,14 @@ def resolve_env_package_sources(julia_project: Path) -> dict[str, tuple[Path, bo
 # Install deps without precompiling: auto-precompile is off so one package's
 # precompile error can't abort the download/resolve step.
 _INSTANTIATE = 'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.instantiate(); end'
+_UPDATE = 'withenv("JULIA_PKG_PRECOMPILE_AUTO" => "0") do; Pkg.update(); end'
+# A registry refresh needs the network; failing it must not block offline use,
+# where the local registry copy is the freshest knowledge available anyway.
+_REGISTRY_UPDATE = (
+    "try; Pkg.Registry.update(); catch e; "
+    '@warn "Registry update failed (offline?); resolving against the local copy" '
+    "exception=e; end"
+)
 # Precompile everything that can be, best-effort. GLMakie is a default dep but can
 # fail to precompile on a headless box with no GL/display (Makie issue #2791); that
 # must not break the env, so we swallow the rest (plotting then errors at use).
@@ -269,6 +277,23 @@ def resolve_and_instantiate(
     if precompile:
         cmds.append(_PRECOMPILE)
     _run_pkg(project, cmds, capture=capture)
+
+
+def update_env(project: Path) -> None:
+    """Pull every dependency to the latest registry-compatible version.
+
+    Envs carry no version pins, so a fresh instantiate tracks upstream while
+    an existing manifest freezes whatever the registry served at build time.
+    ``Pkg.update`` re-resolves the manifest the way a fresh build would,
+    which is what keeps a cached env aligned with current releases. A failed
+    resolve raises ``EnvSetupError``: a stale env should be a loud stop, not
+    a silent result. Precompile is tolerant the same way the bootstrap is (a
+    headless GL failure warns), and the marker is refreshed so later
+    reconciles stay cheap.
+    """
+
+    _run_pkg(project, ["using Pkg", _REGISTRY_UPDATE, _UPDATE, _PRECOMPILE])
+    mark_env_precompiled(project)
 
 
 def _run_pkg(project: Path, cmds: list[str], *, capture: bool = False, echo: bool = True) -> None:
