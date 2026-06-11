@@ -100,8 +100,8 @@ uv run mkdocs serve     # live-preview at http://127.0.0.1:8000
 uv run mkdocs build --strict
 ```
 
-Publishing is the `Docs` workflow, which builds the site and deploys it to
-GitHub Pages.
+The `Docs` workflow checks the strict build on docs-touching pull requests
+and deploys the site to GitHub Pages when docs change on main.
 
 The architecture diagram is TikZ source (`docs/assets/architecture.tex`)
 compiled offline to `architecture-light.svg` and `architecture-dark.svg`.
