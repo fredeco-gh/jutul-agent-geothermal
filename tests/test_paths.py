@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 from jutul_agent.paths import (
@@ -77,8 +78,11 @@ def test_resolve_in_workspace_rejects_outside_paths(tmp_path: Path) -> None:
     set_workspace_root(ws)
 
     # Real host paths outside the workspace are rejected, matching the file
-    # tools' rule, rather than silently rerooted under the workspace.
-    assert resolve_in_workspace("/tmp/random.html") is None
+    # tools' rule, rather than silently rerooted under the workspace. The
+    # /tmp literal is host-absolute only on POSIX; on Windows a leading-slash
+    # string has no drive letter and is a virtual path by design.
+    if os.name == "posix":
+        assert resolve_in_workspace("/tmp/random.html") is None
     assert resolve_in_workspace(str(tmp_path / "elsewhere.txt")) is None
 
     # `..` escapes are rejected whatever their form.
