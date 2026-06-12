@@ -6,7 +6,6 @@ import argparse
 import asyncio
 import contextlib
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +16,14 @@ from jutul_agent.interfaces.cli._helpers import (
     known_packages_map,
 )
 from jutul_agent.paths import workspace_root
-from jutul_agent.session import session_dir, write_last_session
+from jutul_agent.session import (
+    default_session_id,
+    list_sessions,
+    read_last_session,
+    resolve_session_id,
+    session_dir,
+    write_last_session,
+)
 from jutul_agent.simulators import registry
 from jutul_agent.workspace import (
     auto_detect_simulator,
@@ -35,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Other commands: `jutul-agent init|setup [--sim <name>]`, "
             "`jutul-agent doctor`, `jutul-agent transcript [<id>]`, "
-            "`jutul-agent eval <suite> --model <id>`. "
+            "`jutul-agent sessions`, `jutul-agent eval <suite> --model <id>`. "
             "(`setup` is an alias for `init`.)"
         ),
     )
@@ -73,6 +79,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     add_workspace_flags(parser)
+    parser.add_argument(
+        "--continue",
+        dest="continue_last",
+        action="store_true",
+        help="Continue the most recent session in this workspace.",
+    )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="SESSION",
+        help=(
+            "Resume an earlier session by id (or unique prefix). With no "
+            "value, pick from a list of recent sessions."
+        ),
+    )
     parser.add_argument(
         "--ephemeral-memory",
         action="store_true",
@@ -120,7 +143,15 @@ def dispatch(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        return asyncio.run(_run_session(args, adapter, config))
+        resume_id = _resolve_resume_id(args)
+    except _ResumeCancelled:
+        return 0
+    except _ResumeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        return asyncio.run(_run_session(args, adapter, config, resume_id=resume_id))
     except KeyboardInterrupt:
         # Ctrl+C during the synchronous startup (Julia kernel, env bootstrap,
         # warm-up), before the TUI takes over input. Exit cleanly instead of
@@ -129,10 +160,75 @@ def dispatch(args: argparse.Namespace) -> int:
         return 130
 
 
+class _ResumeError(Exception):
+    """A --continue/--resume request that cannot be satisfied."""
+
+
+class _ResumeCancelled(Exception):
+    """The user declined to pick a session from the resume list."""
+
+
+def _resolve_resume_id(args: argparse.Namespace) -> str | None:
+    """The session id to resume, or ``None`` for a fresh session."""
+    if args.continue_last and args.resume is not None:
+        raise _ResumeError("--continue and --resume are mutually exclusive.")
+
+    if args.continue_last:
+        sid = read_last_session()
+        if sid is None or not (session_dir(sid) / "trace.sqlite").exists():
+            raise _ResumeError("no previous session found in this workspace.")
+        return sid
+
+    if args.resume is None:
+        return None
+    if args.resume:
+        sid = resolve_session_id(args.resume)
+        if sid is None:
+            raise _ResumeError(
+                f"no unique session matches {args.resume!r}. "
+                "Run `jutul-agent sessions` to list them."
+            )
+        return sid
+    return _pick_session()
+
+
+def _pick_session(limit: int = 15) -> str:
+    """Interactive resume picker: list recent sessions, read one choice."""
+    from jutul_agent.interfaces.cli.sessions import format_session_line
+
+    sessions = list_sessions()[:limit]
+    if not sessions:
+        raise _ResumeError("no previous sessions found in this workspace.")
+    if not sys.stdin.isatty():
+        raise _ResumeError("--resume needs a session id when stdin is not a terminal.")
+
+    print("Recent sessions:", file=sys.stderr)
+    for index, info in enumerate(sessions, start=1):
+        print(f"  {index:2}. {format_session_line(info)}", file=sys.stderr)
+    try:
+        answer = input("Resume which session? [number, or Enter to cancel] ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise _ResumeCancelled() from None
+    if not answer:
+        raise _ResumeCancelled()
+    try:
+        index = int(answer)
+    except ValueError:
+        sid = resolve_session_id(answer)
+        if sid is None:
+            raise _ResumeError(f"no unique session matches {answer!r}.") from None
+        return sid
+    if not 1 <= index <= len(sessions):
+        raise _ResumeError(f"pick a number between 1 and {len(sessions)}.")
+    return sessions[index - 1].session_id
+
+
 async def _run_session(
     args: argparse.Namespace,
     adapter: Any,
     config: Any,
+    *,
+    resume_id: str | None = None,
 ) -> int:
     from jutul_agent.julia.requirements import JuliaRequirementError, require_julia
     from jutul_agent.juliakernel import JuliaStartupError, KernelConfig
@@ -167,11 +263,13 @@ async def _run_session(
             print(f"error: {exc}", file=sys.stderr)
             return 1
 
-    session_id = str(uuid.uuid4())
+    session_id = resume_id or default_session_id()
     state_dir = session_dir(session_id)
     state_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Workspace:     {ws}", file=sys.stderr)
+    if resume_id:
+        print(f"Resuming:      {session_id}", file=sys.stderr)
     print(f"Julia project: {julia_project}", file=sys.stderr)
     _warn_if_plotting_unavailable()
 
@@ -190,7 +288,13 @@ async def _run_session(
         )
         try:
             return await _run_with_backend(
-                kernel_config, args, adapter, config, session_id, state_dir
+                kernel_config,
+                args,
+                adapter,
+                config,
+                session_id,
+                state_dir,
+                resuming=bool(resume_id),
             )
         except JuliaStartupError as exc:
             print(f"\nerror: {exc}", file=sys.stderr)
@@ -303,6 +407,8 @@ async def _run_with_backend(
     config: Any,
     session_id: str,
     state_dir: Path,
+    *,
+    resuming: bool = False,
 ) -> int:
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -319,13 +425,22 @@ async def _run_with_backend(
     open_windows = can_open_windows(interactive_session=not args.prompt)
 
     async with JuliaKernel(kernel_config) as julia:
-        session = Session.create(
-            julia=julia,
-            simulator=adapter,
-            session_id=session_id,
-            ephemeral_memory=args.ephemeral_memory,
-            open_windows=open_windows,
-        )
+        if resuming:
+            session = Session.resume(
+                julia=julia,
+                simulator=adapter,
+                session_id=session_id,
+                ephemeral_memory=args.ephemeral_memory,
+                open_windows=open_windows,
+            )
+        else:
+            session = Session.create(
+                julia=julia,
+                simulator=adapter,
+                session_id=session_id,
+                ephemeral_memory=args.ephemeral_memory,
+                open_windows=open_windows,
+            )
         write_last_session(session.session_id)
         warmup_task = _start_warmup(julia, adapter.warm_package)
         try:
@@ -415,6 +530,7 @@ def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
 async def _headless_turn(agent: Any, session: Any, prompt: str) -> int:
     from jutul_agent.agent.turns import TurnRunner
 
+    session.adopt_title(prompt)
     runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
     result = await runner.run_prompt(prompt)
     if result.interrupts:

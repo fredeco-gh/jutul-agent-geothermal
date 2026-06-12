@@ -13,7 +13,12 @@ from __future__ import annotations
 from jutul_agent.simulators.base import SimulatorAdapter
 
 
-def assemble_session_prompt(adapter: SimulatorAdapter, *, open_windows: bool = True) -> str:
+def assemble_session_prompt(
+    adapter: SimulatorAdapter,
+    *,
+    open_windows: bool = True,
+    resumed: bool = False,
+) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
         "Primary Julia packages: " + ", ".join(adapter.package_imports) + ".",
@@ -21,10 +26,30 @@ def assemble_session_prompt(adapter: SimulatorAdapter, *, open_windows: bool = T
         _ground_rules(),
         _display_note(open_windows),
     ]
+    if resumed:
+        sections.append(_resume_note())
     hints = adapter.domain_hints.strip()
     if hints:
         sections.append("Simulator hints:\n" + hints)
     return "\n\n".join(sections) + "\n"
+
+
+def _resume_note() -> str:
+    """Tell the agent the conversation outlived the Julia process.
+
+    Without it the agent assumes variables and loaded packages from earlier
+    turns still exist and walks into UndefVarErrors instead of re-running
+    its setup.
+    """
+
+    return (
+        "Session continuity: this conversation was resumed from an earlier "
+        "session. The chat history is restored, but the Julia REPL restarted "
+        "with the process: no variables, loaded packages, or in-memory results "
+        "from earlier turns exist now. Re-run the necessary setup before "
+        "building on earlier results. Files written to the workspace and "
+        "earlier artifacts are still on disk."
+    )
 
 
 def _display_note(open_windows: bool) -> str:

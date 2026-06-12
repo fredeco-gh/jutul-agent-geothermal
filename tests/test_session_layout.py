@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from jutul_agent.paths import set_state_home, set_workspace_root, workspace_state_dir
-from jutul_agent.session import read_last_session, sessions_root, write_last_session
+from jutul_agent.session import Session, read_last_session, sessions_root, write_last_session
 
 
 def test_last_session_round_trip_via_state_root(tmp_path: Path) -> None:
@@ -27,3 +27,184 @@ def test_last_session_round_trip_via_workspace_state_dir(tmp_path: Path) -> None
 
 def test_sessions_root_honours_explicit_state_root(tmp_path: Path) -> None:
     assert sessions_root(tmp_path) == tmp_path / "sessions"
+
+
+def test_default_session_id_is_dated_and_sortable() -> None:
+    from datetime import datetime
+
+    from jutul_agent.paths import is_dated_session_id
+    from jutul_agent.session import default_session_id
+
+    earlier = default_session_id(datetime(2026, 6, 12, 9, 5))
+    later = default_session_id(datetime(2026, 6, 12, 23, 15))
+    assert is_dated_session_id(earlier)
+    assert is_dated_session_id(later)
+    assert earlier.startswith("2026-06-12-0905-")
+    assert sorted([later, earlier]) == [earlier, later]
+
+
+def test_session_output_dir_uses_dated_id_directly(tmp_path: Path) -> None:
+    from jutul_agent.paths import session_output_dir
+
+    dated = session_output_dir("2026-06-12-2315-3f2a", workspace=tmp_path)
+    assert dated.name == "2026-06-12-2315-3f2a"
+    legacy = session_output_dir("0a1b2c3d-aaaa-bbbb-cccc-0123456789ab", workspace=tmp_path)
+    assert legacy.name.endswith("-0a1b2c3d")  # legacy UUIDs keep the date prefix
+
+
+def test_derive_session_title_and_slug() -> None:
+    from jutul_agent.session import _slugify_title, derive_session_title
+
+    title = derive_session_title("  Set up a constant-current discharge\nplot it too")
+    assert title == "Set up a constant-current discharge"
+    assert _slugify_title(title) == "set-up-a-constant-current"
+
+    long = derive_session_title("word " * 40)
+    assert len(long) <= 81  # 80 chars + ellipsis
+    assert long.endswith("…")
+    assert derive_session_title("  \n\t ") == ""
+
+
+def _title_session(tmp_path: Path):
+    from jutul_agent.trace import TraceLog
+
+    state = tmp_path / "state-dir"
+    state.mkdir(parents=True)
+    out = tmp_path / "out" / "2026-06-12-0101-abcd"
+    out.mkdir(parents=True)
+    trace = TraceLog(state / "trace.sqlite")
+    return Session(
+        julia=None,
+        state_dir=state,
+        output_dir=out,
+        trace=trace,
+        simulator=None,
+        session_id="2026-06-12-0101-abcd",
+    )
+
+
+def test_adopt_title_renames_output_and_records(tmp_path: Path) -> None:
+    from jutul_agent.session import read_session_title
+
+    session = _title_session(tmp_path)
+    session.adopt_title("Run a chen_2020 discharge and plot voltage")
+
+    assert session.session_id == "2026-06-12-0101-abcd"  # immutable
+    assert session.output_dir.name == "2026-06-12-0101-abcd-run-a-chen-2020-discharge-and"
+    assert session.output_dir.exists()
+    assert read_session_title(session.state_dir) == "Run a chen_2020 discharge and plot voltage"
+    kinds = [event.kind for event in session.trace.iter_events()]
+    assert "session_title" in kinds
+
+    # Idempotent: the second prompt of the session never re-titles.
+    before = session.output_dir
+    session.adopt_title("Another prompt entirely")
+    assert session.output_dir == before
+    session.trace.close()
+
+
+def test_adopt_title_without_usable_slug_keeps_dir(tmp_path: Path) -> None:
+    session = _title_session(tmp_path)
+    before = session.output_dir
+    session.adopt_title("???!!!")
+    assert session.output_dir == before  # title with no slug → no rename
+    session.trace.close()
+
+
+def test_adopt_title_skips_rename_when_output_is_state_dir(tmp_path: Path) -> None:
+    from jutul_agent.session import read_session_title
+    from jutul_agent.trace import TraceLog
+
+    state = tmp_path / "solo"
+    state.mkdir()
+    trace = TraceLog(state / "trace.sqlite")
+    session = Session(
+        julia=None,
+        state_dir=state,
+        output_dir=state,
+        trace=trace,
+        simulator=None,
+        session_id="2026-06-12-0101-eeee",
+    )
+    session.adopt_title("Fallback layout")
+    assert session.output_dir == state  # never rename the live state dir
+    assert read_session_title(state) == "Fallback layout"
+    trace.close()
+
+
+def test_list_sessions_sorts_newest_first_with_titles(tmp_path: Path) -> None:
+    from jutul_agent.session import list_sessions
+    from jutul_agent.trace import TraceLog
+
+    root = tmp_path / "sessions"
+    for sid, title in [
+        ("2026-06-10-0900-aaaa", "older work"),
+        ("2026-06-12-2300-bbbb", "newest work"),
+    ]:
+        d = root / sid
+        d.mkdir(parents=True)
+        TraceLog(d / "trace.sqlite").close()
+        (d / "title").write_text(title + "\n", encoding="utf-8")
+    (root / "not-a-session").mkdir()  # no trace.sqlite → ignored
+
+    infos = list_sessions(tmp_path)
+    assert [info.session_id for info in infos] == [
+        "2026-06-12-2300-bbbb",
+        "2026-06-10-0900-aaaa",
+    ]
+    assert infos[0].title == "newest work"
+    assert infos[0].started.strftime("%H%M") == "2300"
+
+
+def test_resolve_session_id_exact_and_prefix(tmp_path: Path) -> None:
+    from jutul_agent.session import resolve_session_id
+    from jutul_agent.trace import TraceLog
+
+    root = tmp_path / "sessions"
+    for sid in ("2026-06-10-0900-aaaa", "2026-06-10-0900-abcd", "2026-06-12-2300-bbbb"):
+        d = root / sid
+        d.mkdir(parents=True)
+        TraceLog(d / "trace.sqlite").close()
+
+    assert resolve_session_id("2026-06-12-2300-bbbb", state_root=tmp_path) is not None
+    assert resolve_session_id("2026-06-12", state_root=tmp_path) == "2026-06-12-2300-bbbb"
+    assert resolve_session_id("2026-06-10-0900-a", state_root=tmp_path) is None  # ambiguous
+    assert resolve_session_id("nope", state_root=tmp_path) is None
+    assert resolve_session_id("", state_root=tmp_path) is None
+
+
+def test_session_resume_reopens_state_and_finds_titled_output(
+    tmp_path: Path, fake_julia, fake_adapter
+) -> None:
+    original = Session.create(julia=fake_julia, state_root=tmp_path, simulator=fake_adapter)
+    original.adopt_title("Resume me later please")
+    titled_output = original.output_dir
+    original.finalize()
+
+    resumed = Session.resume(
+        julia=fake_julia,
+        simulator=fake_adapter,
+        session_id=original.session_id,
+        state_root=tmp_path,
+    )
+    assert resumed.resumed is True
+    assert resumed.session_id == original.session_id
+    assert resumed.state_dir == original.state_dir
+    assert resumed.output_dir == titled_output  # rediscovered the slugged folder
+    assert resumed.title == "Resume me later please"
+    kinds = [event.kind for event in resumed.trace.iter_events()]
+    assert kinds.count("session_start") == 1
+    assert kinds[-1] == "session_resume"
+    resumed.finalize()
+
+
+def test_session_resume_requires_existing_trace(tmp_path: Path, fake_julia, fake_adapter) -> None:
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        Session.resume(
+            julia=fake_julia,
+            simulator=fake_adapter,
+            session_id="2026-01-01-0000-dead",
+            state_root=tmp_path,
+        )

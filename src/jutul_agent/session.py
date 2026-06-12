@@ -2,16 +2,117 @@
 
 from __future__ import annotations
 
+import contextlib
+import re
 import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from jutul_agent.julia.session import JuliaSession
 from jutul_agent.paths import session_output_dir, workspace_state_dir
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import TraceLog
+
+TITLE_FILENAME = "title"
+_SLUG_MAX_CHARS = 32
+_TITLE_MAX_CHARS = 80
+
+
+def default_session_id(now: datetime | None = None) -> str:
+    """A sortable session id: minute-resolution timestamp + short random suffix.
+
+    ``2026-06-12-2315-3f2a`` sorts chronologically in every directory listing;
+    the suffix keeps two sessions started the same minute distinct.
+    """
+    stamp = (now or datetime.now()).strftime("%Y-%m-%d-%H%M")
+    return f"{stamp}-{uuid.uuid4().hex[:4]}"
+
+
+def _slugify_title(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    if len(slug) > _SLUG_MAX_CHARS:
+        slug = slug[:_SLUG_MAX_CHARS].rsplit("-", 1)[0] or slug[:_SLUG_MAX_CHARS]
+    return slug
+
+
+def derive_session_title(prompt: str) -> str:
+    """A short human-readable title from the session's first prompt."""
+    first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
+    first_line = re.sub(r"\s+", " ", first_line)
+    if len(first_line) > _TITLE_MAX_CHARS:
+        first_line = first_line[:_TITLE_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+    return first_line
+
+
+def read_session_title(state_dir: Path) -> str | None:
+    """The stored title for a session state dir, if one was adopted."""
+    path = state_dir / TITLE_FILENAME
+    try:
+        title = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return title or None
+
+
+@dataclass(frozen=True)
+class SessionInfo:
+    """One resumable session on disk, as shown by listings and pickers."""
+
+    session_id: str
+    state_dir: Path
+    title: str | None
+    started: datetime
+
+
+def _started_from_id(session_id: str) -> datetime | None:
+    try:
+        return datetime.strptime(session_id[:15], "%Y-%m-%d-%H%M")
+    except ValueError:
+        return None
+
+
+def list_sessions(state_root: Path | None = None) -> list[SessionInfo]:
+    """Every session under this workspace's state dir, newest first.
+
+    The start time comes from the timestamped id when present (legacy UUID
+    sessions fall back to the directory's mtime), so mixed listings still
+    sort sensibly.
+    """
+    root = sessions_root(state_root)
+    if not root.is_dir():
+        return []
+    infos: list[SessionInfo] = []
+    for entry in root.iterdir():
+        if not entry.is_dir() or not (entry / "trace.sqlite").exists():
+            continue
+        started = _started_from_id(entry.name)
+        if started is None:
+            started = datetime.fromtimestamp(entry.stat().st_mtime)
+        infos.append(
+            SessionInfo(
+                session_id=entry.name,
+                state_dir=entry,
+                title=read_session_title(entry),
+                started=started,
+            )
+        )
+    infos.sort(key=lambda info: info.started, reverse=True)
+    return infos
+
+
+def resolve_session_id(text: str, *, state_root: Path | None = None) -> str | None:
+    """Resolve an exact session id or a unique prefix to a stored session."""
+    text = text.strip()
+    if not text:
+        return None
+    ids = [info.session_id for info in list_sessions(state_root)]
+    if text in ids:
+        return text
+    matches = [sid for sid in ids if sid.startswith(text)]
+    return matches[0] if len(matches) == 1 else None
 
 
 def sessions_root(state_root: Path | None = None) -> Path:
@@ -46,6 +147,19 @@ def write_last_session(session_id: str, *, state_root: Path | None = None) -> No
     p = last_session_path(state_root)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(session_id, encoding="utf-8")
+
+
+def _existing_output_dir(session_id: str) -> Path | None:
+    """The session's existing output dir, accounting for an adopted title slug.
+
+    ``adopt_title`` renames ``sessions/<sid>/`` to ``sessions/<sid>-<slug>/``,
+    so a resumed session has to find its folder by prefix.
+    """
+    base = session_output_dir(session_id)
+    if base.is_dir():
+        return base
+    matches = sorted(base.parent.glob(base.name + "-*")) if base.parent.is_dir() else []
+    return next((m for m in matches if m.is_dir()), None)
 
 
 def _ensure_jutul_agent_gitignore(output_dir: Path) -> None:
@@ -83,6 +197,11 @@ class Session:
     # Whether julia_plot may open a live Makie window for the user (interactive
     # session with a display). Headless and one-shot runs render offscreen to a file.
     open_windows: bool = False
+    # Human-readable title derived from the first prompt (see ``adopt_title``).
+    title: str | None = None
+    # Whether this session continues an earlier conversation. The thread state
+    # is restored from the checkpointer; the Julia REPL is not.
+    resumed: bool = False
     _ephemeral_memory_dir: Path | None = field(default=None, repr=False)
 
     @classmethod
@@ -96,7 +215,7 @@ class Session:
         ephemeral_memory: bool = False,
         open_windows: bool = False,
     ) -> Session:
-        sid = session_id or str(uuid.uuid4())
+        sid = session_id or default_session_id()
         dir_ = session_dir(sid, state_root=state_root)
         dir_.mkdir(parents=True, exist_ok=True)
 
@@ -128,11 +247,92 @@ class Session:
             _ephemeral_memory_dir=ephemeral_dir,
         )
 
+    @classmethod
+    def resume(
+        cls,
+        *,
+        julia: JuliaSession,
+        simulator: SimulatorAdapter,
+        session_id: str,
+        state_root: Path | None = None,
+        ephemeral_memory: bool = False,
+        open_windows: bool = False,
+    ) -> Session:
+        """Reopen an earlier session: same id, trace, and output folder.
+
+        The conversation itself comes back through the per-session
+        checkpointer (the thread key is the session id); this restores the
+        on-disk identity around it. The Julia kernel is the caller's fresh
+        instance — REPL state does not survive across processes.
+        """
+        dir_ = session_dir(session_id, state_root=state_root)
+        if not (dir_ / "trace.sqlite").exists():
+            raise FileNotFoundError(f"no session trace at {dir_}")
+
+        out_dir = _existing_output_dir(session_id) or session_output_dir(session_id)
+        try:
+            (out_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+            _ensure_jutul_agent_gitignore(out_dir)
+        except OSError:
+            out_dir = dir_
+
+        trace = TraceLog(dir_ / "trace.sqlite")
+        trace.append(
+            "session_resume",
+            {"session_id": session_id, "simulator": simulator.name},
+        )
+        ephemeral_dir = (
+            Path(tempfile.mkdtemp(prefix="jutul-agent-ephemeral-")) if ephemeral_memory else None
+        )
+        return cls(
+            julia=julia,
+            state_dir=dir_,
+            output_dir=out_dir,
+            trace=trace,
+            simulator=simulator,
+            session_id=session_id,
+            ephemeral_memory=ephemeral_memory,
+            open_windows=open_windows,
+            title=read_session_title(dir_),
+            resumed=True,
+            _ephemeral_memory_dir=ephemeral_dir,
+        )
+
     def memory_dir(self, *, workspace_memory: Path) -> Path:
         """Resolved memory directory for this session."""
         if self.ephemeral_memory and self._ephemeral_memory_dir is not None:
             return self._ephemeral_memory_dir
         return workspace_memory
+
+    def adopt_title(self, prompt: str) -> None:
+        """Derive the session title from its first prompt and adopt it.
+
+        Stores the title beside the trace (for session listings), records it
+        as a trace event, and renames the *output* directory to carry a slug
+        so result folders read like the work they hold. The state directory
+        and ``session_id`` never change: open SQLite handles, the ``/session/``
+        mount, and the checkpointer thread key all point there. Best-effort
+        and idempotent; a failed rename just keeps the plain name.
+        """
+        if self.title is not None:
+            return
+        title = derive_session_title(prompt)
+        if not title:
+            return
+        self.title = title
+        with contextlib.suppress(OSError):
+            (self.state_dir / TITLE_FILENAME).write_text(title + "\n", encoding="utf-8")
+        self.trace.append("session_title", {"session_id": self.session_id, "title": title})
+
+        slug = _slugify_title(title)
+        if not slug or self.output_dir == self.state_dir:
+            return
+        target = self.output_dir.with_name(f"{self.output_dir.name}-{slug}")
+        try:
+            self.output_dir.rename(target)
+        except OSError:
+            return
+        self.output_dir = target
 
     def finalize(self) -> None:
         self.trace.append("session_end", {"session_id": self.session_id})
