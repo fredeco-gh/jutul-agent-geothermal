@@ -27,11 +27,14 @@ writer and reader API, though plain `sqlite3` works too.
 | Kind | Written by | Payload |
 |---|---|---|
 | `session_start` | `Session.create` | `session_id`, `simulator` |
+| `session_resume` | `Session.resume` | `session_id`, `simulator` |
+| `session_title` | `Session.adopt_title` | `session_id`, `title` (from the first prompt) |
 | `session_end` | `Session.finalize` | none |
 | `message_user` | `TurnRunner` | `content` |
 | `message_reasoning` | recorder middleware | `content` (the model's reasoning text) |
 | `message_assistant` | recorder middleware | `content` |
 | `model_usage` | recorder middleware | `input_tokens`, `output_tokens`, `total_tokens`, provider detail fields |
+| `context_compaction` | summarization middleware / `/compact` | `messages_before`, `messages_after`, `manual` (when user-triggered) |
 | `tool_call` | recorder middleware | `id`, `name`, `args` |
 | `tool_result` | recorder middleware | `tool_call_id`, `name`, `content`, `status` |
 | `hitl_request` | `TurnRunner` | the pending tool call awaiting approval |
