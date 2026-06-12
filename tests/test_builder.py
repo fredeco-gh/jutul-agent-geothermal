@@ -76,8 +76,13 @@ def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.Mo
     register_provider_profiles()
     monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)
     monkeypatch.setattr(ollama_client, "context_window", lambda name: 262144)
-    # Cloud stays a spec string so deepagents resolves it + applies its profiles.
-    assert _resolve_model_for_agent("openai:gpt-5.4-mini") == "openai:gpt-5.4-mini"
+    # Cloud models without special construction needs (here: non-reasoning
+    # models) stay spec strings so deepagents resolves them + applies its
+    # profiles.
+    assert _resolve_model_for_agent("google_genai:gemini-2.0-flash") == (
+        "google_genai:gemini-2.0-flash"
+    )
+    assert _resolve_model_for_agent("openai:gpt-4.1-mini") == "openai:gpt-4.1-mini"
     # A version-tagged Ollama id (>1 colon) becomes a built instance whose context
     # is sized from the model and capped at the budget, and; crucially; our
     # harness profile now resolves for it (it does NOT for such a spec as a string).
@@ -89,6 +94,81 @@ def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.Mo
     assert profile.general_purpose_subagent.enabled is False
 
 
+def test_resolve_model_for_agent_enables_openai_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from deepagents.profiles.harness.harness_profiles import _harness_profile_for_model
+    from langchain_core.language_models import BaseChatModel
+
+    from jutul_agent.agent.builder import _resolve_model_for_agent
+
+    register_provider_profiles()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    # The bundled model profile says gpt-5.4-mini reasons → effort + summaries.
+    model = _resolve_model_for_agent("openai:gpt-5.4-mini")
+    assert isinstance(model, BaseChatModel)
+    assert getattr(model, "reasoning", None) == {"effort": "medium", "summary": "auto"}
+    profile = _harness_profile_for_model(model, None)
+    assert profile.general_purpose_subagent.enabled is False
+    # Non-reasoning models pass through as spec strings...
+    assert _resolve_model_for_agent("openai:gpt-4.1-mini") == "openai:gpt-4.1-mini"
+    # ...as do the -chat hybrids, whose profile keeps temperature support and
+    # whose API rejects reasoning.effort.
+    assert _resolve_model_for_agent("openai:gpt-5-chat-latest") == "openai:gpt-5-chat-latest"
+
+
+def test_resolve_model_for_agent_enables_anthropic_thinking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.language_models import BaseChatModel
+
+    from jutul_agent.agent.builder import _resolve_model_for_agent
+
+    register_provider_profiles()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    model = _resolve_model_for_agent("anthropic:claude-sonnet-4-6")
+    assert isinstance(model, BaseChatModel)
+    assert getattr(model, "thinking", None) == {"type": "enabled", "budget_tokens": 10_000}
+    assert getattr(model, "max_tokens", None) == 24_000
+    # A model the installed provider package has no profile for stays a string.
+    assert _resolve_model_for_agent("anthropic:claude-opus-4-8") == "anthropic:claude-opus-4-8"
+
+
+def test_resolve_model_for_agent_degrades_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reading the profile builds the model; with no key the spec string
+    passes through unchanged instead of failing the agent build here."""
+    from jutul_agent.agent.builder import _resolve_model_for_agent
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_ADMIN_KEY", raising=False)
+    assert _resolve_model_for_agent("openai:gpt-5.4-mini") == "openai:gpt-5.4-mini"
+
+
 def test_resolve_model_user_beats_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(MODEL_ENV_VAR, "openai:env")
     assert resolve_model(None, user_model="openai:user") == "openai:user"
+
+
+def test_resolve_model_for_agent_enables_gemini_thoughts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.language_models import BaseChatModel
+
+    from jutul_agent.agent.builder import _resolve_model_for_agent
+
+    register_provider_profiles()
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    # Bundled profile marks it a thinking model → thoughts made visible.
+    model = _resolve_model_for_agent("google_genai:gemini-2.5-flash")
+    assert isinstance(model, BaseChatModel)
+    assert getattr(model, "include_thoughts", None) is True
+    # No profile entry (newer than the package data) → treated as thinking.
+    model = _resolve_model_for_agent("google_genai:gemini-3.5-flash")
+    assert isinstance(model, BaseChatModel)
+    assert getattr(model, "include_thoughts", None) is True
+    # Legacy models the data marks non-reasoning stay spec strings.
+    assert _resolve_model_for_agent("google_genai:gemini-2.0-flash") == (
+        "google_genai:gemini-2.0-flash"
+    )

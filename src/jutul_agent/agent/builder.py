@@ -15,7 +15,7 @@ This module wires everything ``create_deep_agent`` needs in one place:
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ from jutul_agent.agent.memory import (
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
+from jutul_agent.agent.summarization import build_summarization_middleware
 from jutul_agent.agent.tools import (
     make_julia_eval_tool,
     make_record_attempt_tool,
@@ -128,20 +129,110 @@ def _ollama_num_ctx(model_id: str) -> int:
     return min(reported, budget) if reported else budget
 
 
-def _resolve_model_for_agent(model: Any) -> Any:
-    """A pre-built model instance for Ollama, the spec string otherwise.
+# Reasoning visibility: models that can reason get it requested explicitly.
+# OpenAI's recent reasoning models default to effort "none" (no reasoning at
+# all) and stream nothing during the thinking phase unless a summary is
+# requested; Anthropic's extended thinking is off unless a budget is given;
+# Gemini thinks by default but keeps the thoughts hidden.
+_OPENAI_REASONING = {"effort": "medium", "summary": "auto"}
+_ANTHROPIC_THINKING_BUDGET_TOKENS = 10_000
+# Thinking spends from the same output budget as the answer, so the cap must
+# clear the thinking budget with room for a long reply.
+_ANTHROPIC_MAX_TOKENS = 24_000
 
-    deepagents skips profile resolution for specs with more than one colon, so
-    `ollama:<model>:<tag>` ids would otherwise get neither our harness profile
-    nor a context setting. Passing an instance makes deepagents resolve the
-    harness profile by provider, and lets us widen the context window local
-    models need. Cloud providers keep the string so their provider profiles
-    still apply; an already-built model is passed through untouched.
+
+def _model_profile(model_id: str) -> dict[str, Any]:
+    """The provider package's bundled profile for the model (``{}`` unknown).
+
+    Profiles are the maintained capability source — keying decisions on them
+    means new models are covered by upgrading the provider package, never by
+    editing a list here. Reading one builds the model, which needs the
+    provider key; callers treat a raised error as "no settings".
     """
-    if isinstance(model, str) and provider_of(model) == "ollama":
-        from langchain.chat_models import init_chat_model
+    from langchain.chat_models import init_chat_model
 
-        return init_chat_model(model, num_ctx=_ollama_num_ctx(model))
+    return init_chat_model(model_id).profile or {}
+
+
+def _ollama_settings(model_id: str) -> dict[str, Any]:
+    return {"num_ctx": _ollama_num_ctx(model_id)}
+
+
+def _openai_settings(model_id: str) -> dict[str, Any] | None:
+    # The profile must also mark the temperature parameter unsupported: that
+    # separates true reasoning models (which accept reasoning.effort) from
+    # the -chat hybrids (which reject it).
+    profile = _model_profile(model_id)
+    if profile.get("reasoning_output") and profile.get("temperature") is False:
+        return {"reasoning": dict(_OPENAI_REASONING)}
+    return None
+
+
+def _anthropic_settings(model_id: str) -> dict[str, Any] | None:
+    if _model_profile(model_id).get("reasoning_output"):
+        return {
+            "thinking": {
+                "type": "enabled",
+                "budget_tokens": _ANTHROPIC_THINKING_BUDGET_TOKENS,
+            },
+            "max_tokens": _ANTHROPIC_MAX_TOKENS,
+        }
+    return None
+
+
+def _google_settings(model_id: str) -> dict[str, Any] | None:
+    # Gemini thinks by default (level "high" on Gemini 3+); include_thoughts
+    # only makes the thinking visible. An empty profile means the model is
+    # newer than the package's data — those all think; the data marks the
+    # legacy non-thinking models explicitly.
+    profile = _model_profile(model_id)
+    if profile.get("reasoning_output") or not profile:
+        return {"include_thoughts": True}
+    return None
+
+
+# Construction-time keyword arguments per provider, applied when a model spec
+# string is resolved for the agent. The resolution loop is provider-agnostic:
+# adding a provider is one entry here, providers without an entry (and any
+# model whose resolver declines or fails) pass through as plain spec strings.
+# Neither the agent framework nor langchain offers a cross-provider request
+# shape for reasoning, so this registry is where the per-provider shapes live.
+_MODEL_SETTINGS: dict[str, Callable[[str], dict[str, Any] | None]] = {
+    "ollama": _ollama_settings,
+    "openai": _openai_settings,
+    "anthropic": _anthropic_settings,
+    "google_genai": _google_settings,
+}
+
+
+def _resolve_model_for_agent(model: Any) -> Any:
+    """A pre-built model instance when the model needs extra construction
+    arguments, the spec string otherwise.
+
+    Two reasons to pass an instance instead of the spec string. deepagents
+    skips profile resolution for specs with more than one colon, so
+    `ollama:<model>:<tag>` ids would otherwise get neither our harness
+    profile nor a context setting (an instance resolves by provider). And
+    models that can reason get it requested and made visible at construction
+    (``_MODEL_SETTINGS``): without that the model reasons silently or, on
+    recent OpenAI models, not at all. Everything else — unknown providers,
+    models whose resolver declines, failures while probing — keeps the spec
+    string so deepagents builds it exactly as before; an already-built model
+    is passed through untouched.
+    """
+    if not isinstance(model, str):
+        return model
+    settings = _MODEL_SETTINGS.get(provider_of(model))
+    if settings is None:
+        return model
+    try:
+        kwargs = settings(model)
+        if kwargs:
+            from langchain.chat_models import init_chat_model
+
+            return init_chat_model(model, **kwargs)
+    except Exception:
+        pass  # no key yet, unknown model, offline — run with the plain spec
     return model
 
 
@@ -268,16 +359,27 @@ def build_agent(
         else parse_approval_mode(approval_mode)
     )
     subagents = [factory(session) for factory in session.simulator.subagent_factories]
+    model_spec = resolve_model(model)
+    resolved_model = _resolve_model_for_agent(model_spec)
     agent = create_deep_agent(
-        model=_resolve_model_for_agent(resolve_model(model)),
+        model=resolved_model,
         backend=backend,
         tools=tools,
-        system_prompt=assemble_session_prompt(session.simulator, open_windows=session.open_windows),
+        system_prompt=assemble_session_prompt(
+            session.simulator,
+            open_windows=session.open_windows,
+            resumed=session.resumed,
+        ),
         skills=skill_sources(session.simulator),
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),
         middleware=[
             build_memory_middleware(backend),
+            build_summarization_middleware(
+                resolved_model,
+                model_id=model_spec if isinstance(model_spec, str) else None,
+                trace=session.trace,
+            ),
             TraceRecorder(session.trace),
         ],
         checkpointer=checkpointer,
