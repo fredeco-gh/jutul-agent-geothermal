@@ -10,6 +10,9 @@ Slash commands typed into the input box:
 - ``/transcript md``: render the transcript as markdown instead.
 - ``/add-dir <path>``: mount an extra folder so the agent can read/edit it.
 - ``/model [provider:model]``: open the model selector, or switch directly.
+- ``/context``: show how much of the model's context window is used.
+- ``/compact``: summarize older turns to free context space.
+- ``/memory [note | edit [note]]``: view workspace memory, or open it in $EDITOR.
 - ``/clear``: clear the visible log and restore the welcome card.
 - ``/approve``: approve the currently pending tool actions.
 - ``/reject [reason]``: reject the currently pending tool actions.
@@ -31,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -66,6 +69,11 @@ from jutul_agent.interfaces.tui.commands import (
     find_command,
     matching_specs,
 )
+from jutul_agent.interfaces.tui.context_panel import (
+    render_context_panel,
+    status_label,
+    usage_alert,
+)
 from jutul_agent.interfaces.tui.model_menu import (
     ApiKeyModal,
     ModelChoice,
@@ -77,9 +85,11 @@ from jutul_agent.interfaces.tui.widgets import (
     ApprovalBlock,
     MessageBlock,
     PromptGuide,
+    ReasoningBlock,
     StatusBar,
     ToolBlock,
     WelcomeBlock,
+    display_session_id,
 )
 from jutul_agent.open_file import open_path
 from jutul_agent.paths import workspace_root
@@ -95,7 +105,24 @@ if TYPE_CHECKING:
     from textual.timer import Timer
 
 _RESIZE_DEBOUNCE_SECONDS = 0.05
-_SCROLL_DEBOUNCE_SECONDS = 0.03
+# Most prior messages replayed into the log when resuming a session.
+_REPLAY_MAX_MESSAGES = 40
+
+
+def _resolve_editor() -> str | None:
+    """The editor command for ``/memory edit``: ``$VISUAL``/``$EDITOR``, else
+    a platform default, so the command works out of the box."""
+    import os
+    import shutil
+    import sys
+
+    for var in ("VISUAL", "EDITOR"):
+        value = os.environ.get(var)
+        if value:
+            return value
+    if sys.platform == "win32":
+        return "notepad"
+    return next((name for name in ("nano", "vim", "vi") if shutil.which(name)), None)
 
 
 @dataclass
@@ -115,7 +142,7 @@ class _AssistantStream:
     """
 
     prose: MessageBlock | None = None
-    reasoning: MessageBlock | None = None
+    reasoning: ReasoningBlock | None = None
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def append_prose(self, log: VerticalScroll, text: str) -> None:
@@ -137,19 +164,19 @@ class _AssistantStream:
         async with self._lock:
             block = self.reasoning
             if block is None:
-                block = MessageBlock("Reasoning", "reasoning", "")
+                block = ReasoningBlock()
                 self.reasoning = block
                 await log.mount(block)
             elif not block.is_mounted:
                 await block._mounted_event.wait()
             await block.append_content(text)
 
-    async def flush(self) -> None:
+    async def flush(self, *, reasoning_expanded: bool = False) -> None:
         async with self._lock:
             if self.prose is not None:
                 await self.prose.stop_stream()
             if self.reasoning is not None:
-                await self.reasoning.stop_stream()
+                await self.reasoning.finish(expanded=reasoning_expanded)
             self.prose = None
             self.reasoning = None
 
@@ -251,8 +278,13 @@ class TUIApp(App[None]):
         self._busy = False
         self._status_text = "ready"
         self._stream = _AssistantStream()
+        # Context accounting: usage_metadata from the newest/first model call
+        # and the resolved context window (fetched in a background worker).
+        self._last_usage: dict[str, Any] | None = None
+        self._first_usage: dict[str, Any] | None = None
+        self._model_calls = 0
+        self._context_window_tokens: int | None = None
         self._resize_timer: Timer | None = None
-        self._scroll_timer: Timer | None = None
         self._quit_armed = False
         self._quit_timer: Timer | None = None
         # Resolved in ``on_mount``; both widgets are always present.
@@ -286,6 +318,11 @@ class TUIApp(App[None]):
         self.title = "jutul-agent"
         self._refresh_subtitle()
         self._log = self.query_one("#log", VerticalScroll)
+        # Streamed content grows the log continuously; an anchored container
+        # follows it only while the user is at the bottom. Scrolling up releases
+        # the anchor (reading is never interrupted) and returning to the bottom
+        # re-engages it.
+        self._log.anchor()
         self._prompt = self.query_one("#prompt", PromptTextArea)
         self._approval_menu = self.query_one("#approval-menu", ApprovalMenu)
         self._prompt.set_approval_nav_handler(self._handle_approval_nav)
@@ -294,8 +331,12 @@ class TUIApp(App[None]):
         self._refresh_prompt_guide()
         if self._model_label:
             record_recent_model(self._model_label)
+        if self._session.resumed:
+            self._load_usage_from_trace()
+            self.run_worker(self._replay_history(), name="replay")
         if self._warming:
             self.run_worker(self._watch_warmup(), name="warmup-watch")
+        self.run_worker(self._fetch_context_window(), name="ctx-window")
 
     async def _watch_warmup(self) -> None:
         """Clear the 'warming up' indicator once the background warm-up ends.
@@ -311,6 +352,232 @@ class TUIApp(App[None]):
         self._warming = False
         if self.is_mounted:
             self._refresh_prompt_guide()
+
+    async def _fetch_context_window(self) -> None:
+        """Resolve the active model's context window off the event loop."""
+        if not self._model_label:
+            return
+        from jutul_agent.models import context_window
+
+        label = self._model_label
+        window = await asyncio.to_thread(context_window, label)
+        if label != self._model_label:
+            return  # switched while resolving; the new switch refetches
+        self._context_window_tokens = window
+        self._refresh_context_status()
+
+    def _load_usage_from_trace(self) -> None:
+        """Seed context figures from the trace (a resumed session's history)."""
+        usages = [
+            event.payload
+            for event in self._session.trace.iter_events()
+            if event.kind == "model_usage"
+        ]
+        if not usages:
+            return
+        self._model_calls = len(usages)
+        self._first_usage = usages[0]
+        self._last_usage = usages[-1]
+        self._refresh_context_status()
+
+    def _update_usage_from_messages(self, messages: list[Any]) -> None:
+        usages = [
+            message.usage_metadata
+            for message in messages
+            if isinstance(message, AIMessage) and getattr(message, "usage_metadata", None)
+        ]
+        if not usages:
+            return
+        self._model_calls = len(usages)
+        self._first_usage = dict(usages[0])
+        self._last_usage = dict(usages[-1])
+        self._refresh_context_status()
+
+    def _refresh_context_status(self) -> None:
+        if not self.is_mounted:
+            return
+        self.query_one("#status", StatusBar).set_context(
+            status_label(self._last_usage, self._context_window_tokens),
+            alert=usage_alert(self._last_usage, self._context_window_tokens),
+        )
+
+    def _memory_dir(self) -> Path:
+        from jutul_agent.agent.memory import ensure_memory_dir
+        from jutul_agent.paths import workspace_memory_dir
+
+        return ensure_memory_dir(self._session.memory_dir(workspace_memory=workspace_memory_dir()))
+
+    async def _command_memory(self, arg: str) -> None:
+        """View workspace memory, one note, or open it in $EDITOR."""
+        from jutul_agent.agent.memory import (
+            memory_note_path,
+            render_memory_overview,
+        )
+
+        memory_dir = self._memory_dir()
+        head, _, rest = arg.partition(" ")
+        head = head.strip()
+
+        if head == "edit":
+            await self._memory_edit(memory_dir, rest.strip())
+            return
+        if not head:
+            body = render_memory_overview(memory_dir)
+            await self._log.mount(MessageBlock("Memory", "system", body, markdown=True))
+            self._jump_to_latest()
+            return
+
+        target = memory_note_path(memory_dir, head)
+        if not target.exists():
+            await self._note(f"no memory note named `{target.name}`. /memory lists them.")
+            return
+        body = target.read_text(encoding="utf-8")
+        await self._log.mount(MessageBlock(target.name, "system", body, markdown=True))
+        self._jump_to_latest()
+
+    async def _memory_edit(self, memory_dir: Path, name: str) -> None:
+        """Suspend the TUI and open a memory file in the user's editor."""
+        import shlex
+        import subprocess
+
+        from jutul_agent.agent.memory import MEMORY_INDEX_FILENAME, memory_note_path
+
+        target = memory_note_path(memory_dir, name) if name else memory_dir / MEMORY_INDEX_FILENAME
+        if not target.exists():
+            await self._note(f"no memory note named `{target.name}`. /memory lists them.")
+            return
+        editor = _resolve_editor()
+        if not editor:
+            await self._note(
+                f"no editor found — set $EDITOR, or open the file directly: {target}"
+            )
+            return
+        with self.suspend():
+            subprocess.run([*shlex.split(editor), str(target)], check=False)
+        await self._note(f"edited `{target.name}`; the agent sees it from its next turn.")
+
+    async def _command_compact(self, _arg: str) -> None:
+        """Summarize older turns of the live thread on request."""
+        if self._busy or self._pending_interrupts:
+            await self._note("finish or cancel the current turn before compacting.")
+            return
+        if not self._model_label:
+            await self._note("compacting needs an active model.")
+            return
+        self._prompt.disabled = True
+        self._busy = True
+        self._cancel_requested = False
+        self._turn_worker = self.run_worker(self._run_compaction(), exclusive=True, name="turn")
+
+    async def _run_compaction(self) -> None:
+        from jutul_agent.agent.summarization import MANUAL_KEEP_MESSAGES, compact_thread
+
+        self._set_status("compacting…")
+        try:
+            result = await compact_thread(
+                self._agent,
+                thread_id=self._session.session_id,
+                model=self._model_label,
+                trace=self._session.trace,
+            )
+        except asyncio.CancelledError:
+            await self._note("Compaction cancelled.")
+            raise
+        except Exception as exc:
+            await self._note(f"compaction failed: {exc}")
+        else:
+            if result is None:
+                await self._note(
+                    "nothing to compact yet — compaction keeps the newest "
+                    f"{MANUAL_KEEP_MESSAGES} messages and the conversation isn't "
+                    "longer than that."
+                )
+            else:
+                await self._note(
+                    f"Compacted the conversation: {result.messages_before} messages → "
+                    f"{result.messages_after} (a summary plus the recent turns). "
+                    "The ctx figure updates on the next reply."
+                )
+        finally:
+            await self._finish_turn()
+
+    async def _command_context(self, _arg: str) -> None:
+        from jutul_agent.agent.memory import list_memory_notes
+        from jutul_agent.agent.summarization import auto_compact_trigger_tokens
+
+        system_tokens, memory_tokens = self._context_component_estimates()
+        body = render_context_panel(
+            model_label=self._model_label,
+            usage=self._last_usage,
+            window=self._context_window_tokens,
+            first_usage=self._first_usage,
+            model_calls=self._model_calls,
+            system_prompt_tokens=system_tokens,
+            memory_index_tokens=memory_tokens,
+            memory_notes=len(list_memory_notes(self._memory_dir())),
+            compact_trigger_tokens=auto_compact_trigger_tokens(self._context_window_tokens),
+        )
+        await self._log.mount(MessageBlock("Context", "system", body, markdown=True))
+        self._jump_to_latest()
+
+    def _context_component_estimates(self) -> tuple[int | None, int | None]:
+        """Approximate token counts for the parts of the fixed cost we own."""
+        from langchain_core.messages.utils import count_tokens_approximately
+
+        from jutul_agent.agent.memory import MEMORY_INDEX_FILENAME
+        from jutul_agent.agent.prompts import assemble_session_prompt
+
+        try:
+            prompt = assemble_session_prompt(
+                self._session.simulator,
+                open_windows=self._session.open_windows,
+                resumed=self._session.resumed,
+            )
+            system_tokens = int(count_tokens_approximately([prompt]))
+        except Exception:
+            system_tokens = None
+        try:
+            index = (self._memory_dir() / MEMORY_INDEX_FILENAME).read_text(encoding="utf-8")
+            memory_tokens = int(count_tokens_approximately([index]))
+        except OSError:
+            memory_tokens = None
+        return system_tokens, memory_tokens
+
+    async def _replay_history(self) -> None:
+        """Mount the resumed conversation's prior exchanges from the trace.
+
+        Only the user/assistant prose is replayed — tool calls and reasoning
+        stay in the trace (``/transcript`` renders everything). Long sessions
+        replay just the newest messages so startup stays instant.
+        """
+        events = [
+            event
+            for event in self._session.trace.iter_events()
+            if event.kind in ("message_user", "message_assistant")
+        ]
+        shown = events[-_REPLAY_MAX_MESSAGES:]
+
+        note = [f"Resumed session: {self._session.title or self._session.session_id}."]
+        if len(shown) < len(events):
+            note.append(
+                f"Showing the last {len(shown)} of {len(events)} messages; "
+                "/transcript has the full record."
+            )
+        note.append(
+            "The Julia REPL restarted with this session: variables and loaded "
+            "packages from earlier turns are gone (files on disk remain)."
+        )
+        blocks: list[MessageBlock] = [MessageBlock("System", "system", "\n".join(note))]
+        for event in shown:
+            content = str(event.payload.get("content") or "")
+            if not content.strip():
+                continue
+            if event.kind == "message_user":
+                blocks.append(MessageBlock("You", "user", content, markdown="\n" in content))
+            else:
+                blocks.append(MessageBlock("Assistant", "assistant", content, markdown=True))
+        await self._log.mount_all(blocks)
+        self._jump_to_latest()
 
     async def _handle_approval_nav(self, key: str) -> bool:
         if not self._approval_menu.visible or self._busy:
@@ -439,16 +706,14 @@ class TUIApp(App[None]):
             widget.refresh_for_width()
         self.screen.refresh(layout=True, repaint=True)
 
-    def _schedule_scroll_end(self) -> None:
-        if self._scroll_timer is not None:
-            self._scroll_timer.stop()
-        self._scroll_timer = self.set_timer(
-            _SCROLL_DEBOUNCE_SECONDS,
-            self._flush_scroll_end,
-        )
+    def _jump_to_latest(self) -> None:
+        """Scroll to the newest content and re-engage the bottom anchor.
 
-    def _flush_scroll_end(self) -> None:
-        self._scroll_timer = None
+        For user-initiated events (a submitted prompt, a command's response, a
+        pending approval) the newest content is what the user acted for, so it
+        jumps even if they had scrolled up. Streamed deltas never call this;
+        they rely on the anchor alone, which respects a reader's position.
+        """
         if not self.is_mounted:
             return
         self._log.scroll_end(animate=False)
@@ -493,6 +758,7 @@ class TUIApp(App[None]):
             await self._note("approval is pending. Use the menu above or a slash command.")
             return
 
+        self._session.adopt_title(text)
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
@@ -501,7 +767,7 @@ class TUIApp(App[None]):
         await self._mount_welcome_if_empty()
         user_block = MessageBlock("You", "user", text, markdown="\n" in text)
         await self._log.mount(user_block)
-        self._log.scroll_end(animate=False)
+        self._jump_to_latest()
         self._set_status("thinking…")
 
         self._turn_worker = self.run_worker(self._run_turn(text), exclusive=True, name="turn")
@@ -625,7 +891,7 @@ class TUIApp(App[None]):
 
     async def _note(self, text: str) -> None:
         await self._log.mount(MessageBlock("System", "system", text))
-        self._schedule_scroll_end()
+        self._jump_to_latest()
 
     async def _copy_last_assistant_message(self) -> None:
         """Copy the most recent assistant reply to the clipboard (OSC 52).
@@ -812,6 +1078,9 @@ class TUIApp(App[None]):
             agent, thread_id=self._session.session_id, trace=self._session.trace
         )
         self.query_one("#status", StatusBar).set_model(model_id)
+        self._context_window_tokens = None
+        self._refresh_context_status()
+        self.run_worker(self._fetch_context_window(), name="ctx-window")
         self._refresh_subtitle()
         record_recent_model(model_id)
         where = self._persist_model(model_id, scope)
@@ -842,7 +1111,7 @@ class TUIApp(App[None]):
         parts = [self._session.simulator.display_name]
         if self._model_label:
             parts.append(self._model_label)
-        parts.append(self._session.session_id[:8])
+        parts.append(display_session_id(self._session.session_id))
         self.sub_title = " · ".join(parts)
 
     async def _run_turn(self, prompt: str) -> None:
@@ -892,7 +1161,7 @@ class TUIApp(App[None]):
         else:
             message = "Turn cancelled."
         await self._log.mount(MessageBlock("System", "system", message))
-        self._schedule_scroll_end()
+        self._jump_to_latest()
 
     async def action_cancel_turn(self) -> None:
         if not self._busy or self._cancel_requested:
@@ -925,6 +1194,7 @@ class TUIApp(App[None]):
 
     async def _apply_turn_result(self, result: TurnRunResult) -> None:
         await self._flush_stream()
+        self._update_usage_from_messages(result.messages)
         self._pending_interrupts = result.interrupts
         if self._pending_interrupts:
             if self._should_auto_approve_pending():
@@ -969,7 +1239,6 @@ class TUIApp(App[None]):
         await self._note(
             "The turn stopped early. You can retry your last message or continue from here."
         )
-        self._schedule_scroll_end()
 
     async def _finish_turn(self) -> None:
         # The kernel self-heals a cancelled eval (SIGINT + drain, keeping state), so
@@ -1036,7 +1305,6 @@ class TUIApp(App[None]):
     async def _render_reasoning_delta(self, msg: TurnReasoningDelta) -> None:
         await self._stream.append_reasoning(self._log, msg.text)
         if msg.text:
-            self._schedule_scroll_end()
             self._set_status("thinking…")
 
     async def _render_tool_event(self, msg: TurnToolEvent) -> None:
@@ -1051,14 +1319,12 @@ class TUIApp(App[None]):
                 self._tool_blocks.append(block)
                 await self._log.mount(block)
             await block.append_output(msg.content)
-            self._schedule_scroll_end()
             return
 
         if msg.event in {"requested", "started"}:
             await self._mount_tool_call(
                 {"name": msg.tool_name, "args": msg.args or {}, "id": msg.tool_call_id}
             )
-            self._schedule_scroll_end()
             return
 
         block = self._matching_tool_block(
@@ -1070,7 +1336,6 @@ class TUIApp(App[None]):
             await self._log.mount(block)
             self._tool_blocks.append(block)
         await block.set_result(msg.content, is_error=msg.event == "error")
-        self._schedule_scroll_end()
         self._set_status("thinking…")
 
     async def _render_message_chunk(self, msg: AIMessageChunk) -> None:
@@ -1087,11 +1352,8 @@ class TUIApp(App[None]):
         if getattr(msg, "chunk_position", None) == "last" and not tool_calls:
             await self._flush_stream()
 
-        if text or tool_calls:
-            self._schedule_scroll_end()
-
     async def _flush_stream(self) -> None:
-        await self._stream.flush()
+        await self._stream.flush(reasoning_expanded=self._tools_expanded)
 
     async def _mount_tool_call(self, call: dict[str, Any]) -> None:
         name = call.get("name") or "tool"
@@ -1200,7 +1462,7 @@ class TUIApp(App[None]):
         self._show_approval_menu()
         self._set_status("approval required")
         self._refresh_prompt_guide()
-        self._schedule_scroll_end()
+        self._jump_to_latest()
 
     async def _resume_pending(self, decision: dict[str, str]) -> None:
         if not self._pending_interrupts:
@@ -1230,12 +1492,13 @@ class TUIApp(App[None]):
         await self._clear_visible_log()
 
     async def action_toggle_tool_output(self) -> None:
-        """Ctrl+O: toggle verbose tool output for every tool card in the log."""
+        """Ctrl+O: toggle verbose output for every tool and reasoning card."""
         self._tools_expanded = not self._tools_expanded
         for block in list(self._tool_blocks):
             await block.set_expanded(self._tools_expanded)
+        for reasoning in self._log.query(ReasoningBlock):
+            await reasoning.set_expanded(self._tools_expanded)
         self._set_status(self._status_text)
-        self._schedule_scroll_end()
 
     async def _clear_visible_log(self) -> None:
         if self._busy:
@@ -1262,7 +1525,7 @@ class TUIApp(App[None]):
                 session_id=self._session.session_id,
             )
         )
-        self._schedule_scroll_end()
+        self._jump_to_latest()
 
     def _approval_help_lines(self) -> list[str]:
         return approval_command_hints(self._pending_allowed_decisions())

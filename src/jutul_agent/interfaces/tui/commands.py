@@ -42,12 +42,19 @@ class SlashCommandSpec:
 BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/help", "show available commands"),
     SlashCommandSpec("/transcript", "write transcript (HTML; append 'md' for markdown)"),
+    SlashCommandSpec("/compact", "summarize older turns to free context space"),
+    SlashCommandSpec("/context", "show how much of the model's context is used"),
     SlashCommandSpec("/copy", "copy the last assistant message to the clipboard"),
     SlashCommandSpec("/clear", "clear the visible log"),
     SlashCommandSpec(
         "/add-dir",
         "mount an extra folder so the agent can read and edit it",
         "<path>",
+    ),
+    SlashCommandSpec(
+        "/memory",
+        "view workspace memory, or edit it in your editor",
+        "[note | edit [note]]",
     ),
     SlashCommandSpec(
         "/model",

@@ -22,8 +22,10 @@ from jutul_agent.interfaces.tui.tool_display import (
     uses_compact_display,
 )
 from jutul_agent.juliakernel.text import render_terminal_output
+from jutul_agent.paths import is_dated_session_id
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
     from textual.widgets._markdown import MarkdownStream
 
 _TODO_PREVIEW_ITEMS = 3
@@ -32,6 +34,15 @@ _TODO_FULL_TEXT = 140
 # Cap on the live-streamed buffer re-rendered per delta, so a long solve's output
 # can't make each refresh cost grow without bound.
 _STREAM_RENDER_CAP = 256 * 1024
+# Streamed tool output is re-rendered at most this often. Rendering runs the
+# whole buffer through the terminal emulator and re-parses the markdown body,
+# so doing it per delta makes a chatty tool freeze the UI.
+_STREAM_REFRESH_SECONDS = 0.1
+
+
+def display_session_id(session_id: str) -> str:
+    """A session id as shown in the UI: dated ids in full, UUIDs shortened."""
+    return session_id if is_dated_session_id(session_id) else session_id[:8]
 
 
 class MessageBlock(Vertical):
@@ -52,11 +63,6 @@ class MessageBlock(Vertical):
 
     MessageBlock.assistant {
         background: $panel;
-    }
-
-    MessageBlock.assistant Markdown {
-        max-height: 24;
-        overflow-y: auto;
     }
 
     MessageBlock.reasoning {
@@ -174,6 +180,72 @@ class MessageBlock(Vertical):
         self.refresh_for_width()
 
 
+class ReasoningBlock(MessageBlock):
+    """Streamed model reasoning: a rolling tail while thinking, a one-line
+    summary once the answer starts.
+
+    The full text accumulates in ``content_text`` (and lands in the trace via
+    the recorder middleware); only the rendering is reduced. Showing the tail
+    keeps the card a stable height while streaming, and re-rendering a few
+    lines stays cheap no matter how long the model thinks. ``set_expanded``
+    follows the same verbose toggle as tool cards.
+    """
+
+    _TAIL_LINES = 3
+    _PREVIEW_CHARS = 100
+
+    def __init__(self) -> None:
+        super().__init__("Reasoning", "reasoning", "")
+        self._started = time.monotonic()
+        self._finished = False
+        self._expanded = False
+
+    async def append_content(self, content: str) -> None:
+        if not content:
+            return
+        self._content += content
+        await self._ensure_body()
+        self._render_state()
+
+    async def finish(self, *, expanded: bool = False) -> None:
+        """Stop streaming: record the thinking time and collapse (or expand)."""
+        if not self._finished:
+            self._finished = True
+            elapsed = time.monotonic() - self._started
+            self.border_subtitle = f"thought for {elapsed:.0f}s"
+        self._expanded = expanded
+        await self._ensure_body()
+        self._render_state()
+
+    async def set_expanded(self, expanded: bool) -> None:
+        if self._expanded == expanded:
+            return
+        self._expanded = expanded
+        if self._finished:
+            await self._ensure_body()
+            self._render_state()
+
+    def _render_state(self) -> None:
+        if self._body_widget is None:
+            return
+        if not self._finished or self._expanded:
+            self._body_widget.update(self._display_text())
+        else:
+            self._body_widget.update(self._preview_line())
+        self.refresh_for_width()
+
+    def _display_text(self) -> str:
+        if self._finished:
+            return self._content.strip()
+        lines = self._content.strip().splitlines()
+        return "\n".join(lines[-self._TAIL_LINES :])
+
+    def _preview_line(self) -> str:
+        lines = (line.strip() for line in self._content.strip().splitlines())
+        first = next((line for line in lines if line), "")
+        return shorten_single_line(first, self._PREVIEW_CHARS)
+
+
 class WelcomeBlock(MessageBlock):
     """Landing card shown when the TUI starts or the visible log is cleared."""
 
@@ -286,7 +358,7 @@ def _render_welcome_message(
     # current as they change; the welcome card is a one-time landing note.
     lines = [
         f"**jutul-agent** is ready for **{simulator_label}**.",
-        f"Session `{session_id[:8]}`",
+        f"Session `{display_session_id(session_id)}`",
         "",
         "Ask a question or describe a task.",
         "Shift+Tab cycles approval mode "
@@ -385,6 +457,8 @@ class StatusBar(Static):
         self._tool_toggle_available = False
         self._tools_expanded = False
         self._approval_mode_label = "default"
+        self._context_label: str | None = None
+        self._context_alert = "ok"
 
     def set_state(
         self,
@@ -404,6 +478,11 @@ class StatusBar(Static):
         self._model_label = model_label
         self.refresh()
 
+    def set_context(self, label: str | None, *, alert: str = "ok") -> None:
+        self._context_label = label
+        self._context_alert = alert
+        self.refresh()
+
     def render(self) -> Text:
         text = Text()
         text.append("jutul-agent", style="bold")
@@ -415,11 +494,16 @@ class StatusBar(Static):
             text.append(shorten(self._model_label, 28), style="dim")
 
         text.append(" · ", style="dim")
-        text.append(self._session_id[:8], style="dim")
+        text.append(display_session_id(self._session_id), style="dim")
 
         if self._approval_mode_label:
             text.append(" · ", style="dim")
             text.append(self._approval_mode_label, style="cyan")
+
+        if self._context_label:
+            style = {"warn": "yellow", "high": "bold red"}.get(self._context_alert, "dim")
+            text.append(" · ", style="dim")
+            text.append(self._context_label, style=style)
 
         if self._pending_count:
             label = "approval" if self._pending_count == 1 else "approvals"
@@ -498,6 +582,7 @@ class ToolBlock(Vertical):
         self._reject_reason: str | None = None
         self._body_widget: Markdown | None = None
         self._elapsed_task: asyncio.Task[None] | None = None
+        self._stream_refresh_timer: Timer | None = None
         self.border_title = _tool_title(tool_name)
         self.border_subtitle = _status_text(self._status, self._reject_reason)
 
@@ -556,7 +641,7 @@ class ToolBlock(Vertical):
 
     @property
     def has_output(self) -> bool:
-        return bool(self._output)
+        return bool(self._output or self._streamed)
 
     @property
     def status(self) -> str:
@@ -573,12 +658,14 @@ class ToolBlock(Vertical):
 
     async def set_rejected(self, reason: str | None = None) -> None:
         self.stop_elapsed_timer()
+        self._stop_stream_refresh()
         self._status = "rejected"
         self._reject_reason = reason or None
         await self._refresh()
 
     async def set_cancelled(self, reason: str | None = None) -> None:
         self.stop_elapsed_timer()
+        self._stop_stream_refresh()
         self._status = "cancelled"
         self._reject_reason = reason or None
         await self._refresh()
@@ -589,16 +676,38 @@ class ToolBlock(Vertical):
         # Keep only the tail so each re-render stays bounded. Rendering tolerates a
         # truncated escape at the cut; it sits far up in scrollback anyway.
         self._streamed = (self._streamed + delta)[-_STREAM_RENDER_CAP:]
+        self._status = "running"
+        await self._ensure_body()
+        if not self.is_running:
+            # No message pump (plain widget under unit test): render in line.
+            await self._render_streamed()
+            return
+        if self._stream_refresh_timer is None:
+            self._stream_refresh_timer = self.set_timer(
+                _STREAM_REFRESH_SECONDS, self._flush_streamed
+            )
+
+    async def _render_streamed(self) -> None:
         # Render the raw buffer to its on-screen state so carriage returns and cursor
         # moves (ProgressMeter/Jutul bars) collapse to a single updating line,
         # matching a real terminal and the final EvalResult.output.
         self._output = render_terminal_output(self._streamed)
-        self._status = "running"
-        await self._ensure_body()
         await self._refresh()
+
+    async def _flush_streamed(self) -> None:
+        self._stream_refresh_timer = None
+        if self._status != "running" or not self._streamed:
+            return  # a final result landed first and already rendered
+        await self._render_streamed()
+
+    def _stop_stream_refresh(self) -> None:
+        if self._stream_refresh_timer is not None:
+            self._stream_refresh_timer.stop()
+            self._stream_refresh_timer = None
 
     async def set_result(self, content: str, *, is_error: bool = False) -> None:
         self.stop_elapsed_timer()
+        self._stop_stream_refresh()
         self._output = normalize_tool_output(content)
         self._streamed = ""
         self._is_error = is_error
