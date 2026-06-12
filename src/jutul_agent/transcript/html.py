@@ -272,7 +272,7 @@ figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 0.35rem; }
 .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
 .inline-artifact figure img { max-height: 320px; object-fit: contain; }
 .artifact-source { margin-top: 0.5rem; }
-.session-end {
+.session-marker {
   text-align: center;
   color: var(--muted);
   font-size: 0.9rem;
@@ -322,9 +322,13 @@ _FILTER_LABELS: dict[str, str] = {
     "artifact": "Artifact",
 }
 
+# Lifecycle markers: rendered as dividers/header metadata, not filterable cards.
+_SESSION_MARKER_KINDS = frozenset(
+    {"session_start", "session_end", "session_resume", "session_title", "context_compaction"}
+)
+
 _KIND_LABELS: dict[str, str] = {
-    "session_start": "Session",
-    "session_end": "Session",
+    **{kind: "Session" for kind in _SESSION_MARKER_KINDS},
     **{kind: _FILTER_LABELS[group] for kind, group in _FILTER_GROUPS.items()},
 }
 
@@ -567,6 +571,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
     kind_counts: dict[str, int] = {}
 
     session_id: str | None = None
+    session_title: str | None = None
     simulator: str | None = None
     started: str | None = None
     ended: str | None = None
@@ -586,8 +591,29 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         if kind == "session_end":
             ended = ts
             parts.append(
-                f'<div class="session-end">Session ended · <time datetime="{_esc_attr(ts)}">'
+                f'<div class="session-marker">Session ended · <time datetime="{_esc_attr(ts)}">'
                 f"{_esc(ts)}</time></div>"
+            )
+            continue
+
+        if kind == "session_resume":
+            parts.append(
+                f'<div class="session-marker">Session resumed · '
+                f'<time datetime="{_esc_attr(ts)}">{_esc(ts)}</time></div>'
+            )
+            continue
+
+        if kind == "session_title":
+            session_title = str(payload.get("title") or "").strip() or session_title
+            continue
+
+        if kind == "context_compaction":
+            trigger = "manual" if payload.get("manual") else "automatic"
+            parts.append(
+                f'<div class="session-marker">Context compacted ({trigger}): '
+                f"{_esc(payload.get('messages_before', '?'))} messages &rarr; "
+                f"{_esc(payload.get('messages_after', '?'))} · "
+                f'<time datetime="{_esc_attr(ts)}">{_esc(ts)}</time></div>'
             )
             continue
 
@@ -723,6 +749,8 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         )
 
     header_meta = ""
+    if session_title:
+        header_meta += f'<p class="meta">{_esc(session_title)}</p>'
     if session_id:
         header_meta += f'<p class="meta">Session <code>{_esc(session_id)}</code></p>'
     if simulator:
@@ -739,7 +767,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
 
     group_counts: dict[str, int] = {}
     for kind, count in kind_counts.items():
-        if kind in {"session_start", "session_end"}:
+        if kind in _SESSION_MARKER_KINDS:
             label = _KIND_LABELS.get(kind, kind)
             group_counts[label] = group_counts.get(label, 0) + count
             continue
@@ -748,7 +776,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
         group_counts[label] = group_counts.get(label, 0) + count
 
     filter_groups = sorted(
-        {_FILTER_GROUPS.get(k, k) for k in kind_counts if k not in {"session_start", "session_end"}}
+        {_FILTER_GROUPS.get(k, k) for k in kind_counts if k not in _SESSION_MARKER_KINDS}
     )
     filter_controls = "".join(
         f'<label><input type="checkbox" class="kind-filter" '

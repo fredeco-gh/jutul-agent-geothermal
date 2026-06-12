@@ -225,3 +225,36 @@ def test_render_unknown_kind_fallback(snapshot) -> None:
     html = render_html(events)
     assert "custom_event" in html
     assert html == snapshot
+
+
+def test_lifecycle_kinds_render_as_markers_not_raw_dumps() -> None:
+    """session_title/session_resume/context_compaction are session structure:
+    title in the header, dividers in the timeline — never the raw-payload
+    catch-all card (which stays the fallback for truly unknown kinds)."""
+    from jutul_agent.transcript import render_markdown
+
+    events = [
+        make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
+        make_event(2, "session_title", {"session_id": "abc", "title": "Discharge the chen cell"}),
+        make_event(3, "message_user", {"content": "go"}),
+        make_event(
+            4, "context_compaction", {"messages_before": 30, "messages_after": 9, "manual": True}
+        ),
+        make_event(5, "session_end", {"session_id": "abc"}),
+        make_event(6, "session_resume", {"session_id": "abc", "simulator": "battmo"}),
+        make_event(7, "message_assistant", {"content": "done"}),
+        make_event(8, "session_end", {"session_id": "abc"}),
+    ]
+
+    html = render_html(events)
+    assert "Discharge the chen cell" in html
+    assert "Session resumed" in html
+    assert "Context compacted (manual): 30 messages" in html
+    for kind in ("session_title", "session_resume", "context_compaction"):
+        assert f"Event · {kind}" not in html
+
+    markdown = render_markdown(events)
+    assert "**Discharge the chen cell**" in markdown
+    assert "_Session resumed:" in markdown
+    assert "Context compacted (manual): 30 messages → 9" in markdown
+    assert "### Event `session_resume`" not in markdown
