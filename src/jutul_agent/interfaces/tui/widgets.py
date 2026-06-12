@@ -459,6 +459,7 @@ class StatusBar(Static):
         self._approval_mode_label = "default"
         self._context_label: str | None = None
         self._context_alert = "ok"
+        self._warming = False
 
     def set_state(
         self,
@@ -483,6 +484,15 @@ class StatusBar(Static):
         self._context_alert = alert
         self.refresh()
 
+    def set_warming(self, warming: bool) -> None:
+        """Show or clear the Julia warm-up chip.
+
+        It lives here, not in the bottom activity line, so running a turn or
+        a pending approval never replaces it while the kernel still compiles.
+        """
+        self._warming = warming
+        self.refresh()
+
     def render(self) -> Text:
         text = Text()
         text.append("jutul-agent", style="bold")
@@ -504,6 +514,10 @@ class StatusBar(Static):
             style = {"warn": "yellow", "high": "bold red"}.get(self._context_alert, "dim")
             text.append(" · ", style="dim")
             text.append(self._context_label, style=style)
+
+        if self._warming:
+            text.append(" · ", style="dim")
+            text.append("warming Julia", style="yellow")
 
         if self._pending_count:
             label = "approval" if self._pending_count == 1 else "approvals"
@@ -542,6 +556,10 @@ class ToolBlock(Vertical):
     ToolBlock.cancelled,
     ToolBlock.error {
         border: solid $error;
+    }
+
+    ToolBlock.responded {
+        border: solid $accent;
     }
 
     ToolBlock.compact {
@@ -663,6 +681,14 @@ class ToolBlock(Vertical):
         self._reject_reason = reason or None
         await self._refresh()
 
+    async def set_responded(self, message: str | None = None) -> None:
+        """The user answered instead of running the tool."""
+        self.stop_elapsed_timer()
+        self._stop_stream_refresh()
+        self._status = "responded"
+        self._reject_reason = message or None
+        await self._refresh()
+
     async def set_cancelled(self, reason: str | None = None) -> None:
         self.stop_elapsed_timer()
         self._stop_stream_refresh()
@@ -730,9 +756,9 @@ class ToolBlock(Vertical):
 
         # Only the bordered statuses get a CSS class; the others share the
         # default ``ToolBlock`` styling and don't need a marker.
-        for css_class in ("approval", "rejected", "cancelled", "error", "compact"):
+        for css_class in ("approval", "rejected", "cancelled", "error", "responded", "compact"):
             self.remove_class(css_class)
-        if self._status in {"approval", "rejected", "cancelled", "error"}:
+        if self._status in {"approval", "rejected", "cancelled", "error", "responded"}:
             self.add_class(self._status)
         elif (
             self._status == "success"
@@ -789,6 +815,10 @@ def _status_text(status: str, reject_reason: str | None) -> str:
         if reject_reason:
             return f"cancelled: {reject_reason}"
         return "cancelled"
+    if status == "responded":
+        if reject_reason:
+            return f"answered by user: {shorten_single_line(reject_reason, 72)}"
+        return "answered by user"
     if status == "error":
         return "tool error"
     return status

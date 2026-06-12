@@ -335,6 +335,7 @@ class TUIApp(App[None]):
             self._load_usage_from_trace()
             self.run_worker(self._replay_history(), name="replay")
         if self._warming:
+            self.query_one("#status", StatusBar).set_warming(True)
             self.run_worker(self._watch_warmup(), name="warmup-watch")
         self.run_worker(self._fetch_context_window(), name="ctx-window")
 
@@ -351,7 +352,7 @@ class TUIApp(App[None]):
             await asyncio.shield(task)
         self._warming = False
         if self.is_mounted:
-            self._refresh_prompt_guide()
+            self.query_one("#status", StatusBar).set_warming(False)
 
     async def _fetch_context_window(self) -> None:
         """Resolve the active model's context window off the event loop."""
@@ -659,6 +660,10 @@ class TUIApp(App[None]):
         self._hide_approval_menu()
         await self._clear_approval_blocks()
         resume_payload = self._build_resume_payload({"type": "approve"})
+        # Decided: the interrupts are consumed by the payload. Clearing now
+        # keeps the status bar and activity label from reporting an approval
+        # as pending for the whole resumed turn.
+        self._pending_interrupts = []
         await self._resume_turn(resume_payload)
 
     async def on_approval_menu_selected(self, event: ApprovalMenu.Selected) -> None:
@@ -1199,6 +1204,7 @@ class TUIApp(App[None]):
         if self._pending_interrupts:
             if self._should_auto_approve_pending():
                 resume_payload = self._build_resume_payload({"type": "approve"})
+                self._pending_interrupts = []
                 await self._resume_turn(resume_payload)
                 return
             await self._render_interrupts(result.interrupts)
@@ -1478,6 +1484,10 @@ class TUIApp(App[None]):
 
         self._hide_approval_menu()
         resume_payload = self._build_resume_payload(decision)
+        # Decided: the interrupts are consumed by the payload. Clearing now
+        # keeps the status bar and activity label from reporting an approval
+        # as pending for the whole resumed turn.
+        self._pending_interrupts = []
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
@@ -1539,17 +1549,14 @@ class TUIApp(App[None]):
         guide.set_activity(self._activity_label())
 
     def _activity_label(self) -> str:
-        # Lives in the bottom bar (next to the input) and composes the turn
-        # status with the background warm-up so warming stays visible during a
-        # turn instead of being replaced by "thinking…".
+        # Lives in the bottom bar next to the input. The Julia warm-up state
+        # is a separate chip in the top status bar, so neither line ever
+        # replaces the other.
         if self._pending_interrupts:
             return "approval required"
-        parts: list[str] = []
         if self._busy:
-            parts.append(self._status_text)
-        if self._warming:
-            parts.append("warming Julia")
-        return " · ".join(parts) if parts else "ready"
+            return self._status_text
+        return "ready"
 
     def _compute_prompt_guide(self) -> str:
         position = self._history.position
@@ -1707,3 +1714,11 @@ class TUIApp(App[None]):
             for block in self._tool_blocks:
                 if not block.has_output:
                     await block.set_rejected(reason)
+            return
+
+        if decision_type == "respond":
+            # The tool does not run; the user's message goes back as its
+            # result. Without this the cards stay "waiting for approval".
+            for block in self._tool_blocks:
+                if not block.has_output:
+                    await block.set_responded(reason)

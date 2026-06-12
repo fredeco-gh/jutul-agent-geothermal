@@ -434,20 +434,33 @@ async def test_copy_command_copies_last_assistant_message(session: Session, monk
         assert copied[0].strip()  # the assistant reply text, non-empty
 
 
-async def test_warming_indicator_coexists_with_turn_status(session: Session) -> None:
-    # The warm-up indicator must stay visible while a turn runs (it used to be
-    # replaced by "thinking…" / the Ctrl+G hint), and it lives in the bottom bar.
-    app = TUIApp(agent=_stub_agent(), session=session)
-    async with app.run_test():
-        await wait_until_ready(app)
-        app._busy = True
-        app._warming = True
-        app._status_text = "thinking…"
-        label = app._activity_label()
-        assert "thinking" in label and "warming" in label
+async def test_warming_indicator_has_its_own_status_chip(session: Session) -> None:
+    """The warm-up chip lives in the top status bar, so neither a running
+    turn nor a pending approval ever replaces it while Julia still compiles."""
+    import asyncio
 
-        app._warming = False
-        assert "warming" not in app._activity_label()
+    from jutul_agent.interfaces.tui.widgets import StatusBar
+
+    warmup: asyncio.Future = asyncio.get_event_loop().create_future()
+    app = TUIApp(agent=_stub_agent(), session=session, warmup_task=warmup)
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        bar = app.query_one("#status", StatusBar)
+        assert bar._warming is True
+        assert "warming Julia" in str(bar.render())
+
+        # Turn status and approval state use the bottom line; the chip stays.
+        app._busy = True
+        app._status_text = "running julia_eval…"
+        assert app._activity_label() == "running julia_eval…"
+        assert bar._warming is True
+        app._busy = False
+
+        warmup.set_result(None)  # the warm-up finishes → the chip clears
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert bar._warming is False
+        assert "warming" not in str(bar.render())
 
 
 async def test_streamed_normal_prose_is_shown(session: Session) -> None:
@@ -1298,3 +1311,71 @@ def test_resolve_editor_prefers_env_then_platform(monkeypatch) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: None)
     if sys.platform != "win32":
         assert _resolve_editor() is None
+
+
+async def test_approval_state_clears_once_decided(session: Session) -> None:
+    """Deciding an approval consumes it: the pending chip and the 'approval
+    required' activity must not stick around through the resumed turn."""
+    from jutul_agent.interfaces.tui.widgets import StatusBar
+
+    agent = interrupt_agent()
+    app = TUIApp(agent=agent, session=session)
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "approve")
+        bar = app.query_one("#status", StatusBar)
+        assert app._pending_interrupts
+        assert bar._pending_count == 1
+        assert app._activity_label() == "approval required"
+
+        await pilot.press("y")
+        await wait_until_ready(app)
+        await pilot.pause()
+
+        assert app._pending_interrupts == []
+        assert bar._pending_count == 0
+        assert app._activity_label() == "ready"
+        assert len(agent.resume_inputs) == 1
+
+
+async def test_respond_marks_tool_blocks_answered(session: Session) -> None:
+    from fakes import Interrupt
+
+    interrupt = Interrupt(
+        id="interrupt-1",
+        value={
+            "action_requests": [
+                {"name": "execute", "args": {"command": "ls"}, "description": "Review."}
+            ],
+            "review_configs": [
+                {"action_name": "execute", "allowed_decisions": ["approve", "reject", "respond"]}
+            ],
+        },
+    )
+
+    def _events(stream_input):
+        if hasattr(stream_input, "resume"):
+            final = AIMessage(content="answered")
+            return [v3_message_event(final), v3_values_event([final])]
+        human = HumanMessage(content="approval please")
+        request = AIMessage(
+            content="",
+            tool_calls=[{"id": "call_resp_1", "name": "execute", "args": {"command": "ls"}}],
+        )
+        return [
+            v3_message_event(request),
+            v3_values_event([human, request], interrupts=[interrupt]),
+        ]
+
+    app = TUIApp(agent=ScriptedV3Agent(_events), session=session)
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "approve")
+        blocks = list(app.query(ToolBlock))
+        assert blocks and blocks[0].status == "approval"
+
+        for ch in "/respond use the chen cell":
+            await pilot.press(ch if ch != " " else "space")
+        await pilot.press("enter")
+        await wait_until_ready(app)
+
+        assert blocks[0].status == "responded"
+        assert "answered by user" in (blocks[0].border_subtitle or "")
