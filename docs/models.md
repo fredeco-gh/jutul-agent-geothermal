@@ -54,6 +54,12 @@ provider:
   model with no profile entry is treated as thinking, since every model
   newer than the bundled data thinks; the legacy non-thinking ones are
   marked explicitly in the data.
+- Ollama: think mode is requested explicitly for models the daemon
+  reports as thinking-capable. Left at the daemon default, the thinking
+  segment is dropped on the client side — a turn the model spends
+  entirely on thinking then surfaces as an empty reply with no tool
+  calls, and the agent falls silent. Requested, the thinking is
+  separated and visible.
 
 Because the capability check is profile data shipped with the provider
 packages, new models are covered by upgrading the package — there is no
@@ -80,6 +86,11 @@ for you:
   loaded with a context window sized to what the model reports, capped by
   a memory budget (64K tokens by default, lowered with
   `JUTUL_AGENT_OLLAMA_NUM_CTX` on tight hardware).
+- Malformed tool calls: a weaker model occasionally serializes a tool
+  call with unparseable arguments (e.g. two parallel calls merged into
+  one). Such a reply would otherwise end the turn silently; instead the
+  parse error is fed back and the model retries (see
+  [turns](turns.md)). Parallel calls themselves are normal and kept.
 
 Expect local models to be noticeably weaker at multi-step tool use than the
 hosted ones. They are best for cheap iteration and offline work, with the

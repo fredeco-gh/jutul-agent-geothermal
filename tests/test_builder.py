@@ -76,6 +76,7 @@ def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.Mo
     register_provider_profiles()
     monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)
     monkeypatch.setattr(ollama_client, "context_window", lambda name: 262144)
+    monkeypatch.setattr(ollama_client, "thinks", lambda name: True)
     # Cloud models without special construction needs (here: non-reasoning
     # models) stay spec strings so deepagents resolves them + applies its
     # profiles.
@@ -89,9 +90,18 @@ def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.Mo
     model = _resolve_model_for_agent("ollama:qwen3.6:27b")
     assert isinstance(model, BaseChatModel)
     assert getattr(model, "num_ctx", None) == 65536  # min(262144, budget)
+    # Thinking-capable local models get think mode requested explicitly, so
+    # the thinking is separated instead of silently swallowing the turn.
+    assert getattr(model, "reasoning", None) is True
     profile = _harness_profile_for_model(model, None)
-    assert not profile.system_prompt_suffix  # all prompt text lives in agent.prompts
+    # Parallel tool calls are not suppressed per provider; no prompt suffix.
+    assert not profile.system_prompt_suffix
     assert profile.general_purpose_subagent.enabled is False
+
+    # A local model without the thinking capability keeps think mode unset.
+    monkeypatch.setattr(ollama_client, "thinks", lambda name: False)
+    model = _resolve_model_for_agent("ollama:plain-model")
+    assert getattr(model, "reasoning", None) is None
 
 
 def test_resolve_model_for_agent_enables_openai_reasoning(

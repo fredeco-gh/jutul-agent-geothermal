@@ -43,6 +43,7 @@ from jutul_agent.agent.memory import (
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
+from jutul_agent.agent.recovery import InvalidToolCallRecoveryMiddleware
 from jutul_agent.agent.summarization import build_summarization_middleware
 from jutul_agent.agent.tools import (
     make_julia_eval_tool,
@@ -94,6 +95,12 @@ def register_provider_profiles() -> None:
     under each provider in ``models.PROVIDERS``. The profile only disables the
     stock general-purpose subagent; every prompt rule lives in
     ``agent.prompts`` so each is stated exactly once.
+
+    Parallel tool calls are a first-class capability (the tool node runs them
+    concurrently) and we do not suppress them per provider: local models emit
+    clean parallel calls the vast majority of the time, and the rare malformed
+    one is caught generically by ``InvalidToolCallRecoveryMiddleware`` rather
+    than by crippling the capability through the prompt.
     """
 
     global _provider_profiles_registered
@@ -155,7 +162,18 @@ def _model_profile(model_id: str) -> dict[str, Any]:
 
 
 def _ollama_settings(model_id: str) -> dict[str, Any]:
-    return {"num_ctx": _ollama_num_ctx(model_id)}
+    from jutul_agent import ollama_client
+
+    settings: dict[str, Any] = {"num_ctx": _ollama_num_ctx(model_id)}
+    # Thinking-capable local models must have think mode requested
+    # explicitly: left at the daemon default, the thinking segment is
+    # dropped on the client side, so a turn the model spends entirely on
+    # thinking surfaces as an empty reply with no tool calls — the agent
+    # falls silent. Requested, the thinking is separated, tool calls parse
+    # reliably, and the reasoning becomes visible like the cloud providers'.
+    if ollama_client.thinks(ollama_client.model_name(model_id)):
+        settings["reasoning"] = True
+    return settings
 
 
 def _openai_settings(model_id: str) -> dict[str, Any] | None:
@@ -380,6 +398,10 @@ def build_agent(
                 model_id=model_spec if isinstance(model_spec, str) else None,
                 trace=session.trace,
             ),
+            # Before the recorder in the list so its after_model hook runs
+            # *after* the recorder's (after_model composes in reverse): the
+            # model call is traced before a recovery jump re-enters the model.
+            InvalidToolCallRecoveryMiddleware(),
             TraceRecorder(session.trace),
         ],
         checkpointer=checkpointer,

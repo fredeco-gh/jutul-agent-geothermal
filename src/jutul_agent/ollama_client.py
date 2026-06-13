@@ -82,6 +82,23 @@ async def supports_tools(name: str) -> bool:
     return "tools" in await capabilities(name)
 
 
+def thinks(name: str) -> bool:
+    """Whether the daemon reports ``name`` as a thinking-capable model.
+
+    Sync because it runs at model-build time; best-effort (False when the
+    daemon can't answer).
+    """
+    with contextlib.suppress(Exception):
+        from ollama import Client
+
+        info = Client(timeout=2.0).show(name)
+        caps = getattr(info, "capabilities", None)
+        if caps is None and isinstance(info, dict):
+            caps = info.get("capabilities")
+        return "thinking" in (caps or [])
+    return False
+
+
 def context_window(name: str) -> int | None:
     """The model's max context length (tokens) the daemon reports, or None.
 
