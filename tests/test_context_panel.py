@@ -96,3 +96,19 @@ def test_render_context_panel_without_data() -> None:
     assert "No model calls yet" in body
     body = render_context_panel(model_label="m", usage=_USAGE, window=None)
     assert "window size unknown" in body
+
+
+def test_render_context_panel_marks_post_compaction_estimate() -> None:
+    estimated_usage = {"input_tokens": 17_000, "output_tokens": 0, "estimated": True}
+    body = render_context_panel(
+        model_label="anthropic:claude-haiku-4-5",
+        usage=estimated_usage,
+        window=200_000,
+        first_usage={"input_tokens": 8_500},
+        model_calls=17,
+        compact_trigger_tokens=160_000,
+    )
+    assert "17k of 200k" in body  # the reduced figure, not the stale 31k
+    assert "estimated after compaction" in body
+    # Growth-over-model-calls compares to a pre-compaction baseline → suppressed.
+    assert "Conversation growth" not in body

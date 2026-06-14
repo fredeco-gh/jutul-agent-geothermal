@@ -86,6 +86,8 @@ async def test_compact_thread_round_trip(tmp_path: Path) -> None:
         assert result is not None
         assert result.messages_before == 12
         assert result.messages_after < result.messages_before
+        # The freed estimate anchors the live /context drop before the next call.
+        assert result.freed_tokens > 0
 
         state = await agent.aget_state({"configurable": {"thread_id": session.session_id}})
         contents = [str(getattr(m, "content", "")) for m in state.values["messages"]]
@@ -105,3 +107,20 @@ async def test_compact_thread_skips_short_threads(tmp_path: Path) -> None:
     assert (
         await compact_thread(_NoState(), thread_id="t", model=None, trace=None)
     ) is None
+
+
+def test_estimate_freed_tokens_excludes_remove_sentinel() -> None:
+    from langchain_core.messages import HumanMessage, RemoveMessage
+    from langgraph.graph.message import REMOVE_ALL_MESSAGES
+
+    from jutul_agent.agent.summarization import _estimate_freed_tokens
+
+    before = [HumanMessage(content="x" * 400) for _ in range(6)]
+    after = [RemoveMessage(id=REMOVE_ALL_MESSAGES), HumanMessage(content="short summary")]
+    freed = _estimate_freed_tokens(before, after)
+    assert freed > 0
+    # The RemoveMessage sentinel is not counted as surviving content.
+    assert freed == _estimate_freed_tokens(before, after[1:])
+
+    # No shrink → nothing freed (never negative).
+    assert _estimate_freed_tokens(before, [RemoveMessage(id=REMOVE_ALL_MESSAGES), *before]) == 0

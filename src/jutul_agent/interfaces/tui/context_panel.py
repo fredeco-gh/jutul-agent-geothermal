@@ -101,6 +101,7 @@ def render_context_panel(
         )
 
     held = context_tokens(usage)
+    estimated = bool(usage.get("estimated"))
     fraction = context_fraction(usage, window)
     if fraction is None:
         headline = f"**{format_tokens(held)} tokens** in context (window size unknown)"
@@ -111,6 +112,10 @@ def render_context_panel(
         )
 
     lines = [headline, ""]
+    if estimated:
+        # After /compact no model call has measured the new size yet; the
+        # figures are an estimate until the next reply.
+        lines += ["_estimated after compaction — refined on your next reply_", ""]
     baseline = int(first_usage.get("input_tokens") or 0) if first_usage else 0
     lines += _category_lines(
         held=held,
@@ -131,7 +136,10 @@ def render_context_panel(
         f"Last call: input {format_tokens(input_tokens)}{_detail(cache_read, 'cache-read')}"
         f" · output {format_tokens(output_tokens)}{_detail(reasoning, 'reasoning')}",
     ]
-    if baseline and model_calls > 1:
+    if baseline and model_calls > 1 and not estimated:
+        # Growth tracks the trajectory across model calls; after a compaction
+        # the baseline predates the summary, so the comparison is meaningless
+        # until the next measured turn.
         growth = held - baseline
         lines.append(
             f"Conversation growth: {'+' if growth >= 0 else '-'}{format_tokens(abs(growth))}"

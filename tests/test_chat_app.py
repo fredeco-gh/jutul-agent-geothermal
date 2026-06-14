@@ -1379,3 +1379,41 @@ async def test_respond_marks_tool_blocks_answered(session: Session) -> None:
 
         assert blocks[0].status == "responded"
         assert "answered by user" in (blocks[0].border_subtitle or "")
+
+
+async def test_compact_updates_context_figure_immediately(session: Session, monkeypatch) -> None:
+    """`/compact` must drop the ctx figure right away, not leave it stale
+    until the next reply."""
+    from jutul_agent.agent import summarization
+    from jutul_agent.interfaces.tui.widgets import StatusBar
+
+    app = TUIApp(agent=_stub_agent(), session=session, model_label="openai:gpt-5.4-mini")
+
+    async def fake_compact(agent, *, thread_id, model, trace=None):
+        return summarization.CompactResult(
+            messages_before=40, messages_after=10, freed_tokens=14_000
+        )
+
+    monkeypatch.setattr(summarization, "compact_thread", fake_compact)
+
+    async with app.run_test() as pilot:
+        await wait_until_ready(app)
+        app._context_window_tokens = 200_000
+        app._last_usage = {"input_tokens": 30_000, "output_tokens": 1_000}
+        app._first_usage = {"input_tokens": 8_500}
+        app._model_calls = 17
+        app._refresh_context_status()
+        assert app.query_one("#status", StatusBar)._context_label == "ctx 16%"  # 31k/200k
+
+        await app._handle_command("/compact")
+        await wait_until_ready(app)
+        await pilot.pause()
+
+        # 31k - 14k freed = 17k → 8.5% → "ctx 8%", immediately.
+        assert app.query_one("#status", StatusBar)._context_label == "ctx 8%"
+        assert app._last_usage.get("estimated") is True
+
+        await app._handle_command("/context")
+        await pilot.pause()
+        panels = [b.content_text for b in app.query(MessageBlock) if b.border_title == "Context"]
+        assert panels and "estimated after compaction" in panels[-1]

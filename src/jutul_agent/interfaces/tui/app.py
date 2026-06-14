@@ -391,7 +391,26 @@ class TUIApp(App[None]):
             return
         self._model_calls = len(usages)
         self._first_usage = dict(usages[0])
-        self._last_usage = dict(usages[-1])
+        self._last_usage = dict(usages[-1])  # measured: clears any estimate flag
+        self._refresh_context_status()
+
+    def _apply_compaction_estimate(self, freed_tokens: int) -> None:
+        """Drop the displayed usage by the tokens compaction freed.
+
+        Compaction runs no model call, so the measured usage would otherwise
+        sit stale until the next reply. This reduces the last measured input
+        by the freed estimate (the fixed overhead is unchanged, so it
+        cancels) and flags the figure estimated; the next real turn replaces
+        it with a measurement.
+        """
+        if not self._last_usage or freed_tokens <= 0:
+            return
+        held = int(self._last_usage.get("input_tokens") or 0)
+        self._last_usage = {
+            "input_tokens": max(0, held - freed_tokens),
+            "output_tokens": 0,
+            "estimated": True,
+        }
         self._refresh_context_status()
 
     def _refresh_context_status(self) -> None:
@@ -494,10 +513,11 @@ class TUIApp(App[None]):
                     "longer than that."
                 )
             else:
+                self._apply_compaction_estimate(result.freed_tokens)
                 await self._note(
                     f"Compacted the conversation: {result.messages_before} messages → "
                     f"{result.messages_after} (a summary plus the recent turns). "
-                    "The ctx figure updates on the next reply."
+                    "The ctx figure now shows an estimate, refined on your next reply."
                 )
         finally:
             await self._finish_turn()

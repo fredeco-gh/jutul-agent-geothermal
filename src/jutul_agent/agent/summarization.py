@@ -33,6 +33,23 @@ def auto_compact_trigger_tokens(window: int | None) -> int:
     return int(window * _TRIGGER_FRACTION) if window else _FALLBACK_TRIGGER_TOKENS
 
 
+def _estimate_freed_tokens(before: list[Any], after: list[Any]) -> int:
+    """Approximate input tokens removed by a compaction.
+
+    The difference in message tokens before vs after; the fixed per-call
+    overhead (system prompt, tools) is unchanged by compaction and so is not
+    part of the delta. ``after`` carries the middleware's leading
+    ``RemoveMessage`` sentinel, which is dropped here.
+    """
+    from langchain_core.messages import RemoveMessage
+    from langchain_core.messages.utils import count_tokens_approximately
+
+    kept = [m for m in after if not isinstance(m, RemoveMessage)]
+    before_tokens = count_tokens_approximately(before) if before else 0
+    after_tokens = count_tokens_approximately(kept) if kept else 0
+    return max(0, int(before_tokens) - int(after_tokens))
+
+
 class TraceSummarizationMiddleware(SummarizationMiddleware):
     """SummarizationMiddleware that records each compaction in the trace."""
 
@@ -101,6 +118,10 @@ def build_summarization_middleware(
 class CompactResult:
     messages_before: int
     messages_after: int
+    # Approximate input tokens removed by the summary replacing older turns.
+    # Anchors the live /context estimate so it drops immediately, before the
+    # next model call measures the new size exactly.
+    freed_tokens: int = 0
 
 
 async def compact_thread(
@@ -141,6 +162,7 @@ async def compact_thread(
     result = CompactResult(
         messages_before=len(messages),
         messages_after=len(update["messages"]) - 1,
+        freed_tokens=_estimate_freed_tokens(messages, update["messages"]),
     )
     if trace is not None:
         trace.append(
