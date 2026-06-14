@@ -97,3 +97,26 @@ async def test_remember_falls_back_to_project_for_unknown_kind(tmp_path: Path) -
 
     await remember.ainvoke({"content": "fact", "title": "Thing", "kind": "nonsense"})
     assert "type: project" in (memory_dir / "thing.md").read_text(encoding="utf-8")
+
+
+def test_memory_note_path_sanitizes_and_suffixes(tmp_path) -> None:
+    from jutul_agent.agent.memory import memory_note_path
+
+    assert memory_note_path(tmp_path, "user-workflow") == tmp_path / "user-workflow.md"
+    assert memory_note_path(tmp_path, "user-workflow.md") == tmp_path / "user-workflow.md"
+    assert memory_note_path(tmp_path, "../../etc/passwd") == tmp_path / "passwd.md"
+
+
+def test_render_memory_overview_lists_notes(tmp_path) -> None:
+    from jutul_agent.agent.memory import ensure_memory_dir, render_memory_overview
+
+    memory_dir = ensure_memory_dir(tmp_path / "memory")
+    (memory_dir / "quirks.md").write_text("BattMo output API note\n", encoding="utf-8")
+
+    body = render_memory_overview(memory_dir)
+    assert "Memory index" in body
+    assert "`quirks.md`" in body
+    assert "/memory edit" in body
+
+    empty = render_memory_overview(ensure_memory_dir(tmp_path / "fresh"))
+    assert "No notes yet" in empty

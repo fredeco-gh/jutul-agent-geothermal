@@ -23,6 +23,8 @@ turn and exits.
 | `--model <provider:model>` | Model for this run. Precedence: this flag, workspace config, user config, `$JUTUL_AGENT_MODEL`, default |
 | `--julia-project <path>` | Override the resolved workspace Julia project |
 | `--add-dir <path>` | Mount an extra folder for the agent (repeatable) |
+| `--continue` | Continue the most recent session in this workspace |
+| `--resume [id]` | Resume a session by id or unique prefix; with no value, pick from a list |
 | `--approval-mode ask\|workspace\|auto` | Human-in-the-loop policy (headless runs need `auto`) |
 | `--ephemeral-memory` | Throwaway memory directory for this session |
 | `--version` | Print the version |
@@ -62,6 +64,17 @@ jutul-agent transcript                  # last session in this workspace, HTML
 jutul-agent transcript <id>             # a specific session
 jutul-agent transcript --format markdown
 jutul-agent transcript --bundle         # zip including artifacts
+```
+
+## jutul-agent sessions
+
+List this workspace's sessions, newest first: start time, id, and the
+title derived from each session's first prompt. Any id (or unique prefix)
+can be passed to `--resume`.
+
+```sh
+jutul-agent sessions
+jutul-agent sessions --limit 0    # show all
 ```
 
 ## jutul-agent eval

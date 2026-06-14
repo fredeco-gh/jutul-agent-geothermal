@@ -30,10 +30,14 @@ class TraceRecorder(AgentMiddleware):
         last = messages[-1]
         if not isinstance(last, AIMessage):
             return None
-        reasoning = reasoning_to_str(last.content)
+        # ``content_blocks`` normalizes provider-specific shapes (e.g. OpenAI
+        # keeps reasoning summaries under a raw ``summary`` key that the
+        # projection helpers don't know about).
+        blocks = getattr(last, "content_blocks", None) or last.content
+        reasoning = reasoning_to_str(blocks)
         if reasoning.strip():
             self._trace.append("message_reasoning", {"content": reasoning})
-        content = content_to_str(last.content)
+        content = content_to_str(blocks)
         if content.strip():
             self._trace.append("message_assistant", {"content": content})
         usage = getattr(last, "usage_metadata", None)

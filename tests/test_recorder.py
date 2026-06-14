@@ -117,3 +117,34 @@ async def test_trace_recorder_logs_model_usage(tmp_path) -> None:
     log.close()
     assert events["model_usage"]["input_tokens"] == 120
     assert events["model_usage"]["output_tokens"] == 15
+
+
+async def test_trace_recorder_normalizes_openai_reasoning_summary(tmp_path) -> None:
+    """OpenAI keeps reasoning summaries under a raw ``summary`` key; the
+    recorder reads the normalized content blocks so the trace still gets a
+    ``message_reasoning`` event."""
+    log = TraceLog(tmp_path / "trace.sqlite")
+    recorder = TraceRecorder(log)
+
+    state = {
+        "messages": [
+            AIMessage(
+                content=[
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [{"type": "summary_text", "text": "thinking about primes"}],
+                        "content": [],
+                    },
+                    {"type": "text", "text": "There are 10."},
+                ],
+                response_metadata={"model_provider": "openai"},
+            )
+        ]
+    }
+    await recorder.aafter_model(state, runtime=None)
+
+    events = {event.kind: event.payload for event in log.iter_events()}
+    assert "thinking about primes" in events["message_reasoning"]["content"]
+    assert events["message_assistant"]["content"] == "There are 10."
+    log.close()

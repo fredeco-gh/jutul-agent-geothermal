@@ -80,6 +80,9 @@ uv run jutul-agent
 | `/model` | Open the model selector (or `/model <provider:model>`) |
 | `/approval-mode` | Set approval policy: `ask`, `workspace`, `auto` |
 | `/add-dir <path>` | Mount an extra folder |
+| `/context` | Show context usage: tokens held vs the model's window |
+| `/compact` | Summarize older turns to free context space |
+| `/memory` | View workspace memory (`/memory edit` opens it in `$EDITOR`) |
 | `/transcript` | Write the session transcript (add `md` for markdown) |
 | `/copy` | Copy the last assistant message |
 | `/clear` | Clear the visible log |
@@ -90,7 +93,7 @@ uv run jutul-agent
 |---|---|
 | `Ctrl+C` | Interrupt the running turn. With text selected, copy. Twice when idle, exit |
 | `Ctrl+G` | Cancel the in-flight turn (resets Julia if needed) |
-| `Ctrl+O` | Toggle all tool blocks between preview and full output |
+| `Ctrl+O` | Toggle tool and reasoning cards between preview and full output |
 | `Ctrl+L` | Clear the visible log |
 | `Shift+Tab` | Cycle approval mode |
 | `Ctrl+P` / `↑` | Previous history entry |
@@ -98,6 +101,29 @@ uv run jutul-agent
 Approval modes: `ask` (default) prompts before shell commands and file edits,
 `workspace` auto-allows file writes inside the workspace, `auto` allows all
 side-effecting tools.
+
+## Resuming a session
+
+The conversation survives the process: every session checkpoints its
+thread, so you can pick an earlier one back up.
+
+```sh
+uv run jutul-agent --continue          # reopen the most recent session
+uv run jutul-agent --resume            # pick from a list of recent sessions
+uv run jutul-agent --resume 2026-06-12 # by id, or any unique prefix
+uv run jutul-agent sessions            # list what's resumable
+```
+
+A resumed TUI replays the prior exchanges and the model continues with the
+full conversation. Sessions are named by start time plus a short suffix
+(`2026-06-12-2315-3f2a`), so listings sort chronologically; the first
+prompt also titles the session, and its output folder under
+`jutul-agent-output/sessions/` carries that title as a slug.
+
+One thing does not survive: the Julia REPL restarts with the process, so
+variables and loaded packages from earlier turns are gone (files and
+artifacts on disk remain). The agent is told this and re-runs setup it
+needs.
 
 ## Headless turns
 

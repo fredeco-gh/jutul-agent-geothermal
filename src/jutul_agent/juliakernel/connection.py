@@ -17,6 +17,7 @@ them to the kernel log file.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import contextlib
 import socket
 from dataclasses import dataclass, field
@@ -37,6 +38,22 @@ class PendingEval:
     on_chunk: OnChunk | None = None
     out: bytearray = field(default_factory=bytearray)
     err: bytearray = field(default_factory=bytearray)
+    _decoders: dict[str, codecs.IncrementalDecoder] = field(default_factory=dict, repr=False)
+
+    def decode_chunk(self, stream: str, body: bytes) -> str:
+        """Decode one streamed chunk without splitting multi-byte characters.
+
+        Pipe flushes land anywhere, including inside a UTF-8 sequence (the
+        box-drawing characters of a results table are three bytes each), so
+        decoding each chunk on its own emits replacement characters at the
+        split. The per-stream incremental decoder holds the partial sequence
+        until its remaining bytes arrive with the next chunk.
+        """
+        decoder = self._decoders.get(stream)
+        if decoder is None:
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
+            self._decoders[stream] = decoder
+        return decoder.decode(body)
 
 
 class KernelConnection:
@@ -169,8 +186,10 @@ class KernelConnection:
         buf = pending.out if stream == "stdout" else pending.err
         buf += body
         if pending.on_chunk is not None and body:
-            with contextlib.suppress(Exception):  # a bad sink must not wedge the reader
-                pending.on_chunk(OutputChunk(text=body.decode("utf-8", "replace"), stream=stream))
+            text = pending.decode_chunk(stream, body)
+            if text:
+                with contextlib.suppress(Exception):  # a bad sink must not wedge the reader
+                    pending.on_chunk(OutputChunk(text=text, stream=stream))
 
     def _route_result(self, exec_id: int, status: str, body: bytes) -> None:
         pending = self._current

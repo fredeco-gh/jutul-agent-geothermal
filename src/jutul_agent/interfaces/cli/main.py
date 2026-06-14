@@ -5,6 +5,7 @@ Three modes, dispatched on the first argument:
 - ``jutul-agent init|setup [--sim <name>]``  bootstrap the current workspace.
 - ``jutul-agent doctor``                     diagnose the workspace setup.
 - ``jutul-agent transcript [<id>]``         render a session trace.
+- ``jutul-agent sessions``                  list resumable sessions.
 - ``jutul-agent eval [<suite>...]``          run bench suites through Inspect.
 - ``jutul-agent [--sim <name>] [prompt]``   launch the TUI, or run one turn.
 
@@ -63,6 +64,13 @@ def main(argv: list[str] | None = None) -> int:
         args = transcript_cmd.build_parser().parse_args(argv[1:])
         apply_workspace_flags(args)
         return transcript_cmd.run(args)
+
+    if argv and argv[0] == "sessions":
+        from jutul_agent.interfaces.cli import sessions as sessions_cmd
+
+        args = sessions_cmd.build_parser().parse_args(argv[1:])
+        apply_workspace_flags(args)
+        return sessions_cmd.run(args)
 
     if argv and argv[0] == "eval":
         from jutul_agent.interfaces.cli import eval as eval_cmd

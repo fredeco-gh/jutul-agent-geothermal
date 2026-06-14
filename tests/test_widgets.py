@@ -115,3 +115,70 @@ async def test_tool_block_collapses_carriage_return_progress() -> None:
 
     assert block._output == "Progress 100%|########|"
     assert block._output.count("Progress") == 1
+
+
+async def test_tool_block_coalesces_streamed_renders() -> None:
+    """Mounted blocks defer the terminal render to a timer so a chatty tool
+    can't re-render the card per delta; the flush renders the latest state and
+    a final result cancels any pending flush."""
+    from textual.app import App
+    from textual.containers import VerticalScroll
+
+    class _Host(App[None]):
+        def compose(self):
+            yield VerticalScroll(id="log")
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        log = app.query_one("#log", VerticalScroll)
+        block = ToolBlock("julia_eval", {"code": "run()"}, tool_call_id="call-3")
+        await log.mount(block)
+        await pilot.pause()
+
+        await block.append_output("Progress   0%|        |\r")
+        await block.append_output("Progress  50%|####    |\r")
+        # Not rendered yet: the flush timer is pending.
+        assert block._output == ""
+        assert block.has_output  # streamed text still counts as output
+
+        await block._flush_streamed()
+        assert block._output.count("Progress") == 1
+        assert "50%" in block._output
+
+        await block.append_output("Progress 100%|########|\n")
+        await block.set_result("Progress 100%|########|\n")
+        assert "100%" in block._output
+        # A late flush after the result is a no-op.
+        await block._flush_streamed()
+        assert "100%" in block._output
+
+
+async def test_reasoning_block_streams_tail_then_collapses() -> None:
+    from jutul_agent.interfaces.tui.widgets import ReasoningBlock
+
+    block = ReasoningBlock()
+
+    class _FakeStatic:
+        def __init__(self) -> None:
+            self.body = ""
+
+        def update(self, body: str) -> None:
+            self.body = body
+
+        def refresh(self, *, layout: bool = False) -> None:
+            return None
+
+    block._body_widget = _FakeStatic()
+    await block.append_content("**Heading**\nline1\nline2\nline3\nline4")
+    # While thinking, only a rolling tail is rendered (stable height, O(1) cost).
+    assert block._body_widget.body == "line2\nline3\nline4"
+
+    await block.finish()
+    assert block._body_widget.body == "**Heading**"  # one-line preview
+    assert "thought for" in block.border_subtitle
+    assert block.content_text.startswith("**Heading**")  # full text retained
+
+    await block.set_expanded(True)
+    assert "line4" in block._body_widget.body  # verbose shows everything
+    await block.set_expanded(False)
+    assert block._body_widget.body == "**Heading**"

@@ -62,6 +62,20 @@ def render_markdown(events: Iterable[Event]) -> str:
             ]
         elif kind == "session_end":
             lines += ["---", f"_Session ended: `{ts}`_", ""]
+        elif kind == "session_resume":
+            lines += ["---", f"_Session resumed: `{ts}`_", ""]
+        elif kind == "session_title":
+            title = str(payload.get("title") or "").strip()
+            if title:
+                lines += [f"**{title}**", ""]
+        elif kind == "context_compaction":
+            trigger = "manual" if payload.get("manual") else "automatic"
+            before = payload.get("messages_before", "?")
+            after = payload.get("messages_after", "?")
+            lines += [
+                f"_Context compacted ({trigger}): {before} messages → {after} · `{ts}`_",
+                "",
+            ]
         elif kind == "message_user":
             lines += [f"## User · `{ts}`", "", str(payload.get("content", "")), ""]
         elif kind == "message_reasoning":

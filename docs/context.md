@@ -26,8 +26,9 @@ tail-capped at 256 KB. Result values and error messages are capped at
 64 KiB on the kernel side. Within those caps, what the tool saw is what
 the model sees.
 
-The TUI's collapsed tool blocks are display only. `Ctrl+O` toggles the
-full output for you, and the model's context is unaffected either way.
+The TUI's collapsed tool and reasoning cards are display only. `Ctrl+O`
+toggles the full output for you, and the model's context is unaffected
+either way.
 
 ## Persistence
 
@@ -40,13 +41,32 @@ model.
 
 ## Growth and its limits
 
-There is no automatic summarization or compaction yet: a session's context
-grows with the conversation, and a very long session will eventually
-approach the model's window. Current practice:
+A session's context grows with the conversation, so growth is both visible
+and managed:
 
-- Keep sessions task-shaped, and start a new one for a new investigation.
-  Durable knowledge belongs in memory, which is exactly the part that
-  survives the session boundary.
+- `/context` in the TUI shows measured usage: the last model call's
+  `usage_metadata` is exactly what the conversation costs to send. The
+  panel estimates usage by category — system prompt, memory index,
+  tools/skills/framework, conversation — plus the free space up to the
+  auto-compaction trigger and the buffer the trigger reserves, and it
+  tracks conversation growth across model calls. The status bar keeps a
+  `ctx` percentage in view (yellow at 70% of the window, red at 90%).
+  The window size comes from the provider package's profile data, from
+  the Ollama daemon for local models, or from the Gemini API for Gemini
+  models newer than the bundled data.
+- When the conversation reaches 80% of the model's window, older turns are
+  automatically replaced by a structured summary (session intent, key
+  decisions, artifacts, next steps) while the newest 20 messages stay
+  verbatim — langchain's `SummarizationMiddleware`, wired in
+  `agent/summarization.py`. For models with no discoverable window the
+  trigger falls back to an absolute token count.
+- `/compact` runs the same pass on demand against the checkpointed thread,
+  keeping a shorter tail. Every compaction (automatic or manual) is
+  recorded as a `context_compaction` trace event, and the full
+  pre-compaction conversation remains in the trace.
+- Keep sessions task-shaped regardless: a summary preserves conclusions,
+  not everything. Durable knowledge belongs in memory, which survives the
+  session boundary by design.
 - Token usage per model turn is recorded in the trace (`model_usage`
   events), so the cost of a workflow is measurable, and the bench records
   it per sample.

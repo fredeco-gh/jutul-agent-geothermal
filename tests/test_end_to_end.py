@@ -301,3 +301,34 @@ def _trace_kinds(session: Session) -> list[str]:
         return [e.kind for e in log.iter_events()]
     finally:
         log.close()
+
+
+async def test_resumed_thread_restores_conversation(tmp_path: Path) -> None:
+    """Same checkpoint db + same thread id ⇒ the next process sees the turn."""
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(julia=FakeJulia(), state_root=tmp_path, simulator=adapter)
+    ckpt = session.state_dir / "checkpoints.sqlite"
+    async with AsyncSqliteSaver.from_conn_string(str(ckpt)) as saver:
+        agent, _ = build_agent(
+            session, model=make_scripted_model([scripted_final("Hello!")]), checkpointer=saver
+        )
+        await _run_turn(agent, session, "Hi there")
+    session.finalize()
+
+    resumed = Session.resume(
+        julia=FakeJulia(),
+        simulator=adapter,
+        session_id=session.session_id,
+        state_root=tmp_path,
+    )
+    async with AsyncSqliteSaver.from_conn_string(str(ckpt)) as saver:
+        agent2, _ = build_agent(
+            resumed, model=make_scripted_model([scripted_final("Again")]), checkpointer=saver
+        )
+        state = await agent2.aget_state({"configurable": {"thread_id": resumed.session_id}})
+        contents = [str(getattr(m, "content", "")) for m in state.values["messages"]]
+        assert any("Hi there" in c for c in contents)
+        assert any("Hello!" in c for c in contents)
+    resumed.finalize()

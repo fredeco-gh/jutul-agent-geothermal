@@ -75,3 +75,16 @@ def test_curated_ollama_lists_are_well_formed() -> None:
     assert all(not t.endswith(":cloud") for t in RECOMMENDED_OLLAMA_LOCAL)
     assert OLLAMA_CLOUD
     assert all(t.endswith(":cloud") for t in OLLAMA_CLOUD)
+
+
+def test_context_window_google_sdk_fallback(monkeypatch) -> None:
+    """A Gemini model with no bundled profile falls back to the API lookup."""
+    from jutul_agent import models
+
+    # Without a key the lookup declines instead of constructing a client.
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    assert models._google_context_window("gemini-3.5-flash") is None
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(models, "_google_context_window", lambda name: 1_048_576)
+    assert models.context_window("google_genai:gemini-3.5-flash") == 1_048_576

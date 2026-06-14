@@ -254,7 +254,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -727,7 +727,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -1198,7 +1198,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -1671,7 +1671,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -2149,7 +2149,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -2620,7 +2620,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -2813,7 +2813,7 @@
   </code></pre></div>
   </dd></dl><h4>Result</h4><div class="highlight"><pre><span></span><code><span class="mi">4</span>
   </code></pre></div>
-  </article><article class="event" data-kind="message_assistant" data-filter="assistant"><div class="event-header"><span class="event-kind assistant">Assistant</span><time datetime="2026-05-19T10:00:05+00:00">2026-05-19T10:00:05+00:00</time></div><div class="prose-plain">The answer is 4.</div></article><div class="session-end">Session ended · <time datetime="2026-05-19T10:00:06+00:00">2026-05-19T10:00:06+00:00</time></div></div><p class="share-note">To share this transcript, distribute the session folder (<code>transcript.html</code> plus any <code>artifacts/</code>) or run <code>jutul-agent transcript --bundle</code> to create a zip.</p></div>
+  </article><article class="event" data-kind="message_assistant" data-filter="assistant"><div class="event-header"><span class="event-kind assistant">Assistant</span><time datetime="2026-05-19T10:00:05+00:00">2026-05-19T10:00:05+00:00</time></div><div class="prose-plain">The answer is 4.</div></article><div class="session-marker">Session ended · <time datetime="2026-05-19T10:00:06+00:00">2026-05-19T10:00:06+00:00</time></div></div><p class="share-note">To share this transcript, distribute the session folder (<code>transcript.html</code> plus any <code>artifacts/</code>) or run <code>jutul-agent transcript --bundle</code> to create a zip.</p></div>
   <script>
   (function () {
     const events = document.querySelectorAll(".event[data-filter]");
@@ -3095,7 +3095,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -3566,7 +3566,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -3755,7 +3755,7 @@
   </style>
   </head>
   <body>
-  <div class="wrap"><header><h1>jutul-agent transcript</h1><p class="meta">Session <code>abc</code></p><p class="meta">Simulator: jutuldarcy</p><p class="meta">Started: <time datetime="2026-05-19T10:00:01+00:00">2026-05-19T10:00:01+00:00</time></p><p class="meta">Ended: <time datetime="2026-05-19T10:00:03+00:00">2026-05-19T10:00:03+00:00</time></p><div class="badges"><span class="badge">Session: 2</span><span class="badge">User: 1</span></div></header><div class="controls"><fieldset><legend>Filter</legend><label><input type="checkbox" class="kind-filter" data-filter="user" checked> User</label></fieldset><button type="button" id="collapse-all">Collapse all</button><button type="button" id="expand-all">Expand all</button></div><div class="timeline"><article class="event" data-kind="message_user" data-filter="user"><div class="event-header"><span class="event-kind user">User</span><time datetime="2026-05-19T10:00:02+00:00">2026-05-19T10:00:02+00:00</time></div><div class="prose-plain">what is 2+2?</div></article><div class="session-end">Session ended · <time datetime="2026-05-19T10:00:03+00:00">2026-05-19T10:00:03+00:00</time></div></div><p class="share-note">To share this transcript, distribute the session folder (<code>transcript.html</code> plus any <code>artifacts/</code>) or run <code>jutul-agent transcript --bundle</code> to create a zip.</p></div>
+  <div class="wrap"><header><h1>jutul-agent transcript</h1><p class="meta">Session <code>abc</code></p><p class="meta">Simulator: jutuldarcy</p><p class="meta">Started: <time datetime="2026-05-19T10:00:01+00:00">2026-05-19T10:00:01+00:00</time></p><p class="meta">Ended: <time datetime="2026-05-19T10:00:03+00:00">2026-05-19T10:00:03+00:00</time></p><div class="badges"><span class="badge">Session: 2</span><span class="badge">User: 1</span></div></header><div class="controls"><fieldset><legend>Filter</legend><label><input type="checkbox" class="kind-filter" data-filter="user" checked> User</label></fieldset><button type="button" id="collapse-all">Collapse all</button><button type="button" id="expand-all">Expand all</button></div><div class="timeline"><article class="event" data-kind="message_user" data-filter="user"><div class="event-header"><span class="event-kind user">User</span><time datetime="2026-05-19T10:00:02+00:00">2026-05-19T10:00:02+00:00</time></div><div class="prose-plain">what is 2+2?</div></article><div class="session-marker">Session ended · <time datetime="2026-05-19T10:00:03+00:00">2026-05-19T10:00:03+00:00</time></div></div><p class="share-note">To share this transcript, distribute the session folder (<code>transcript.html</code> plus any <code>artifacts/</code>) or run <code>jutul-agent transcript --bundle</code> to create a zip.</p></div>
   <script>
   (function () {
     const events = document.querySelectorAll(".event[data-filter]");
@@ -4037,7 +4037,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -4512,7 +4512,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -4983,7 +4983,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -5454,7 +5454,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -5925,7 +5925,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
@@ -6399,7 +6399,7 @@
   .inline-artifact { margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px dashed var(--border); }
   .inline-artifact figure img { max-height: 320px; object-fit: contain; }
   .artifact-source { margin-top: 0.5rem; }
-  .session-end {
+  .session-marker {
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;

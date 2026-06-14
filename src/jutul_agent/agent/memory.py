@@ -146,6 +146,52 @@ def build_memory_middleware(backend) -> MemoryMiddleware:
     )
 
 
+def memory_note_path(memory_dir: Path, name: str) -> Path:
+    """Resolve a user-typed note name to a file inside the memory dir.
+
+    Only the basename is honoured (no traversal), and a missing ``.md``
+    suffix is added, so ``user-workflow`` and ``user-workflow.md`` both work.
+    """
+    base = Path(name.strip()).name
+    if not base.endswith(".md"):
+        base += ".md"
+    return memory_dir / base
+
+
+def list_memory_notes(memory_dir: Path) -> list[Path]:
+    """Note files beside the index, sorted by name."""
+    if not memory_dir.is_dir():
+        return []
+    return sorted(
+        path
+        for path in memory_dir.glob("*.md")
+        if path.is_file() and path.name != MEMORY_INDEX_FILENAME
+    )
+
+
+def render_memory_overview(memory_dir: Path) -> str:
+    """Markdown body for the TUI ``/memory`` card: the index plus note files."""
+    index_path = memory_dir / MEMORY_INDEX_FILENAME
+    try:
+        index = index_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        index = "(no memory index yet)"
+
+    lines = [index, "", "---", ""]
+    notes = list_memory_notes(memory_dir)
+    if notes:
+        lines.append("Notes on disk:")
+        lines.extend(f"- `{path.name}` ({path.stat().st_size} bytes)" for path in notes)
+    else:
+        lines.append("No notes yet — the agent adds them with its `remember` tool.")
+    lines += [
+        "",
+        f"Stored in `{memory_dir}`.",
+        "`/memory <note>` shows one note · `/memory edit [note]` opens it in your editor.",
+    ]
+    return "\n".join(lines)
+
+
 def _slugify(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.strip().lower()).strip("-")
     return (slug or "note")[:48]

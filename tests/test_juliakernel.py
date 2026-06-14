@@ -113,6 +113,29 @@ async def test_connection_routes_frames_to_the_pending_eval() -> None:
                 await asyncio.sleep(0.01)
 
 
+async def test_streamed_chunks_keep_split_utf8_characters_whole() -> None:
+    """A pipe flush can split a multi-byte character (e.g. the box-drawing
+    corner of a results table) across OUT frames; the live sink must see the
+    completed character, not replacement marks at the split."""
+    async with _Wire() as wire:
+        await wire.send(b"RDY t 0\n")
+        chunks: list[OutputChunk] = []
+        pending = wire.conn.begin_eval(chunks.append)
+
+        corner = "\u2500\u256f".encode()  # "─╯", three bytes each
+        head, tail = corner[:4], corner[4:]  # cut inside the second character
+        await wire.send(b"OUT stdout %d\n" % len(head) + head)
+        await wire.send(b"OUT stdout %d\n" % len(tail) + tail)
+        await wire.send(b"RES 1 ok 0\n")
+        await asyncio.wait_for(pending.future, 5)
+        wire.conn.end_eval(pending)
+
+        text = "".join(chunk.text for chunk in chunks)
+        assert text == "\u2500\u256f"
+        assert "\ufffd" not in text
+        assert bytes(pending.out) == corner
+
+
 async def test_connection_drops_a_stale_result() -> None:
     """The RES of an abandoned eval must not resolve the next eval's future."""
     async with _Wire() as wire:

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import date
 from pathlib import Path
 
@@ -144,17 +145,31 @@ def workspace_output_dir(workspace: Path | None = None) -> Path:
     return (workspace or workspace_root()) / WORKSPACE_OUTPUT_DIRNAME
 
 
+# Session ids minted by ``session.default_session_id``: a sortable timestamp
+# plus a short random suffix (e.g. ``2026-06-12-2315-3f2a``).
+_DATED_SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{4}-[0-9a-f]{4}$")
+
+
+def is_dated_session_id(session_id: str) -> bool:
+    """Whether ``session_id`` is a sortable timestamped id (vs a legacy UUID)."""
+    return bool(_DATED_SESSION_ID_RE.match(session_id))
+
+
 def session_output_dir(session_id: str, workspace: Path | None = None) -> Path:
     """Visible output directory for one session under the workspace.
 
-    Layout: ``<workspace>/jutul-agent-output/sessions/<YYYY-MM-DD>-<short_id>/``
+    Layout: ``<workspace>/jutul-agent-output/sessions/<session_id>/`` for
+    timestamped ids (the id itself sorts chronologically), or the legacy
+    ``<YYYY-MM-DD>-<short_id>/`` for UUID sessions.
 
     This directory holds user-facing outputs (plots, transcripts, reports).
     Internal state (SQLite trace, REPL log) stays in ``workspace_state_dir``.
     """
-    short_id = session_id[:8]
-    date_str = date.today().isoformat()
-    return workspace_output_dir(workspace) / "sessions" / f"{date_str}-{short_id}"
+    if is_dated_session_id(session_id):
+        name = session_id
+    else:
+        name = f"{date.today().isoformat()}-{session_id[:8]}"
+    return workspace_output_dir(workspace) / "sessions" / name
 
 
 def workspace_memory_dir(workspace: Path | None = None) -> Path:

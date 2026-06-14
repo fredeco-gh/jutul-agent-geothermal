@@ -14,6 +14,7 @@ supplies the LangChain integration.
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -72,6 +73,69 @@ def is_local(model_id: str) -> bool:
 def is_ollama_cloud(model_id: str) -> bool:
     """Ollama-hosted (``:cloud``) models run remotely; no local pull needed."""
     return provider_of(model_id) == "ollama" and model_id.endswith(":cloud")
+
+
+def context_window(model_id: str) -> int | None:
+    """Input-context size in tokens for ``model_id``, best effort.
+
+    The provider package's bundled profile data answers first (reached by
+    building the model, which needs the provider key the session already
+    has). Providers whose models the data cannot cover have a live fallback
+    in ``_WINDOW_FALLBACKS``: the Ollama daemon reports loaded models, and
+    the Gemini API covers models newer than the bundled data. ``None`` when
+    no source can answer — callers should degrade to absolute counts.
+    """
+    profile: dict | None = None
+    try:
+        from langchain.chat_models import init_chat_model
+
+        profile = init_chat_model(model_id).profile
+    except Exception:
+        profile = None
+    if isinstance(profile, dict):
+        value = profile.get("max_input_tokens")
+        if isinstance(value, int) and value > 0:
+            return value
+    fallback = _WINDOW_FALLBACKS.get(provider_of(model_id))
+    return fallback(model_id) if fallback else None
+
+
+def _ollama_window(model_id: str) -> int | None:
+    from jutul_agent import ollama_client
+
+    return ollama_client.context_window(ollama_client.model_name(model_id))
+
+
+def _google_context_window(name: str) -> int | None:
+    """The model's input limit from the Gemini API, for models the installed
+    provider package has no profile entry for yet.
+
+    Two attempts: the SDK's transport occasionally fails transiently on a
+    fresh client, and this lookup runs once per session.
+    """
+    import contextlib
+    import os
+
+    key = os.environ.get("GOOGLE_API_KEY")
+    if not key or not name:
+        return None
+    for _ in range(2):
+        with contextlib.suppress(Exception):
+            from google.genai import Client
+
+            with Client(api_key=key) as client:
+                limit = client.models.get(model=name).input_token_limit
+            return int(limit) if limit else None
+    return None
+
+
+# Live context-window lookups per provider, for models the bundled profile
+# data cannot answer. Late-bound lambdas so the underlying helpers stay
+# patchable in tests; providers without an entry simply report no window.
+_WINDOW_FALLBACKS: dict[str, Callable[[str], int | None]] = {
+    "ollama": lambda model_id: _ollama_window(model_id),
+    "google_genai": lambda model_id: _google_context_window(model_id.partition(":")[2]),
+}
 
 
 # Ollama ships no profile data, so unlike the cloud providers it has no
