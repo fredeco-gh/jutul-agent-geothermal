@@ -178,15 +178,11 @@ def _category_lines(
             f"- tools, skills & framework: ~{format_tokens(framework)}{_pct(framework, window)}"
         )
         conversation = max(0, held - baseline)
-        lines.append(
-            f"- conversation: ~{format_tokens(conversation)}{_pct(conversation, window)}"
-        )
+        lines.append(f"- conversation: ~{format_tokens(conversation)}{_pct(conversation, window)}")
     elif baseline:
         lines.append(f"- fixed per call: {format_tokens(baseline)}{_pct(baseline, window)}")
         conversation = max(0, held - baseline)
-        lines.append(
-            f"- conversation: ~{format_tokens(conversation)}{_pct(conversation, window)}"
-        )
+        lines.append(f"- conversation: ~{format_tokens(conversation)}{_pct(conversation, window)}")
     else:
         lines.append(f"- in context: {format_tokens(held)}{_pct(held, window)}")
 

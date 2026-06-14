@@ -1162,9 +1162,7 @@ async def test_first_prompt_adopts_session_title(session: Session) -> None:
     assert session.output_dir.exists()
 
 
-async def test_resumed_session_replays_history(
-    tmp_path: Path, fake_julia, fake_adapter
-) -> None:
+async def test_resumed_session_replays_history(tmp_path: Path, fake_julia, fake_adapter) -> None:
     from jutul_agent.session import Session as SessionCls
 
     original = SessionCls.create(julia=fake_julia, state_root=tmp_path, simulator=fake_adapter)
@@ -1417,3 +1415,28 @@ async def test_compact_updates_context_figure_immediately(session: Session, monk
         await pilot.pause()
         panels = [b.content_text for b in app.query(MessageBlock) if b.border_title == "Context"]
         assert panels and "estimated after compaction" in panels[-1]
+
+
+async def test_pending_approval_note_is_removed_after_decision(session: Session) -> None:
+    """The 'approval is pending' log line is transient: it must not linger
+    after the user decides, or it reads as if approval is still needed."""
+    agent = interrupt_agent()
+    app = TUIApp(agent=agent, session=session)
+
+    def pending_notes() -> list[str]:
+        return [
+            block.content_text
+            for block in app.query(MessageBlock)
+            if block.border_title == "System" and "approval is pending" in block.content_text
+        ]
+
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "approve")
+        assert pending_notes()  # shown while the decision is open
+
+        await pilot.press("y")
+        await wait_until_ready(app)
+        await pilot.pause()
+
+        assert pending_notes() == []  # gone once decided
+        assert app._pending_approval_note is None

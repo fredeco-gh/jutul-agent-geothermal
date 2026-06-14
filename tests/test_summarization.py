@@ -104,9 +104,7 @@ async def test_compact_thread_skips_short_threads(tmp_path: Path) -> None:
     class _NoState:
         pass
 
-    assert (
-        await compact_thread(_NoState(), thread_id="t", model=None, trace=None)
-    ) is None
+    assert (await compact_thread(_NoState(), thread_id="t", model=None, trace=None)) is None
 
 
 def test_estimate_freed_tokens_excludes_remove_sentinel() -> None:

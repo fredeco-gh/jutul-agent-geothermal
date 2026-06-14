@@ -273,6 +273,9 @@ class TUIApp(App[None]):
         self._tool_blocks: list[ToolBlock] = []
         self._tools_expanded = False
         self._active_approval_blocks: list[ApprovalBlock] = []
+        # The transient "approval is pending" log line, cleared on decision so
+        # it never lingers as a stale instruction after the turn moves on.
+        self._pending_approval_note: MessageBlock | None = None
         self._history = InputHistory()
         self._setting_prompt_value = False
         self._busy = False
@@ -468,9 +471,7 @@ class TUIApp(App[None]):
             return
         editor = _resolve_editor()
         if not editor:
-            await self._note(
-                f"no editor found — set $EDITOR, or open the file directly: {target}"
-            )
+            await self._note(f"no editor found — set $EDITOR, or open the file directly: {target}")
             return
         with self.suspend():
             subprocess.run([*shlex.split(editor), str(target)], check=False)
@@ -1172,6 +1173,7 @@ class TUIApp(App[None]):
         await self._flush_stream()
         await self._mark_running_tools_cancelled()
         self._reset_approval_state()
+        await self._clear_approval_note()
         if self._julia_running_on_cancel:
             # The kernel interrupts the running eval (SIGINT) and keeps the session,
             # unless the eval was wedged and had to be restarted.
@@ -1261,6 +1263,7 @@ class TUIApp(App[None]):
         await self._flush_stream()
         await self._mark_running_tools_cancelled()
         self._reset_approval_state()
+        await self._clear_approval_note()
         await self._log.mount(MessageBlock("Error", "error", str(exc)))
         await self._note(
             "The turn stopped early. You can retry your last message or continue from here."
@@ -1482,9 +1485,11 @@ class TUIApp(App[None]):
         commands = ", ".join(self._approval_help_lines())
         if commands:
             prefix = "approval is pending" if rendered_cards else "approval required"
-            await self._note(f"{prefix}. Select an option in the menu below.")
+            await self._set_approval_note(f"{prefix}. Select an option in the menu below.")
         else:
-            await self._note("approval required. This request cannot be resolved from the TUI.")
+            await self._set_approval_note(
+                "approval required. This request cannot be resolved from the TUI."
+            )
         self._show_approval_menu()
         self._set_status("approval required")
         self._refresh_prompt_guide()
@@ -1542,6 +1547,7 @@ class TUIApp(App[None]):
         self._stream = _AssistantStream()
         self._tool_blocks.clear()
         self._active_approval_blocks.clear()
+        self._pending_approval_note = None
         await self._mount_welcome_if_empty()
         self._set_status("ready")
         self._refresh_prompt_guide()
@@ -1704,19 +1710,35 @@ class TUIApp(App[None]):
                 used.add(id(block))
                 break
 
-    async def _clear_approval_blocks(self) -> None:
-        """Remove the pending approval cards from the log.
+    async def _set_approval_note(self, text: str) -> None:
+        """Mount the (single) transient "approval is pending" line, tracked so
+        it can be removed once the user decides."""
+        await self._clear_approval_note()
+        block = MessageBlock("System", "system", text)
+        self._pending_approval_note = block
+        await self._log.mount(block)
+        self._jump_to_latest()
 
-        The cards are transient: their only job is to show the diff/command
-        while the user decides. Once decided, the outcome is carried by the
-        tool card (running / rejected) and the durable record lives in the
-        SQLite trace, so leaving a stale colored card in the log just clutters
-        the conversation.
+    async def _clear_approval_note(self) -> None:
+        if self._pending_approval_note is not None:
+            with contextlib.suppress(Exception):
+                await self._pending_approval_note.remove()
+            self._pending_approval_note = None
+
+    async def _clear_approval_blocks(self) -> None:
+        """Remove the pending approval cards and the pending note from the log.
+
+        Both are transient: their only job is to show the diff/command and the
+        instruction while the user decides. Once decided, the outcome is
+        carried by the tool card (running / rejected / responded) and the
+        durable record lives in the SQLite trace, so leaving a stale colored
+        card or a "approval is pending" line in the log just misleads.
         """
         for block in self._active_approval_blocks:
             with contextlib.suppress(Exception):
                 await block.remove()
         self._active_approval_blocks = []
+        await self._clear_approval_note()
 
     async def _preview_pending_decision(self, decision: dict[str, str]) -> None:
         decision_type = decision.get("type") or "pending"
