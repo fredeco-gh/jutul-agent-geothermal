@@ -137,6 +137,21 @@ async def test_chat_app_renders_brackety_tool_args_and_results(session: Session)
         await submit_prompt(pilot, "hello")
 
 
+async def test_chat_app_launches_without_agent_and_blocks_turns(session: Session) -> None:
+    # Launched without a model (e.g. a missing provider key): the app must still
+    # come up, and a plain prompt is rejected with a hint rather than crashing.
+    app = TUIApp(agent=None, session=session, model_label="openai:gpt-5.4-mini")
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "hello")
+        notes = [
+            block.content_text
+            for block in app.query(MessageBlock)
+            if block.border_title == "System"
+        ]
+
+    assert any("/model" in note for note in notes)
+
+
 async def test_transcript_slash_command_writes_file(session: Session) -> None:
     app = TUIApp(agent=_stub_agent(), session=session)
     async with app.run_test() as pilot:

@@ -469,16 +469,41 @@ async def _run_with_backend(
                         mounted_dirs=dirs,
                     )
 
-                agent, backend = build(model_label, extra_dirs)
-                if package_sources:
-                    writable = [src.name for src in package_sources if src.writable]
-                    summary = f"Packages: {len(package_sources)} mounted under /packages/"
-                    if writable:
-                        summary += f" ({len(writable)} writable dev: {', '.join(writable)})"
-                    print(summary, file=sys.stderr)
-                for mount in mounted_dirs(backend):
-                    print(f"Added folder:  {mount.path} -> {mount.route}", file=sys.stderr)
+                from jutul_agent.credentials import missing_credential
+
+                env_var = missing_credential(model_label)
+                if env_var is not None:
+                    # The provider key isn't set, so building the model would
+                    # crash. Launch without an agent instead: the user reaches
+                    # the model selector to paste the key (or pick a local Ollama
+                    # model that needs none), and selecting one rebuilds the agent.
+                    agent, backend = None, None
+                    print(
+                        f"note: {model_label} needs {env_var}, which isn't set. "
+                        "Starting without a model- Open the selector with `/model` "
+                        "to enter the key or pick a local Ollama model.",
+                        file=sys.stderr,
+                    )
+                else:
+                    agent, backend = build(model_label, extra_dirs)
+                if backend is not None:
+                    if package_sources:
+                        writable = [src.name for src in package_sources if src.writable]
+                        summary = f"Packages: {len(package_sources)} mounted under /packages/"
+                        if writable:
+                            summary += f" ({len(writable)} writable dev: {', '.join(writable)})"
+                        print(summary, file=sys.stderr)
+                    for mount in mounted_dirs(backend):
+                        print(f"Added folder:  {mount.path} -> {mount.route}", file=sys.stderr)
                 if args.prompt:
+                    if agent is None:
+                        print(
+                            f"error: {model_label} needs {env_var}, which isn't set. "
+                            "Set it (shell env, .env, or `jutul-agent init`) before a "
+                            "headless `--prompt` run.",
+                            file=sys.stderr,
+                        )
+                        return 1
                     return await _headless_turn(agent, session, args.prompt)
                 from jutul_agent.interfaces.tui import TUIApp
 

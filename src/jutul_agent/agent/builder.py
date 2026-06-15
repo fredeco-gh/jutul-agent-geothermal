@@ -391,18 +391,24 @@ def build_agent(
         skills=skill_sources(session.simulator),
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),
+        # build_summarization_middleware returns None when the model can't be
+        # built yet (no key); drop it so the rest of the agent still assembles.
         middleware=[
-            build_memory_middleware(backend),
-            build_summarization_middleware(
-                resolved_model,
-                model_id=model_spec if isinstance(model_spec, str) else None,
-                trace=session.trace,
-            ),
-            # Before the recorder in the list so its after_model hook runs
-            # *after* the recorder's (after_model composes in reverse): the
-            # model call is traced before a recovery jump re-enters the model.
-            InvalidToolCallRecoveryMiddleware(),
-            TraceRecorder(session.trace),
+            m
+            for m in (
+                build_memory_middleware(backend),
+                build_summarization_middleware(
+                    resolved_model,
+                    model_id=model_spec if isinstance(model_spec, str) else None,
+                    trace=session.trace,
+                ),
+                # Before the recorder in the list so its after_model hook runs
+                # after the recorder's (after_model composes in reverse): the
+                # model call is traced before a recovery jump re-enters the model.
+                InvalidToolCallRecoveryMiddleware(),
+                TraceRecorder(session.trace),
+            )
+            if m is not None
         ],
         checkpointer=checkpointer,
     )

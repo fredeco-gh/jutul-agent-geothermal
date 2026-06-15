@@ -85,12 +85,18 @@ def build_summarization_middleware(
     *,
     model_id: str | None = None,
     trace: TraceLog | None = None,
-) -> TraceSummarizationMiddleware:
+) -> TraceSummarizationMiddleware | None:
     """Auto-compaction middleware for ``model`` (string spec or instance).
 
     Fractional triggers need the model's profile data; models without it
     (local models, unknown ids) fall back to an absolute token trigger sized
     from the reported context window when one is available.
+
+    Returns ``None`` when the model can't be constructed yet. Building the middleware
+    instantiates the model eagerly (langchain resolves the spec in
+    ``__init__``), and a hard failure there must not stop the app from
+    launching: the user still needs to reach the UI to enter a key or pick a
+    local model, after which the agent is rebuilt with a working middleware.
     """
     try:
         return TraceSummarizationMiddleware(
@@ -100,18 +106,25 @@ def build_summarization_middleware(
             keep=_AUTO_KEEP,
         )
     except ValueError:
-        window = None
-        if model_id is not None:
-            from jutul_agent.models import context_window
+        pass  # no profile for a fractional trigger; fall back to a token trigger
+    except Exception:
+        return None  # model not constructible yet
 
-            window = context_window(model_id)
-        tokens = auto_compact_trigger_tokens(window)
+    window = None
+    if model_id is not None:
+        from jutul_agent.models import context_window
+
+        window = context_window(model_id)
+    tokens = auto_compact_trigger_tokens(window)
+    try:
         return TraceSummarizationMiddleware(
             trace,
             model=model,
             trigger=("tokens", tokens),
             keep=_AUTO_KEEP,
         )
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True)

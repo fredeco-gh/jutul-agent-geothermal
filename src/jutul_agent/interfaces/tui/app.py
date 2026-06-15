@@ -482,7 +482,7 @@ class TUIApp(App[None]):
         if self._busy or self._pending_interrupts:
             await self._note("finish or cancel the current turn before compacting.")
             return
-        if not self._model_label:
+        if not self._model_label or self._agent is None:
             await self._note("compacting needs an active model.")
             return
         self._prompt.disabled = True
@@ -784,6 +784,13 @@ class TUIApp(App[None]):
             await self._note("approval is pending. Use the menu above or a slash command.")
             return
 
+        if self._agent is None:
+            await self._note(
+                "No model is ready yet. Open the selector with `/model` to choose one and "
+                "add the provider's API key (or pick a local Ollama model that does not need one)."
+            )
+            return
+
         self._session.adopt_title(text)
         self._prompt.disabled = True
         self._busy = True
@@ -996,7 +1003,7 @@ class TUIApp(App[None]):
         if self._busy or self._pending_interrupts:
             await self._note("finish or cancel the current turn before switching models.")
             return
-        if model_id == self._model_label:
+        if model_id == self._model_label and self._agent is not None:
             await self._note(f"already using `{model_id}`.")
             return
 

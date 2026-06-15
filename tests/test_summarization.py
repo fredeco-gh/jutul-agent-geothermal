@@ -44,6 +44,18 @@ def test_middleware_falls_back_to_window_tokens(monkeypatch) -> None:
     assert middleware.trigger == ("tokens", 100_000)
 
 
+def test_middleware_returns_none_without_provider_key(monkeypatch) -> None:
+    # No OPENAI_API_KEY: constructing the model spec raises in the middleware's
+    # __init__. The builder must get None back (not a crash) so the app can
+    # still launch and let the user enter a key.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_ADMIN_KEY", raising=False)
+    middleware = build_summarization_middleware(
+        "openai:gpt-5.4-mini", model_id="openai:gpt-5.4-mini"
+    )
+    assert middleware is None
+
+
 async def test_trace_middleware_records_compaction(tmp_path: Path) -> None:
     trace = TraceLog(tmp_path / "trace.sqlite")
     middleware = TraceSummarizationMiddleware(
