@@ -345,42 +345,27 @@ def numeric_close(expected: float, tol: float) -> Scorer:
     return score
 
 
-def _levenshtein(a: str, b: str) -> int:
-    """Edit distance between two strings (insertions, deletions, substitutions)."""
-    if len(a) < len(b):
-        a, b = b, a
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
 @scorer(metrics=[accuracy()])
-def reads_word(target: str, max_edits: int = 1) -> Scorer:
-    """Pass when the answer contains a word within ``max_edits`` of ``target``.
+def reads_digit(target: str) -> Scorer:
+    """Pass when the answer names the single digit drawn by the plotted points.
 
-    The tolerant read-check for a vision task: a model that plots a word and
-    reads it back from its own figure is allowed an occasional single-character
-    OCR slip (a dropped or doubled letter), so the answer passes when any of its
-    alphabetic tokens is within Levenshtein distance ``max_edits`` of the
-    (case-insensitive) target. A model that did not read the plot reports an
-    unrelated word and stays well outside that distance, so the check still
-    requires the agent to have looked.
+    The vision read-check: the data encodes one numeral that is legible only
+    once the points are plotted, so reporting the right digit is evidence the
+    agent looked at its own figure. Only standalone single-digit tokens count,
+    so a multi-digit value echoed from the plot recipe (a 600-pixel figure,
+    markersize 18) is ignored; a model that did not read the plot reports a
+    different digit and fails.
     """
-    want = target.upper()
+    want = str(target).strip()
 
     async def score(state: TaskState, target_: Target) -> Score:
-        tokens = re.findall(r"[A-Za-z]+", state.output.completion.upper())
-        hits = [t for t in tokens if _levenshtein(t, want) <= max_edits]
+        seen = re.findall(r"(?<!\d)\d(?!\d)", state.output.completion)
         return Score(
-            value=CORRECT if hits else INCORRECT,
+            value=CORRECT if want in seen else INCORRECT,
             explanation=(
-                f"read {hits[0]!r} (within {max_edits} of {want!r})"
-                if hits
-                else f"no token within {max_edits} of {want!r}: {tokens[:8] or 'none'}"
+                f"read digit {want!r}"
+                if want in seen
+                else f"want {want!r}, saw single digits {seen[:8] or 'none'}"
             ),
         )
 

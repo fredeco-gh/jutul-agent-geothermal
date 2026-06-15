@@ -11,16 +11,7 @@ pytest.importorskip("inspect_ai", reason="eval extra not installed")
 
 from inspect_ai.scorer import CORRECT, INCORRECT
 
-from jutul_agent.eval.scorers import _levenshtein, reads_word
-
-
-def test_levenshtein_basic() -> None:
-    assert _levenshtein("SINTEF", "SINTEF") == 0
-    assert _levenshtein("SINTEF", "SINEF") == 1  # one deletion
-    assert _levenshtein("SINTEF", "SINTERF") == 1  # one insertion
-    assert _levenshtein("SINTEF", "SINTEX") == 1  # one substitution
-    assert _levenshtein("SINTEF", "SHIFT") >= 3
-    assert _levenshtein("", "abc") == 3
+from jutul_agent.eval.scorers import reads_digit
 
 
 def _score(scorer, completion: str):
@@ -28,18 +19,17 @@ def _score(scorer, completion: str):
     return asyncio.run(scorer(state, None)).value
 
 
-def test_reads_word_tolerates_one_slip() -> None:
-    s = reads_word("SINTEF", max_edits=1)
-    # Exact and single-slip reads pass (a plotted-word OCR may drop/double a letter).
-    assert _score(s, "The points spell **SINTEF**.") == CORRECT
-    assert _score(s, "It spells SINEF") == CORRECT
-    assert _score(s, "I read SINTERF") == CORRECT
-    # An unrelated word, or no word, does not.
-    assert _score(s, "The word is SIMPLE") == INCORRECT
-    assert _score(s, "It looks like HELLO to me") == INCORRECT
-    assert _score(s, "no letters, just 123") == INCORRECT
+def test_reads_digit_matches_the_reported_digit() -> None:
+    s = reads_digit("7")
+    assert _score(s, "7") == CORRECT
+    assert _score(s, "The numeral is **7**.") == CORRECT
+    assert _score(s, "It looks like a 3 to me") == INCORRECT
+    assert _score(s, "no digits here") == INCORRECT
 
 
-def test_reads_word_is_case_insensitive() -> None:
-    s = reads_word("SINTEF")
-    assert _score(s, "the word is sintef") == CORRECT
+def test_reads_digit_ignores_multi_digit_recipe_values() -> None:
+    s = reads_digit("7")
+    # The plot recipe (600x600 figure, markersize 18) must not satisfy the
+    # check on its own: only a standalone single digit counts.
+    assert _score(s, "I used a 600x600 figure with markersize 18.") == INCORRECT
+    assert _score(s, "600x600, markersize 18, and the digit is 7.") == CORRECT
