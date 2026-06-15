@@ -38,7 +38,7 @@ A control pairs a target with a kind:
 ```julia
 Darcy, bar, kg, meter, day = si_units(:darcy, :bar, :kilogram, :meter, :day)
 
-# Injector: total rate, gas-only mass fractions, surface density
+# Injector: total rate, injected-phase mixture, surface density of that phase
 rate_target = TotalRateTarget(inj_rate)
 I_ctrl      = InjectorControl(rate_target, [0.0, 1.0], density = rhoGS)
 
@@ -46,6 +46,15 @@ I_ctrl      = InjectorControl(rate_target, [0.0, 1.0], density = rhoGS)
 bhp_target  = BottomHolePressureTarget(50 * bar)
 P_ctrl      = ProducerControl(bhp_target)
 ```
+
+The mixture vector and the initial `Saturations` follow the **system's phase
+order**: pick phases that match the fluids (e.g. `(AqueousPhase(), LiquidPhase())`
+for water–oil, `(LiquidPhase(), VaporPhase())` for gas injection), initialise the
+reservoir with the displaced phase, inject the other, and give `density` the
+injected phase's surface density. Injecting the phase the reservoir is already
+full of gives zero displacement; a density from the wrong phase scales injected
+volumes by the density ratio. Phase viscosities are parameters:
+`parameters[:Reservoir][:PhaseViscosities][i, :]`.
 
 Other targets exist (`SurfaceVolumeTarget`, `SurfaceLiquidRateTarget`, ...).
 Confirm the constructor for your installed version with `@doc <TargetName>`.
@@ -71,6 +80,10 @@ keys(wd[:Producer])      # what channels are available
 wd[:Producer][:bhp]      # BHP per step
 wd[:Producer][:rate]     # total rate
 ```
+
+Note the shape difference: `state0` is keyed by submodel
+(`state0[:Reservoir][:Saturations]`) while each `states[i]` is the flat
+reservoir state (`states[end][:Saturations]`, an `(nphases, ncells)` matrix).
 
 ## Canonical example
 

@@ -13,6 +13,11 @@ You drive a single persistent Julia process. Loaded modules, defined values,
 and compiled methods persist across turns — pay the load cost once and re-use
 the same bindings.
 
+The REPL's working directory is the **workspace root**. Reference workspace
+files by bare relative path — `include("script.jl")` for a file the file tools
+wrote as `script.jl` — never by an absolute OS path or an invented prefix
+(`/workspace/...`, `/root/...`, `/tmp/...`).
+
 **Always run Julia code through `julia_eval` (or `julia_plot` for figures).**
 Never reach for `execute` to spawn `julia`, `julia --project`, `julia -e ...`,
 or a shell pipeline that runs Julia: every such call starts a brand-new
@@ -50,9 +55,10 @@ works unless you have actually run it.
 
 Read the full stack trace. Common fixes:
 
-- **File not found** — you probably used a virtual path (`/experiments/...`).
-  Retry with a workspace-relative path (`experiments/...`) or `isfile("...")`
-  in the REPL to confirm.
+- **File not found** — you probably used a virtual or absolute path
+  (`/experiments/...`, `/tmp/...`, `C:\...`). Retry with a workspace-relative
+  path (`experiments/...`); `pwd()` / `isfile("...")` in the REPL confirm.
+  Do not guess other prefixes.
 - **Package not found** — confirm with `using Pkg; Pkg.status()`. If a Julia
   standard library already covers the need, prefer it over adding a dependency.
   Otherwise `Pkg.add` it when the task needs it; the added package is then
