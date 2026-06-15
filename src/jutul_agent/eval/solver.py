@@ -113,6 +113,30 @@ def _final_text(messages: list[Any]) -> str:
     return ""
 
 
+async def _eval_package_sources(julia_project: Path | None) -> list[Any] | None:
+    """The ``/packages/<Package>/`` mounts, resolved as a real session does.
+
+    The assembled prompt always points the agent at ``/packages/`` to read a
+    package's source, examples, and docs. A real CLI session resolves those
+    mounts from the instantiated manifest and passes them to ``build_agent``
+    (see ``run.py``); the eval must do the same or the mounts the prompt
+    advertises do not exist, and the agent wastes turns discovering their
+    absence before falling back to shell tools on raw depot paths. Resolved
+    from the env's manifest (no compile); ``None`` for env-less samples, which
+    have no packages to browse.
+    """
+    if julia_project is None:
+        return None
+    from jutul_agent.agent.builder import PackageSource
+    from jutul_agent.simulators.env_setup import resolve_env_package_sources
+
+    env = await asyncio.to_thread(resolve_env_package_sources, julia_project)
+    return [
+        PackageSource(name=name, path=path, writable=is_dev)
+        for name, (path, is_dev) in sorted(env.items())
+    ]
+
+
 # Simulators whose golden env has been built or re-resolved by this process;
 # the alignment check runs once per run, not once per sample.
 _ALIGNED_ENVS: set[str] = set()
@@ -196,6 +220,7 @@ async def _run_jutul_session(
     from jutul_agent.eval.runconfig import build_runconfig
 
     store.set(STORE_RUNCONFIG, build_runconfig(adapter, julia_project=julia_project))
+    package_sources = await _eval_package_sources(julia_project)
 
     with ExitStack() as stack:
         env = None
@@ -214,7 +239,12 @@ async def _run_jutul_session(
             store.set(STORE_SESSION_ID, session.session_id)
             store.set(STORE_OUTPUT_DIR, str(session.output_dir))
             try:
-                agent, _backend = build_agent(session, model=_bridge_model(), approval_mode="auto")
+                agent, _backend = build_agent(
+                    session,
+                    model=_bridge_model(),
+                    approval_mode="auto",
+                    package_sources=package_sources,
+                )
                 runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
                 result = await runner.run_prompt(prompt)
             finally:
