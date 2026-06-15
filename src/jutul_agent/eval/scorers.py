@@ -24,7 +24,21 @@ from inspect_ai.solver import TaskState
 
 from jutul_agent.eval.solver import STORE_OUTPUT_DIR, STORE_TRACE_DB, STORE_WORKSPACE
 
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE]-?\d+)?")
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
+# "338,350" must parse as one number, not two: strip commas used as
+# digit-group separators (digit,3-digits,non-digit) before matching.
+_GROUPED_COMMA = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
+
+# A matched snippet is truncated before it goes into a Score's human-readable
+# explanation, so one long match or command cannot bloat the log; the
+# explanation only needs enough to identify what matched.
+_EXPLAIN_MATCH = 80  # a regex match group (usually a short fragment)
+_EXPLAIN_COMMAND = 160  # a fuller shell command or call signature
+
+
+def _answer_numbers(text: str) -> list[float]:
+    """Every number in ``text``, tolerant of digit grouping and exponents."""
+    return [float(m) for m in _NUMBER.findall(_GROUPED_COMMA.sub("", text))]
 
 
 def _trace_tool_calls(state: TaskState) -> list[str]:
@@ -110,7 +124,7 @@ def no_interpreters_via_execute(
                     command = str((event.payload.get("args") or {}).get("command", ""))
                     name = interpreter_invocation(command, interpreters)
                     if name is not None:
-                        offenders.append(command[:160])
+                        offenders.append(command[:_EXPLAIN_COMMAND])
             finally:
                 log.close()
         return Score(
@@ -119,6 +133,89 @@ def no_interpreters_via_execute(
                 f"execute ran an interpreter: {offenders}"
                 if offenders
                 else "no interpreter via the shell"
+            ),
+        )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
+def julia_code_matches(pattern: str) -> Scorer:
+    """Pass when code the agent ran in the Julia session matches ``pattern``.
+
+    The trajectory check for tasks whose point is a specific in-session
+    mechanism (e.g. ``run_ensemble`` for a parallel sweep): the mechanism
+    must appear in the code of a ``julia_eval``/``julia_plot`` call, so a
+    textual claim of having used it cannot pass.
+    """
+    from jutul_agent.trace import TraceLog
+
+    compiled = re.compile(pattern)
+
+    async def score(state: TaskState, target: Target) -> Score:
+        path = state.store.get(STORE_TRACE_DB)
+        hits: list[str] = []
+        if path and Path(path).exists():
+            log = TraceLog(Path(path))
+            try:
+                for event in log.iter_events():
+                    if event.kind != "tool_call":
+                        continue
+                    if event.payload.get("name") not in ("julia_eval", "julia_plot"):
+                        continue
+                    code = str((event.payload.get("args") or {}).get("code", ""))
+                    match = compiled.search(code)
+                    if match is not None:
+                        hits.append(match.group(0)[:_EXPLAIN_MATCH])
+            finally:
+                log.close()
+        return Score(
+            value=CORRECT if hits else INCORRECT,
+            explanation=(
+                f"julia code matched {pattern!r}: {hits}"
+                if hits
+                else f"no julia_eval/julia_plot code matched {pattern!r}"
+            ),
+        )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
+def tool_call_matches(tool: str, args_pattern: str) -> Scorer:
+    """Pass when a call to ``tool`` has arguments matching ``args_pattern``.
+
+    The pattern is searched in the JSON-serialized arguments, so it can pin
+    a specific parameter (e.g. ``"view": true`` on ``julia_plot`` — the
+    agent must have actually looked at its own plot).
+    """
+    import json as _json
+
+    from jutul_agent.trace import TraceLog
+
+    compiled = re.compile(args_pattern)
+
+    async def score(state: TaskState, target: Target) -> Score:
+        path = state.store.get(STORE_TRACE_DB)
+        hits: list[str] = []
+        if path and Path(path).exists():
+            log = TraceLog(Path(path))
+            try:
+                for event in log.iter_events():
+                    if event.kind != "tool_call" or event.payload.get("name") != tool:
+                        continue
+                    serialized = _json.dumps(event.payload.get("args") or {})
+                    match = compiled.search(serialized)
+                    if match is not None:
+                        hits.append(match.group(0)[:_EXPLAIN_MATCH])
+            finally:
+                log.close()
+        return Score(
+            value=CORRECT if hits else INCORRECT,
+            explanation=(
+                f"{tool} args matched {args_pattern!r}: {hits}"
+                if hits
+                else f"no {tool} call with args matching {args_pattern!r}"
             ),
         )
 
@@ -212,7 +309,7 @@ def numeric_answer(
         raise ValueError(f"order must be 'any', 'increasing' or 'decreasing': {order!r}")
 
     async def score(state: TaskState, target: Target) -> Score:
-        values = [float(m) for m in _NUMBER.findall(state.output.completion)]
+        values = _answer_numbers(state.output.completion)
         in_range = [v for v in values if low <= v <= high]
         if order == "any":
             ok = len(in_range) >= count
@@ -238,11 +335,53 @@ def numeric_close(expected: float, tol: float) -> Scorer:
     """
 
     async def score(state: TaskState, target: Target) -> Score:
-        values = [float(m) for m in _NUMBER.findall(state.output.completion)]
+        values = _answer_numbers(state.output.completion)
         hits = [v for v in values if abs(v - expected) <= tol]
         return Score(
             value=CORRECT if hits else INCORRECT,
             explanation=f"expected {expected}±{tol}; answer numbers: {values or 'none'}",
+        )
+
+    return score
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Edit distance between two strings (insertions, deletions, substitutions)."""
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+@scorer(metrics=[accuracy()])
+def reads_word(target: str, max_edits: int = 1) -> Scorer:
+    """Pass when the answer contains a word within ``max_edits`` of ``target``.
+
+    The tolerant read-check for a vision task: a model that plots a word and
+    reads it back from its own figure is allowed an occasional single-character
+    OCR slip (a dropped or doubled letter), so the answer passes when any of its
+    alphabetic tokens is within Levenshtein distance ``max_edits`` of the
+    (case-insensitive) target. A model that did not read the plot reports an
+    unrelated word and stays well outside that distance, so the check still
+    requires the agent to have looked.
+    """
+    want = target.upper()
+
+    async def score(state: TaskState, target_: Target) -> Score:
+        tokens = re.findall(r"[A-Za-z]+", state.output.completion.upper())
+        hits = [t for t in tokens if _levenshtein(t, want) <= max_edits]
+        return Score(
+            value=CORRECT if hits else INCORRECT,
+            explanation=(
+                f"read {hits[0]!r} (within {max_edits} of {want!r})"
+                if hits
+                else f"no token within {max_edits} of {want!r}: {tokens[:8] or 'none'}"
+            ),
         )
 
     return score
@@ -308,7 +447,7 @@ def no_numeric_claim(low: float, high: float, *, ignore: tuple[str, ...] = ()) -
         text = state.output.completion
         for pattern in ignore:
             text = re.sub(pattern, " ", text)
-        values = [float(m) for m in _NUMBER.findall(text)]
+        values = _answer_numbers(text)
         claimed = [v for v in values if low < v < high]
         return Score(
             value=INCORRECT if claimed else CORRECT,
@@ -362,7 +501,7 @@ def no_repeated_identical_calls() -> Scorer:
                     name = event.payload.get("name")
                     signature = f"{name}:{event.payload.get('args')}"
                     if signature in failed:
-                        repeats.append(signature[:160])
+                        repeats.append(signature[:_EXPLAIN_COMMAND])
                         continue
                     if name in _STATE_CHANGING_TOOLS:
                         # The world may have changed; prior failures are no
