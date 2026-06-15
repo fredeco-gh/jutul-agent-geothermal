@@ -12,7 +12,6 @@ from inspect_ai import Task, task
 from inspect_ai.dataset import Sample
 
 from jutul_agent.eval.scorers import (
-    investigation_recorded,
     no_interpreters_via_execute,
     numeric_close,
     used_tools,
@@ -51,17 +50,20 @@ _DATA = """t,y
 
 @task
 def calibration() -> Task:
+    # Simple curve-fit, graded on the answer. An earlier version of this task
+    # also required a recorded >=3-step attempt tree (record_attempt /
+    # write_report), but capable models solve the exp-decay fit in a single
+    # least-squares step and legitimately record one attempt — so the tree
+    # requirement failed every model and measured the prompt, not the agent.
+    # The investigation-tier scoring (investigation_recorded) is being reworked
+    # around a genuinely iterative problem; until then this stays a plain fit.
     sample = Sample(
         id="cal1-exp-decay-fit",
         input=(
             "The workspace file data.csv holds measurements with columns t "
             "and y, generated from y = a*exp(-b*t) plus a little noise. "
-            "Calibrate a and b against the data, iterating in the Julia "
-            "session until the fit is good; for this data a good fit "
-            "reaches an rmse below 0.01. Record every configuration you "
-            "actually evaluate with the record_attempt tool, including an "
-            "rmse metric, linking follow-up attempts to their parent, and "
-            "finish with write_report. Then report the calibrated a and b."
+            "Calibrate a and b against the data in the Julia session and "
+            "report the calibrated a and b."
         ),
         metadata={"fixtures": {"data.csv": _DATA}},
     )
@@ -71,8 +73,7 @@ def calibration() -> Task:
         scorer=[
             numeric_close(2.50, 0.05),
             numeric_close(0.70, 0.03),
-            investigation_recorded(min_attempts=3, metric="rmse"),
-            used_tools(["julia_eval", "record_attempt", "write_report"]),
+            used_tools(["julia_eval"]),
             no_interpreters_via_execute(),
         ],
         time_limit=1200,
