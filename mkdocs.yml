@@ -73,7 +73,9 @@ nav:
   - Extending the agent:
       - Adding a simulator: adding-a-simulator.md
       - Improving the agent: improving-the-agent.md
-      - Evaluation: evaluation.md
+  - Evaluation:
+      - How evaluation works: evaluation.md
+      - Benchmark results: benchmark.md
   - Development:
       - Development: development.md
       - Testing: testing.md
