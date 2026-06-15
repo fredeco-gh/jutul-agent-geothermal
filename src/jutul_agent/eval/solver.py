@@ -90,10 +90,14 @@ def _bridge_model() -> Any:
     return init_chat_model(spec, disable_streaming=True, api_key="inspect-agent-bridge")
 
 
-# The bridge annotates assistant text with an internal capsule (base64
-# metadata in a <content-internal> tag). It must not reach scorers: a
-# number-extracting check would happily mine digits out of base64.
-_INTERNAL_RE = re.compile(r"<content-internal>.*?</content-internal>", re.DOTALL)
+# The bridge annotates assistant text with internal capsules that must not
+# reach scorers: a <content-internal> metadata tag, and (for Gemini) a redacted
+# <think> reasoning signature. Both carry base64 a number-extracting check would
+# happily mine digits out of, so they are stripped before the answer is graded.
+_INTERNAL_RE = re.compile(
+    r"<content-internal>.*?</content-internal>|<think\b[^>]*>.*?</think>",
+    re.DOTALL,
+)
 
 
 def _final_text(messages: list[Any]) -> str:
