@@ -298,6 +298,15 @@ def test_final_text_strips_the_bridge_internal_capsule() -> None:
     assert _final_text(messages) == "0.814"
 
 
+def test_final_text_strips_a_redacted_think_signature() -> None:
+    # Gemini replays an encrypted reasoning signature whose base64 carries stray
+    # digits; it must not reach a number-extracting scorer (here the "7" inside).
+    messages = [
+        AIMessage(content='<think redacted="true"> EjQKMgUAY7gHEYty7Pp </think> 2'),
+    ]
+    assert _final_text(messages) == "2"
+
+
 async def test_no_numeric_claim_inverts_on_fabrication() -> None:
     from inspect_ai.model import ModelOutput
 

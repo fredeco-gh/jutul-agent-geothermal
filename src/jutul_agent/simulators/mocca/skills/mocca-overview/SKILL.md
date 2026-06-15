@@ -24,11 +24,14 @@ against the installed source before promising a capability.
 
 A Mocca simulation has three composable layers:
 
-1. **Inputs**: physical and operational parameters. Either parsed from
-   a JSON file via `Mocca.parse_input` (reference inputs ship inside
-   the package under `models/json/`, with a schema), or constructed
-   directly in Julia: `HaghpanahConstants` for the published reference
-   setup, or explicit isotherm, mass-transfer, and column objects.
+1. **Inputs**: physical and operational parameters. `Mocca.parse_input`
+   accepts either a JSON file path (reference inputs ship inside the
+   package under `models/json/`, with a schema) **or an input `Dict`** —
+   the model library provides `haghpanah_cyclic_input()` /
+   `haghpanah_DCB_input()` returning such dicts. Inputs can also be
+   constructed directly in Julia: `HaghpanahConstants` for the published
+   reference setup, or explicit isotherm, mass-transfer, and column
+   objects.
 2. **Case**: model, initial state, parameters, and staged forces
    assembled into a `MoccaCase`. The JSON route does this in one call,
    `setup_mocca_case(constants, info)`.
@@ -51,37 +54,31 @@ states, timesteps = Mocca.simulate_process(
 )
 ```
 
-Mind `info.num_cycles` for cyclic JSON inputs: the shipped cyclic input
-runs 500 cycles (to steady state), which takes a long time. For a short
-cyclic run, build the case directly from an example.
+The no-file equivalent for the cyclic reference setup:
+
+```julia
+constants, info = Mocca.parse_input(Mocca.haghpanah_cyclic_input())
+```
+
+Mind `info.num_cycles` for cyclic inputs: the shipped cyclic input runs
+500 cycles (to steady state), which takes a long time. `info` is mutable —
+set `info.num_cycles = 3` before `setup_mocca_case` for a short run.
 
 ## Building a case directly
 
-The examples are the ground truth; read the relevant one before writing
-your own chain:
+The examples are the ground truth. List them, then read the one that fits
+your task before writing your own chain:
 
 ```text
 glob("/packages/Mocca/examples/*.jl")
-read_file("/packages/Mocca/examples/cyclic_vsa_haghpanah_2013_co2_n2.jl")
 ```
 
-- `cyclic_vsa_haghpanah_2013_co2_n2.jl`: the canonical four-stage VSA
-  cycle (pressurisation, adsorption, blowdown, evacuation) with the
-  published Haghpanah parameters.
-- `dcb_haghpanah_2013_co2_n2.jl`: the same system as a single
-  breakthrough run.
-- `custom_setup_cyclic_vsa.jl`: composes the physics explicitly
-  (`DualSiteLangmuir`, `LinearDrivingForce`, `AdsorptionSystem`, column
-  domain) when the task needs non-reference parameters.
-- `json_input.jl`, `optimization.jl`, `history_matching.jl`: the JSON
-  route, parameter optimization, and history matching.
-
-The chain the cyclic examples follow, in order: `AdsorptionSystem` →
-`setup_process_model` → `setup_process_state` and
-`setup_process_parameters` → `setup_boundary_conditions` →
-`setup_forces` (stage times, boundary conditions, `num_cycles`,
-`max_dt`) → `MoccaCase` → `simulate_process`. For docstrings, stay in
-the REPL: `julia_eval("@doc Mocca.setup_mocca_case")`.
+The shipped set covers the cyclic four-stage VSA reference, the single-pass
+breakthrough (DCB) variant, an explicit-physics composition for
+non-reference parameters, and the JSON, optimization, and history-matching
+routes. Read whichever fits, and follow its own call chain rather than
+reconstructing it from memory — the internal API moves. For a docstring,
+stay in the REPL: `julia_eval("@doc Mocca.setup_mocca_case")`.
 
 ## Reading results
 

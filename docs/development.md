@@ -100,6 +100,11 @@ uv run mkdocs serve     # live-preview at http://127.0.0.1:8000
 uv run mkdocs build --strict
 ```
 
+Install the `docs` group (it pulls in `mkdocs-material`), not bare `mkdocs`:
+a plain `uv pip install mkdocs` lacks the Material theme and fails with
+`cannot find module 'material.extensions.emoji'`. `uv run --group docs
+mkdocs serve` also works without a prior `uv sync` if you prefer.
+
 The `Docs` workflow checks the strict build on docs-touching pull requests
 and deploys the site to GitHub Pages when docs change on main.
 

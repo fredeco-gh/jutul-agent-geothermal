@@ -61,6 +61,18 @@ wd, states, t = result   # well data, reservoir states, time vector
 Well outputs are indexed by name: `wd[:Producer][:bhp]`, `wd[:Producer][:rate]`,
 etc. `keys(wd[:Producer])` lists what is available.
 
+Three shape facts that are easy to guess wrong (each wrong guess is a KeyError):
+
+- `states[i]` is **reservoir-only and flat**: `states[end][:Saturations]` is an
+  `(nphases, ncells)` matrix, `states[end][:Pressure]` a vector. There is no
+  `:Reservoir` key here.
+- `state0` from `setup_reservoir_state` is the opposite — **keyed by submodel**:
+  `state0[:Reservoir][:Saturations]`, with `:Injector`/`:Producer`/`:Facility`
+  alongside.
+- `result` itself is property-accessed (`result.states`, `result.wells`,
+  `result.time`); `result[2]` is a MethodError. Per-cell pore volume comes from
+  `pore_volume(model, parameters)`.
+
 ## Plotting
 
 Use the **native plotters** through `julia_plot` — they run on GLMakie (the
