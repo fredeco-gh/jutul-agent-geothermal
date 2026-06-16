@@ -87,6 +87,90 @@ def mark_env_precompiled(env_dir: Path) -> None:
         (env_dir / PRECOMPILE_MARKER).touch()
 
 
+# Records the warm-package source the env was last built from, so a jutul-agent
+# update (which changes the bundled JutulAgent runtime) is detected on launch and
+# re-copied into existing managed envs. Otherwise they keep a stale copy forever,
+# since the warm packages are dev-pathed and only copied at bootstrap.
+WARM_SOURCE_MARKER = ".jutul-agent-warm-source"
+
+
+def warm_source_fingerprint(template_path: Path) -> str:
+    """Content hash of the warm-package sources backing a managed env.
+
+    Covers the shared ``JutulAgent`` (from the install's ``julia_runtime/``) and the
+    template's per-simulator ``JutulAgent<Sim>`` packages — every ``.jl`` and
+    ``.toml`` under each. A change to any of them changes the hash, so launch can
+    tell a stale env's copy from the current install's source.
+    """
+
+    digest = hashlib.sha256()
+    roots = [shared_julia_package_path()]
+    roots.extend(
+        sorted(p for p in template_path.glob("JutulAgent*") if (p / "Project.toml").exists())
+    )
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.suffix in (".jl", ".toml"):
+                digest.update(str(path.relative_to(root)).encode("utf-8"))
+                digest.update(b"\0")
+                digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def warm_source_is_current(env_dir: Path, template_path: Path) -> bool:
+    """Whether ``env_dir``'s warm packages match the install's current source.
+
+    False for a never-fingerprinted env (one built before this check existed) or one
+    whose copy predates a jutul-agent update, so launch knows to re-copy.
+    """
+
+    marker = env_dir / WARM_SOURCE_MARKER
+    try:
+        return marker.read_text(encoding="utf-8").strip() == warm_source_fingerprint(template_path)
+    except OSError:
+        return False
+
+
+def recopy_warm_sources(env_dir: Path, template_path: Path) -> bool:
+    """Re-copy the warm packages from the install into a managed env.
+
+    Copies the package directory behind each of the env's ``[sources]`` entries and
+    drops the precompile marker so the next bake re-runs. Returns ``False`` (nothing
+    to do) for an env that declares no ``[sources]`` — i.e. a user-owned env. The
+    caller re-resolves (so a new in-package dependency installs), then marks the env
+    current with :func:`mark_warm_source`; a failed resolve leaves it unmarked so the
+    next launch retries.
+    """
+
+    try:
+        sources = tomllib.loads((env_dir / "Project.toml").read_text(encoding="utf-8")).get(
+            "sources", {}
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    if not sources:
+        return False
+    _copy_source_packages(template_path, env_dir, sources)
+    with contextlib.suppress(OSError):
+        (env_dir / PRECOMPILE_MARKER).unlink()
+    return True
+
+
+def mark_warm_source(env_dir: Path, template_path: Path) -> None:
+    """Record the install's current warm-source fingerprint for ``env_dir``.
+
+    Called after a bootstrap/rebuild and after a successful re-copy + resolve, so the
+    env reads as current only once it actually is.
+    """
+
+    with contextlib.suppress(OSError):
+        (env_dir / WARM_SOURCE_MARKER).write_text(
+            warm_source_fingerprint(template_path), encoding="utf-8"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Env-template stamping (so an upgrade that changes the template is detectable).
 
@@ -530,7 +614,11 @@ def bootstrap_julia_env(
     # and version-specific, so the workspace resolves its own at instantiate time.
     shutil.copytree(template_path, target, ignore=shutil.ignore_patterns("Manifest.toml"))
     sync_shared_julia_package(target)
+    # Stamp the template Project.toml (drives the rebuild-staleness warning) and
+    # fingerprint the warm-package source (drives the auto re-copy when the bundled
+    # JutulAgent runtime itself changes); see env_template_drifted / warm_source_is_current.
     write_env_template_stamp(target, template_path)
+    mark_warm_source(target, template_path)
     return target
 
 
