@@ -41,7 +41,9 @@ def test_read_file_renders_compact_by_default() -> None:
         args={"file_path": "candidate.jl"},
         is_error=False,
     )
-    assert "Read `candidate.jl` · 2 lines" in body
+    # Path renders as a clickable link (short display text, full file:// target).
+    assert "Read [candidate.jl](file://" in body
+    assert "· 2 lines" in body
     assert "content=" not in body
 
 

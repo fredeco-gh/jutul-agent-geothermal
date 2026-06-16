@@ -4,9 +4,28 @@ from __future__ import annotations
 
 from jutul_agent.interfaces.tui.tool_display import (
     compact_tool_summary,
+    display_path,
     display_tool_body,
     strip_read_file_line_numbers,
 )
+
+
+def test_display_path_keeps_filename_for_long_paths() -> None:
+    # Short paths render whole.
+    assert display_path("test_folder/alphabet.jl") == "test_folder/alphabet.jl"
+
+    # Long paths drop leading parents (marked with …/) but keep the filename,
+    # so the click target's name stays visible and the label stays on one line.
+    out = display_path("testbed/jutuldarcy/deep/nested/dirs/here/advanced_simulation.jl")
+    assert out.startswith("…/")
+    assert out.endswith("/advanced_simulation.jl")
+    assert len(out) <= 46
+
+    # A single over-long filename is middle-truncated, keeping its extension.
+    out2 = display_path("a_really_really_really_really_really_long_simulation_name.jl")
+    assert out2.endswith(".jl")
+    assert "…" in out2
+    assert len(out2) <= 44
 
 
 def test_read_file_compact_summary() -> None:
@@ -17,7 +36,10 @@ def test_read_file_compact_summary() -> None:
         output,
         is_error=False,
     )
-    assert summary == "Read `skills/shared/julia-and-repl/SKILL.md` · 2 lines"
+    # The path renders as a clickable file link: short display text, full target.
+    assert summary.startswith("Read [")
+    assert "SKILL.md](file://" in summary
+    assert summary.endswith("· 2 lines")
 
 
 def test_read_file_compact_body_collapsed() -> None:
@@ -29,9 +51,49 @@ def test_read_file_compact_body_collapsed() -> None:
         expanded=False,
         is_error=False,
     )
-    assert "Read `experiments/candidate.jl` · 2 lines" in body
+    # The summary embeds a clickable link; display text stays short, target is full.
+    assert "Read [experiments/candidate.jl](file://" in body
+    assert "· 2 lines" in body
     assert "Ctrl+O" not in body
     assert "content=" not in body
+
+
+def test_write_file_running_body_shows_growing_char_count() -> None:
+    # While the content streams in, the card shows the target and a live count
+    # so a long write isn't silent. The path stays a clickable link.
+    body = display_tool_body(
+        "write_file",
+        {"file_path": "candidate.jl", "content": "x" * 1234},
+        output="",
+        expanded=False,
+        is_error=False,
+    )
+    assert "Writing [candidate.jl](file://" in body
+    assert "1,234 chars" in body
+
+
+def test_write_file_completed_summary_shows_char_count() -> None:
+    summary = compact_tool_summary(
+        "write_file",
+        {"file_path": "candidate.jl", "content": "x" * 50},
+        "Wrote candidate.jl",
+        is_error=False,
+    )
+    assert summary is not None
+    assert summary.startswith("Wrote [candidate.jl](file://")
+    assert summary.endswith("· 50 chars")
+
+
+def test_edit_file_running_body_counts_replacement_text() -> None:
+    body = display_tool_body(
+        "edit_file",
+        {"file_path": "candidate.jl", "old_string": "a", "new_string": "y" * 7},
+        output="",
+        expanded=False,
+        is_error=False,
+    )
+    assert "Editing [candidate.jl](file://" in body
+    assert "7 chars" in body
 
 
 def test_strip_read_file_line_numbers() -> None:

@@ -94,6 +94,12 @@ def display_tool_body(
         code_section = _julia_code_section(tool_name, args)
         if code_section:
             return _join_nonempty(code_section, "_running…_")
+        # File writes show the target and a character count that grows as the
+        # model streams the content, so a long write isn't silent dead air.
+        if tool_name == "write_file":
+            return f"_{_write_file_summary(args, running=True)}_"
+        if tool_name == "edit_file":
+            return f"_{_edit_file_summary(args, running=True)}_"
 
     summary = compact_tool_summary(tool_name, args, output, is_error=is_error)
     if (
@@ -204,14 +210,14 @@ def _read_file_summary(args: dict[str, Any], output: str) -> str:
     path = _path_arg(args)
     text = strip_read_file_line_numbers(output)
     lines = [line for line in text.splitlines() if line.strip()]
-    return f"Read `{path}` · {len(lines)} lines"
+    return f"Read {path} · {len(lines)} lines"
 
 
 def _ls_summary(args: dict[str, Any], output: str) -> str:
-    root = display_path(str(args.get("path") or "."))
+    root = path_link(str(args.get("path") or "."))
     paths = _parse_path_list(output)
     label = "entry" if len(paths) == 1 else "entries"
-    return f"Listed `{root}` · {len(paths)} {label}"
+    return f"Listed {root} · {len(paths)} {label}"
 
 
 def _glob_summary(args: dict[str, Any], output: str) -> str:
@@ -229,17 +235,27 @@ def _grep_summary(args: dict[str, Any], output: str) -> str:
     if scope:
         return (
             f"Grep `{shorten_single_line(pattern, 40)}` in "
-            f"`{display_path(str(scope))}` · {len(lines)} {label}"
+            f"{path_link(str(scope))} · {len(lines)} {label}"
         )
     return f"Grep `{shorten_single_line(pattern, 48)}` · {len(lines)} {label}"
 
 
-def _write_file_summary(args: dict[str, Any]) -> str:
-    return f"Wrote `{_path_arg(args)}`"
+def _content_len(value: Any) -> int:
+    return len(value) if isinstance(value, str) else 0
 
 
-def _edit_file_summary(args: dict[str, Any]) -> str:
-    return f"Edited `{_path_arg(args)}`"
+def _write_file_summary(args: dict[str, Any], *, running: bool = False) -> str:
+    chars = _content_len(args.get("content"))
+    suffix = f" · {chars:,} chars" if chars else ""
+    verb = "Writing" if running else "Wrote"
+    return f"{verb} {_path_arg(args)}{suffix}"
+
+
+def _edit_file_summary(args: dict[str, Any], *, running: bool = False) -> str:
+    chars = _content_len(args.get("new_string"))
+    suffix = f" · {chars:,} chars" if chars else ""
+    verb = "Editing" if running else "Edited"
+    return f"{verb} {_path_arg(args)}{suffix}"
 
 
 def _task_summary(args: dict[str, Any], output: str, *, is_error: bool) -> str:
@@ -270,8 +286,8 @@ def _render_report_summary(args: dict[str, Any], output: str) -> str:
             rel = path.relative_to(workspace_root()).as_posix()
         except ValueError:
             rel = path.as_posix()
-        return f"Rendered `{display_path(rel)}`"
-    return f"Rendered `{display_path(raw)}`"
+        return f"Rendered {path_link(rel)}"
+    return f"Rendered {path_link(raw)}"
 
 
 def _julia_plot_summary(args: dict[str, Any], output: str) -> str:
@@ -283,7 +299,7 @@ def _julia_plot_summary(args: dict[str, Any], output: str) -> str:
     head = f"plot `{shorten(str(slot), 28)}`" if slot else "plot"
     m = re.match(r"saved plot to (\S+) \(", cleaned)
     if m:
-        return f"{head} · `{display_path(m.group(1))}`"
+        return f"{head} · {path_link(m.group(1))}"
     if caption:
         return f"{head} · {shorten_single_line(str(caption), 48)}"
     return head
@@ -305,36 +321,71 @@ def _parse_path_list(output: str) -> list[str]:
 
 def _path_arg(args: dict[str, Any]) -> str:
     path_value = args.get("path") or args.get("file_path")
-    return display_path(str(path_value or "file"))
+    return path_link(str(path_value or "file"))
+
+
+_PATH_DISPLAY_BUDGET = 40
 
 
 def display_path(path_str: str) -> str:
-    """Render a virtual or workspace path with enough context to be useful."""
+    """A short path label: the trailing segments that fit, filename first.
+
+    The filename matters most, so long paths keep their tail and mark dropped
+    parents with a leading ``…/``; a single over-long name is truncated in the
+    middle so its extension survives. Keeping the label short and on one line
+    matters because a wrapped link can lose its click target past the first row.
+    """
 
     normalized = str(path_str or "file").replace("\\", "/")
     if normalized in {"", "."}:
         return "."
     if normalized == "/":
         return "workspace"
+    segments = [s for s in normalized.split("/") if s]
+    if not segments:
+        return "/"
+    tail: list[str] = []
+    width = 0
+    for segment in reversed(segments):
+        extra = len(segment) + (1 if tail else 0)
+        if tail and width + extra > _PATH_DISPLAY_BUDGET:
+            break
+        tail.insert(0, segment)
+        width += extra
+    label = "/".join(tail)
+    if len(tail) < len(segments):
+        label = "…/" + label
+    if len(label) > _PATH_DISPLAY_BUDGET + 4:
+        label = _middle_truncate(segments[-1], _PATH_DISPLAY_BUDGET)
+    return label
 
-    if normalized.startswith("/skills/"):
-        return shorten(normalized.removeprefix("/"), 72)
-    if normalized.startswith("/memory/"):
-        return shorten(normalized.removeprefix("/"), 72)
-    if normalized.startswith("/session/"):
-        return shorten(normalized.removeprefix("/"), 72)
-    if normalized.startswith("/") and not normalized.startswith("//"):
-        return shorten(normalized.removeprefix("/"), 72)
 
-    path = Path(normalized)
-    if path.is_absolute():
-        parts = path.parts
-        if len(parts) >= 3:
-            return shorten("/".join(parts[-3:]), 72)
-        if len(parts) >= 2:
-            return shorten("/".join(parts[-2:]), 72)
-        return path.name or normalized
-    return shorten(normalized, 72)
+def _middle_truncate(text: str, limit: int) -> str:
+    """Shorten ``text`` to ``limit`` keeping both ends (so a file extension shows)."""
+    if len(text) <= limit:
+        return text
+    keep = limit - 1
+    head = keep // 2
+    return f"{text[:head]}…{text[-(keep - head) :]}"
+
+
+def path_link(path_str: str) -> str:
+    """A clickable file link: short display text, full absolute path as target.
+
+    Cards render markdown and a ``file://`` link routes to the OS opener (see
+    ``on_markdown_link_clicked``), so the visible text stays short while a click
+    opens the real file, so the link and the text need not match.
+    """
+    short = display_path(path_str)
+    normalized = str(path_str or "").replace("\\", "/")
+    if normalized in {"", ".", "/"}:
+        return short
+    try:
+        path = Path(normalized)
+        full = path if path.is_absolute() else workspace_root() / normalized
+        return f"[{short}]({full.resolve().as_uri()})"
+    except (ValueError, OSError):
+        return short
 
 
 _TOOL_LANGUAGES: dict[str, str] = {
