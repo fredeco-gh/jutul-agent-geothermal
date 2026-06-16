@@ -26,14 +26,16 @@ five layers that you compose in order:
 
 ## Finding what you need
 
-Example layout and APIs change between versions — find them on disk rather
-than guessing. The installed source is mounted read-only at `/packages/JutulDarcy/`;
-browse it with the file tools (see the `workspace-and-source` skill):
+Example layout and APIs change between versions, so find them on disk rather
+than guessing. Get the installed source path with `pkgdir(JutulDarcy)` in
+`julia_eval` (it is read-only depot source), then browse it with the file tools
+(see the `workspace-and-source` skill):
 
 ```text
-glob("/packages/JutulDarcy/examples/**/*.jl")                 # discover layout
-grep("setup_well", path="/packages/JutulDarcy/src")            # find an API
-read_file("/packages/JutulDarcy/examples/introduction/wells_intro.jl")
+# pkgdir(JutulDarcy) -> /.../JutulDarcy/<hash>
+glob("/.../JutulDarcy/examples/**/*.jl")                 # discover layout
+grep("setup_well", path="/.../JutulDarcy/src")           # find an API
+read_file("/.../JutulDarcy/examples/introduction/wells_intro.jl")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc setup_reservoir_model")`.

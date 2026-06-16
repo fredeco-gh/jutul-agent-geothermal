@@ -7,7 +7,7 @@ description: Workspace file layout, when to write a file vs. evaluate in the REP
 
 ## Where you are working
 
-You are running in the user's *workspace* — their current working directory.
+You are running in the user's *workspace* (their current working directory).
 Treat it like a project: read, write, and execute files here freely. The
 workspace owns its Julia environment under `.jutul-agent/julia-env/` (or the
 user's own `Project.toml` at the workspace root).
@@ -16,33 +16,26 @@ Sessions, traces, and artifacts live *outside* the workspace under the
 user's state home (`$XDG_DATA_HOME/jutul-agent/workspaces/<hash>/`). Don't
 write transcripts or logs into the workspace.
 
-## Virtual paths vs Julia paths
+## Paths
 
-File tools (`read_file`, `write_file`, `glob`, `ls`) use a **virtual**
-filesystem rooted at the workspace. Paths may appear with a leading slash
-(e.g. `/experiments/data.csv` or `experiments/data.csv`) — both refer to
-the same workspace file.
-
-**Julia and shell code run on the real filesystem.** In `julia_eval`,
-`julia_plot`, and `execute`, use **workspace-relative paths without a
-leading slash**:
+The file tools (`read_file`, `write_file`, `edit_file`, `glob`, `grep`, `ls`),
+`execute`, and the Julia REPL share one working directory, the workspace, and
+use the same paths. Name a workspace file by a relative path (`model.jl`,
+`experiments/data.csv`) or its absolute path; both work everywhere:
 
 ```julia
 CSV.read("experiments/observations/data.csv", DataFrame)
 include("candidate.jl")
 ```
 
-Do **not** pass virtual paths like `"/experiments/..."` to Julia — that
-looks for a directory at the machine root and will fail.
+So the file you `write_file` as `candidate.jl` is the file you `include`, and an
+absolute path from a Julia stack trace opens directly with `read_file`. List
+workspace files with `glob("**/*")` or `ls(".")` / `ls("experiments")`.
 
-To list workspace files, use `glob("**/*")` or `ls` with `"."` or a
-relative path like `"experiments"`, not `"/workspace"`.
-
-Julia stack traces print **full absolute paths**. To open one with a file
-tool, map it back: a workspace file (`.../<workspace>/model.jl`) opens at that
-same path or just `model.jl`, and a package file
-(`.../.julia/packages/<Package>/<hash>/src/foo.jl`) is browsable at
-`/packages/<Package>/src/foo.jl`.
+Every path is a real filesystem path: your files, installed package source,
+memory notes, and added folders all open the same in the file tools, `execute`,
+and `julia_eval`. A bare leading slash (`/model.jl`) is the machine root, not the
+workspace.
 
 ## When to write a file vs. evaluate in the REPL
 
@@ -64,28 +57,31 @@ same path or just `model.jl`, and a package file
 
 ## Reading installed package source and examples
 
-Every package the environment resolves — the simulator, the Jutul-stack
-packages it builds on, their dependencies, and anything you `Pkg.add` — is
-browsable **under `/packages/<Package>/`**, each pointing where
-`pkgdir(<Package>)` does. The route is the Julia package name (e.g.
-`/packages/<Package>/`, `/packages/Jutul/`), matching where Julia keeps it on
-disk. Navigate straight to a package by name; `ls("/packages/")` lists them all
-if you need to discover one. Browse with the ordinary file tools, like workspace
-files:
+Every package the environment resolves (the simulator, the Jutul-stack packages
+it builds on, their dependencies, and anything you `Pkg.add`) has its source on
+disk at the path `pkgdir(<Package>)` returns. Get the path in the REPL, then
+read and grep it with the ordinary file tools; the same path string works in
+Julia too:
 
-```text
-glob("/packages/<Package>/examples/**/*.jl")     # discover examples
-read_file("/packages/<Package>/examples/.../example.jl")
-grep("setup_well", path="/packages/<Package>/src")  # find API uses
+```julia
+# julia_eval
+pkgdir(JutulDarcy)             # -> /.../.julia/packages/JutulDarcy/<hash>
 ```
 
-A package you install mid-session shows up here too, so after `Pkg.add(...)`
-you can read its source and examples the same way.
+```text
+glob("/.../JutulDarcy/examples/**/*.jl")          # discover examples
+read_file("/.../JutulDarcy/examples/.../example.jl")
+grep("setup_well", path="/.../JutulDarcy/src")    # find API uses
+```
 
-Use these to learn the real API from worked examples and source. Registry
-installs are **read-only** — don't `edit_file` under `/packages/` (they're
-shared across projects). To change a package itself, `Pkg.develop` it (see
-below); its `/packages/<Package>/` route is then your writable checkout.
+A package you `Pkg.add` mid-session is reachable at its `pkgdir` path the same
+way.
+
+Installed source is **read-only**: it lives in the shared Julia depot, so the
+file tools refuse to `write_file`/`edit_file` there (editing it would break
+other projects). Read and grep it freely. To change a package itself,
+`Pkg.develop` it (see below); the checkout lives outside the depot and is
+writable.
 
 For exact signatures and docstrings, stay in the REPL — these read the
 installed version directly and are always current:
@@ -97,14 +93,14 @@ methods(solve)                 # available methods
 names(SimulatorPackage)        # exported names of the active simulator's package
 ```
 
-Rule of thumb: **`/packages/<Package>/` for examples and source you want to
-read or grep; `@doc` / `methods` / `names` in `julia_eval` for precise API.**
-You should never need to pass an absolute host path to a file tool.
+Rule of thumb: **`pkgdir(<Package>)` + the file tools for examples and source
+you want to read or grep; `@doc` / `methods` / `names` in `julia_eval` for
+precise API.**
 
 If `.jutul-agent/config.toml` sets a `source_path` for the simulator, its
-primary package is `Pkg.develop`-ed there, so that package's
-`/packages/<Package>/` route is the checkout and is **writable** — you can
-`edit_file` it to modify the library, then re-`include` to test.
+primary package is `Pkg.develop`-ed there, so `pkgdir(<Package>)` points at that
+checkout. It is **writable**, so you can `edit_file` it to modify the library
+and re-`include` to test.
 
 ## Workspace already has its own Project.toml?
 

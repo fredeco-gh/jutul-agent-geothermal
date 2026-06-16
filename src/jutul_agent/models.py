@@ -153,8 +153,8 @@ RECOMMENDED_OLLAMA_LOCAL: tuple[str, ...] = (
     "qwen3.6:27b",
     "qwen3.6:35b-a3b",
 )
-# Frontier-tier models hosted by Ollama (mirrors deepagents-code's set); far
-# better at tool use than small local models.
+# Frontier-tier models hosted by Ollama; far better at tool use than small
+# local models.
 OLLAMA_CLOUD: tuple[str, ...] = (
     "deepseek-v4-flash:cloud",
     "glm-5.1:cloud",

@@ -632,13 +632,13 @@ async def test_tui_multiline_submit_shows_user_message_immediately(session: Sess
         await wait_until_ready(app)
 
 
-async def test_add_dir_command_mounts_folder(session: Session, tmp_path: Path) -> None:
+async def test_add_dir_command_adds_folder(session: Session, tmp_path: Path) -> None:
     from jutul_agent.agent.builder import build_backend
-    from jutul_agent.agent.mounts import MOUNTED_DIRS_ROOT
+    from jutul_agent.agent.mounts import mounted_dirs
 
     extra = tmp_path / "shared-data"
     extra.mkdir()
-    backend = build_backend(session.simulator, workspace=tmp_path)
+    backend = build_backend(workspace=tmp_path)
     app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
 
     async with app.run_test() as pilot:
@@ -646,7 +646,7 @@ async def test_add_dir_command_mounts_folder(session: Session, tmp_path: Path) -
         await app._handle_command(f"/add-dir {extra}")
         await pilot.pause()
 
-        assert f"{MOUNTED_DIRS_ROOT}shared-data/" in backend.routes
+        assert extra.resolve() in [mount.path for mount in mounted_dirs(backend)]
         notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
         assert any("shared-data" in block._content for block in notes)
 
@@ -654,7 +654,7 @@ async def test_add_dir_command_mounts_folder(session: Session, tmp_path: Path) -
 async def test_add_dir_command_reports_bad_path(session: Session, tmp_path: Path) -> None:
     from jutul_agent.agent.builder import build_backend
 
-    backend = build_backend(session.simulator, workspace=tmp_path)
+    backend = build_backend(workspace=tmp_path)
     app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
 
     async with app.run_test() as pilot:
@@ -672,7 +672,7 @@ async def test_add_dir_command_lists_when_no_arg(session: Session, tmp_path: Pat
 
     extra = tmp_path / "alpha"
     extra.mkdir()
-    backend = build_backend(session.simulator, workspace=tmp_path)
+    backend = build_backend(workspace=tmp_path)
     mount_dir(backend, extra, workspace=tmp_path)
     app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
 
@@ -683,7 +683,7 @@ async def test_add_dir_command_lists_when_no_arg(session: Session, tmp_path: Pat
 
         notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
         assert any(
-            "Mounted folders" in block._content and "alpha" in block._content for block in notes
+            "Added folders" in block._content and "alpha" in block._content for block in notes
         )
 
 
@@ -714,12 +714,12 @@ async def test_model_switch_rebuilds_and_persists_to_workspace(
 
     def factory(model_id: str, dirs):
         calls.append((model_id, list(dirs)))
-        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+        return _stub_agent(), build_backend(workspace=tmp_path)
 
     app = TUIApp(
         agent=_stub_agent(),
         session=session,
-        backend=build_backend(session.simulator, workspace=tmp_path),
+        backend=build_backend(workspace=tmp_path),
         model_label="openai:gpt-5.4-mini",
         agent_factory=factory,
     )
@@ -755,12 +755,12 @@ async def test_cloud_ollama_switch_skips_pull(
 
     def factory(model_id: str, dirs):
         calls.append(model_id)
-        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+        return _stub_agent(), build_backend(workspace=tmp_path)
 
     app = TUIApp(
         agent=_stub_agent(),
         session=session,
-        backend=build_backend(session.simulator, workspace=tmp_path),
+        backend=build_backend(workspace=tmp_path),
         model_label="openai:gpt-5.4-mini",
         agent_factory=factory,
     )
@@ -789,14 +789,14 @@ async def test_model_switch_preserves_mounted_dirs(
 
     extra = tmp_path / "data"
     extra.mkdir()
-    backend0 = build_backend(session.simulator, workspace=tmp_path)
+    backend0 = build_backend(workspace=tmp_path)
     mount_dir(backend0, extra, workspace=tmp_path)
 
     calls: list[list[str]] = []
 
     def factory(model_id: str, dirs):
         calls.append([str(d) for d in dirs])
-        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+        return _stub_agent(), build_backend(workspace=tmp_path)
 
     app = TUIApp(
         agent=_stub_agent(),
@@ -852,12 +852,12 @@ async def test_api_key_modal_stores_key_and_switches(
 
     def factory(model_id: str, dirs):
         calls.append(model_id)
-        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+        return _stub_agent(), build_backend(workspace=tmp_path)
 
     app = TUIApp(
         agent=_stub_agent(),
         session=session,
-        backend=build_backend(session.simulator, workspace=tmp_path),
+        backend=build_backend(workspace=tmp_path),
         model_label="openai:gpt-5.4-mini",
         agent_factory=factory,
     )
@@ -951,12 +951,12 @@ async def test_local_model_switch_pulls_then_switches(
 
     def factory(model_id: str, dirs):
         calls.append(model_id)
-        return _stub_agent(), build_backend(session.simulator, workspace=tmp_path)
+        return _stub_agent(), build_backend(workspace=tmp_path)
 
     app = TUIApp(
         agent=_stub_agent(),
         session=session,
-        backend=build_backend(session.simulator, workspace=tmp_path),
+        backend=build_backend(workspace=tmp_path),
         model_label="openai:gpt-5.4-mini",
         agent_factory=factory,
     )

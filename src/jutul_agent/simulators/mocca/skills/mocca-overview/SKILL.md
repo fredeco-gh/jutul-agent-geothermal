@@ -66,11 +66,12 @@ set `info.num_cycles = 3` before `setup_mocca_case` for a short run.
 
 ## Building a case directly
 
-The examples are the ground truth. List them, then read the one that fits
-your task before writing your own chain:
+The examples are the ground truth. Find the source path with `pkgdir(Mocca)` in
+`julia_eval`, then list them and read the one that fits your task before writing
+your own chain:
 
 ```text
-glob("/packages/Mocca/examples/*.jl")
+glob("/.../Mocca/examples/*.jl")
 ```
 
 The shipped set covers the cyclic four-stage VSA reference, the single-pass

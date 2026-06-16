@@ -10,6 +10,8 @@ general-purpose-subagent disable.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from jutul_agent.simulators.base import SimulatorAdapter
 
 
@@ -18,10 +20,23 @@ def assemble_session_prompt(
     *,
     open_windows: bool = True,
     resumed: bool = False,
+    workspace: Path | None = None,
 ) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
         "Primary Julia packages: " + ", ".join(adapter.package_imports) + ".",
+    ]
+    if workspace is not None:
+        # The agent's real working directory. Stated up front so the file tools
+        # (whose descriptions demand absolute paths), `execute`, and the REPL all
+        # build correct paths without a pwd/ls round-trip to discover it. Omitted
+        # when assembling the prompt for the RunConfig hash (workspace=None) so a
+        # per-session path does not destabilize the attribution hash.
+        sections.append(
+            f"Working directory: {workspace}\nThis is the user's workspace and the "
+            "working directory for the file tools, `execute`, and the Julia REPL."
+        )
+    sections += [
         _tool_guide(adapter),
         _ground_rules(),
         _display_note(open_windows),
@@ -78,18 +93,6 @@ def _display_note(open_windows: bool) -> str:
     )
 
 
-def _package_mounts(adapter: SimulatorAdapter) -> str:
-    """The ``/packages/<Package>/`` routes the agent can browse, named explicitly.
-
-    Lists every package in ``package_imports`` (when its source resolves it is
-    mounted read-only), leading with the primary so the agent knows where the
-    simulator's own examples live.
-    """
-
-    ordered = dict.fromkeys((adapter.primary_package, *adapter.package_imports))
-    return ", ".join(f"/packages/{pkg}/" for pkg in ordered)
-
-
 def _tool_guide(adapter: SimulatorAdapter) -> str:
     primary = adapter.primary_package
     return (
@@ -100,27 +103,27 @@ def _tool_guide(adapter: SimulatorAdapter) -> str:
         "(`@doc`, `methods`, `names`, `fieldnames`, `pkgdir`), running "
         "simulations, and including workspace scripts.\n"
         "  - The stock file/shell tools (`read_file`, `write_file`, "
-        "`edit_file`, `glob`, `grep`, `execute`) operate in the workspace. Use "
-        "them to create real implementation files the user can inspect and "
-        "edit. The installed source of every package the environment resolves "
-        "— the simulator, what it builds on, and anything you `Pkg.add` — is "
-        f"mounted read-only under `/packages/<Package>/` ({_package_mounts(adapter)}): "
-        f"`read_file`, `glob`, and `grep` it to study examples "
-        f"(`/packages/{primary}/examples/`), documentation "
-        f"(`/packages/{primary}/docs/`), and source (`/packages/{primary}/src/`) "
-        "with the same tools (see the `workspace-and-source` skill).\n"
+        "`edit_file`, `glob`, `grep`, `execute`) work on the real filesystem "
+        "from the workspace. Use them to create real implementation files the "
+        "user can inspect and edit, and to read installed package source: every "
+        "package the environment resolves has its source on disk at the path "
+        f"`pkgdir(<Package>)` returns (e.g. `pkgdir({primary})` in `julia_eval`); "
+        "`read_file`, `glob`, and `grep` that path to study its "
+        "`examples/`, `docs/`, and `src/`. Installed source is read-only (the "
+        "shared depot); `Pkg.develop` a package to edit it. See the "
+        "`workspace-and-source` skill.\n"
         "Two ways to run Julia, one shared REPL:\n"
         '    1. Direct — `julia_eval("<code>")` for probes, quick computations, '
         "and building/solving inline.\n"
         "    2. From a file — for a real implementation the user can keep, "
         "`write_file` a `.jl` file in the workspace, then run it in the same REPL "
         "with `julia_eval('include(\"candidate.jl\")')`. Edit the file with "
-        "`edit_file` and re-`include` to re-run — the REPL keeps state, so loaded "
+        "`edit_file` and re-`include` to re-run. The REPL keeps state, so loaded "
         "packages and earlier results survive across calls.\n"
         "Decision rule: real implementations → write a `.jl` file and `include` it; "
         "quick probes → `julia_eval` directly.\n"
-        "Plots: build figures only with `julia_plot`, never `julia_eval` (that "
-        "draws a figure nobody can see) — see the `plotting-basics` skill. Prefer "
+        "Plots: build figures only with `julia_plot`, never `julia_eval`, which "
+        "draws a figure nobody can see. See the `plotting-basics` skill. Prefer "
         "the simulator's documented native plotters (the per-simulator skill names "
         "them); you may also build a `Figure` inline, and you don't need to return "
         "it or avoid `display`. Plotting runs on GLMakie like normal Julia: in an "
@@ -139,18 +142,20 @@ def _ground_rules() -> str:
     """House rules that hold for every simulator and every provider.
 
     Each rule is stated here and nowhere else; the tool guide above only
-    orients (what exists, where it is mounted).
+    orients (what exists and where it is).
     """
 
     return (
         "Ground rules:\n"
-        "  - Paths: the workspace is the working directory everywhere. Refer to "
-        "workspace files by plain relative path (`model.jl`, `experiments/foo.csv`) "
-        "— the same path resolves in the file tools, in `execute`, and in "
-        '`julia_eval` (`include("model.jl")`); the file\'s real absolute path also '
-        "works in all of them. Don't prefix workspace files with `/` and don't "
-        "invent a `/workspace/` folder — leading-slash paths are reserved for the "
-        "mounts (`/packages/`, `/skills/`, `/dirs/`, ...).\n"
+        "  - Paths are real and shared: the file tools, `execute`, and `julia_eval` "
+        "all use the working directory above. Name a workspace file by a relative "
+        "path (`model.jl`, `experiments/foo.csv`) or its absolute path under the "
+        "working directory; both mean the same file in all three, so the file you "
+        '`write_file` is the file you `include("model.jl")`. A bare leading slash is '
+        "the machine root, not the workspace: `/model.jl` and `/workspace/...` do not "
+        "exist, so don't invent them. Everything you touch (your files, installed "
+        "package source, memory, added folders) is a real path that opens the same "
+        "in every tool.\n"
         "  - Julia runs only in the shared REPL: `julia_eval`, or `julia_plot` for "
         "figures. Never spawn `julia` (or `julia --project`, `julia -e`) through "
         "`execute` — a fresh process shares no state, pays a full precompile, "
@@ -160,14 +165,13 @@ def _ground_rules() -> str:
         "shell work.\n"
         "  - When a tool or Julia call fails, read the full error output, diagnose "
         "the root cause (wrong path, missing package, API mismatch, stale REPL "
-        "state), and retry with a concrete fix — never repeat the same failing "
-        "call.\n"
-        "  - Prefer evidence over memory: read the mounted source under "
-        "`/packages/`, probe the REPL (`@doc`, `methods`, `names`), or consult the "
-        "skills before guessing an API. If a package is missing, check what the "
-        "workspace env already provides, use a stdlib alternative, or `Pkg.add` it "
-        "when the task needs it.\n"
-        "  - Folders the user adds to the session are mounted writable at "
-        "`/dirs/<name>/` — read, grep, write, and edit them with the file tools; "
-        "in `julia_eval` / `execute` use their real absolute paths instead."
+        "state), and retry with a concrete fix rather than repeating the same "
+        "failing call.\n"
+        "  - Prefer evidence over memory: read installed package source (its path "
+        "is `pkgdir(<Package>)`), probe the REPL (`@doc`, `methods`, `names`), or "
+        "consult the skills before guessing an API. If a package is missing, check "
+        "what the workspace env already provides, use a stdlib alternative, or "
+        "`Pkg.add` it when the task needs it.\n"
+        "  - Folders the user adds to the session are available at their real "
+        "absolute path in every tool: the file tools, `execute`, and `julia_eval`."
     )

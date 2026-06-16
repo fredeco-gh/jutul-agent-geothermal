@@ -23,7 +23,7 @@ turn and exits.
 | `--sim <name>` | Active simulator. Required only if not in workspace config and not auto-detectable from a `Project.toml` |
 | `--model <provider:model>` | Model for this run. Precedence: this flag, workspace config, user config, `$JUTUL_AGENT_MODEL`, default |
 | `--julia-project <path>` | Override the resolved workspace Julia project |
-| `--add-dir <path>` | Mount an extra folder for the agent (repeatable) |
+| `--add-dir <path>` | Add an extra folder for the agent (repeatable) |
 | `--continue` | Continue the most recent session in this workspace |
 | `--resume [id]` | Resume a session by id or unique prefix; with no value, pick from a list |
 | `--approval-mode ask\|workspace\|auto` | Human-in-the-loop policy (headless runs need `auto`) |

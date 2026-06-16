@@ -56,7 +56,7 @@ everything else imports.
 The principle extends past our own code. The product agent learns a
 simulator from what the package itself exposes (docstrings, runnable
 examples, error messages), read straight from the
-[mounted package source](filesystem.md). So the highest-leverage
+[installed package source](filesystem.md). So the highest-leverage
 improvements are often upstream, in the applications: discoverable APIs,
 runnable examples for every capability, error messages that say what to
 do, hints when something fails. What makes a package agent-friendly makes

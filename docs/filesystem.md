@@ -1,65 +1,59 @@
 # The agent's filesystem
 
-The agent sees one virtual filesystem and touches it only through the file
-tools (`read_file`, `write_file`, `edit_file`, `ls`, `glob`, `grep`) and
-`execute`. Underneath it is a deepagents `CompositeBackend`: a default
-backend plus prefix routes, each backed by its own backend with its own
-root and write policy. A path goes to the longest matching route;
-everything else falls through to the workspace. Assembled in
-`agent/builder.py:build_backend`.
+The agent touches files through the file tools (`read_file`, `write_file`,
+`edit_file`, `ls`, `glob`, `grep`) and `execute`, and they all operate on the
+real filesystem. The workspace backend
+(`agent/backend.py:WorkspaceShellBackend`, assembled in
+`agent/builder.py:build_backend`) runs in real-path mode: a relative path
+resolves against the workspace (the launch directory) and an absolute path is
+used as-is. `julia_eval` and `execute` resolve paths the same way, since their
+working directory is the workspace too, so one string names one file in every
+tool and the user can click any path the agent reports to open it.
 
-| Route | Backing | Access | Contents |
-|---|---|---|---|
-| `/` (default) | workspace shell backend | read/write + shell | the user's workspace (the launch directory) |
-| `/skills/shared/`, `/skills/simulator/` | filesystem | read | skill markdown |
-| `/memory/` | filesystem | read/write | the workspace's agent memory |
-| `/session/` | filesystem | read | live session state |
-| `/packages/<Pkg>/` | packages backend | read (write for dev checkouts) | source of every package in the Julia env |
-| `/dirs/<name>/` | filesystem | read/write | folders mounted with `--add-dir` / `/add-dir` |
+| What | Where | Access |
+|---|---|---|
+| workspace files | relative to the launch dir, or their absolute path | read/write + shell |
+| installed package source | the real depot path (`pkgdir(<Pkg>)`) | read-only |
+| a `Pkg.develop` checkout | its real checkout path | read/write |
+| agent memory | real files under the workspace state dir | read/write |
+| skills | their real package-data directories | read |
+| added folders (`--add-dir`) | their real absolute path | read/write |
 
-Why a virtual tree at all: it co-locates things that live in very different
-places on disk (the workspace, the Julia depot, skill markdown shipped in
-the package, per-user state) under one small, legible namespace, with each
-route keeping its own real location and write policy. The agent works
-inside a known tree instead of roaming the host filesystem.
+Everything is a real path; the only special rule is that the file tools refuse
+to **write** into the shared Julia depot (below). A bare leading slash
+(`/model.jl`) is the machine root, not the workspace, in every tool. One path
+model across the file tools, the shell, and the REPL means a path the agent
+reads or writes is the same path it can hand to `julia_eval`. The `filesystem`
+eval suite checks this.
 
-## Paths in the workspace
+`include("file.jl")` inside `julia_eval` resolves from the workspace because the
+kernel rewrites top-level relative includes against its working directory (see
+[the Julia kernel](julia-kernel.md)).
 
-The workspace route has one deliberate deviation from a naive virtual
-filesystem. The agent constantly encounters real absolute paths: from
-`pwd()`, from Julia stack traces, from earlier tool output. A stock virtual
-backend would re-root `/home/user/ws/model.jl` into a phantom
-`<ws>/home/user/ws/model.jl`: the write "succeeds", Julia cannot see the
-file, and the agent loops on "No such file". jutul-agent's workspace
-backend recognizes absolute paths that point inside the workspace (or any
-mounted folder) and resolves them to the real file, so the file tools,
-`execute`, and the Julia REPL always agree on what a path means.
+## Package source is read-only
 
-The conventions the agent is taught (and the prompt enforces):
+Installed packages live in the shared Julia depot
+(`~/.julia/packages/<Pkg>/<hash>/`), which other projects share, so editing them
+would corrupt those projects. The workspace backend is given the depot's
+read-only roots (the registry `package_sources`, keyed by location) and refuses
+`write_file`/`edit_file` there, while reads and greps are unrestricted, which is
+how the agent studies installed source. A `Pkg.develop` checkout lives outside
+the depot, so it stays writable with no special-casing: location alone decides.
 
-- Workspace files are plain relative paths: `model.jl`,
-  `experiments/foo.csv`. The same string works in the file tools, in
-  `execute`, and in Julia's `include`.
-- Leading-slash paths are reserved for the mounts (`/skills/...`,
-  `/packages/...`, `/memory/...`, `/dirs/...`). There is no `/workspace/`
-  prefix.
-- For an added folder, the `/dirs/<name>/` route serves the file tools,
-  while in `julia_eval` and `execute` the agent uses the folder's real
-  absolute path.
+The agent finds a package's source with `pkgdir(<Pkg>)` in the REPL and reads or
+greps that real path (its `examples/`, `docs/`, `src/`); a package added
+mid-session with `Pkg.add` is at its `pkgdir` path immediately and is covered by
+the write-guard automatically.
 
-`include("file.jl")` inside `julia_eval` resolves from the workspace
-because the kernel rewrites top-level relative includes against its working
-directory (see [the Julia kernel](julia-kernel.md)).
+## Memory and skills
 
-## The packages route
+Agent memory is real markdown under the workspace state dir
+(`$XDG_DATA_HOME/jutul-agent/workspaces/<hash>/memory/`); the agent reads and
+edits it at that real path, the `remember` tool writes there directly, and the
+user can open the files. Ephemeral memory (used by the eval) is the same, in a
+real temp directory that is discarded afterward.
 
-`/packages/` is dynamic and environment-scoped: every package the active
-Julia env resolves gets a `/packages/<Name>/` mount of its source. Registry
-installs are read-only. A `Pkg.develop` checkout (from
-`init --source-path`) is writable, so the agent can edit the simulator
-package itself. After each `julia_eval` the mounts are refreshed, so a
-package the agent just added with `Pkg.add` becomes browsable immediately.
-
-This is what backs the "read the real source" workflow: instead of
-guessing an API from training data, the agent greps and reads the installed
-version under `/packages/<Pkg>/`, including its `examples/`.
+Skills are read from their real directories. The bundled ones ship as package
+data, so they resolve at a real site-packages path even from a `pip install`
+with no repo checkout. `skill_sources` returns those real dirs; the seam for
+user- and project-level skills is to append more real dirs there (last wins).

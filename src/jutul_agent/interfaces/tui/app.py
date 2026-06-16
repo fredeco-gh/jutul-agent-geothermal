@@ -956,8 +956,8 @@ class TUIApp(App[None]):
         if not path:
             mounts = mounted_dirs(self._backend)
             if mounts:
-                lines = ["Mounted folders:"]
-                lines += [f"  `{mount.route}` -> {mount.path}" for mount in mounts]
+                lines = ["Added folders:"]
+                lines += [f"  `{mount.path}`" for mount in mounts]
                 await self._note("\n".join(lines))
             else:
                 await self._note(
@@ -972,9 +972,8 @@ class TUIApp(App[None]):
             return
 
         await self._note(
-            f"Mounted `{mount.path}` at `{mount.route}`. The agent can read, grep, "
-            f"write, and edit it with the file tools; in Julia or shell use the "
-            f"absolute path `{mount.path}`."
+            f"Added `{mount.path}`. The agent reads, greps, writes, and edits it "
+            f"by its real absolute path in every tool (file tools, Julia, and shell)."
         )
 
     async def _command_model(self, raw: str) -> None:

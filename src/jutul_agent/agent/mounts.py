@@ -1,18 +1,12 @@
-"""Mount additional working directories into the agent's filesystem.
+"""Track additional working directories the user adds to the session.
 
-A workspace normally exposes only the launch directory at ``/`` plus the fixed
-skill/memory/session/simulator routes (see ``agent.builder.build_backend``).
-Adding a folder mounts it as a new writable route under ``/dirs/<name>/`` in
-the live ``CompositeBackend`` so the agent reads, greps, writes, and edits
-it with the same file tools it uses for
-workspace files — instead of the shell idioms it routinely gets wrong when
-reaching outside the workspace.
-
-Mounting mutates the composite's route table in place. The same backend object
-is shared with the filesystem middleware, so a folder added mid-session (via the
-TUI ``/add-dir`` command) is visible to the very next tool call without
-rebuilding the agent. Mounts are session-scoped — they live until the process
-exits and are not persisted to the workspace config.
+The agent's filesystem uses real paths (see ``agent.builder.build_backend``), so
+an added folder is already reachable at its absolute path by every tool:
+``read_file``, ``grep``, ``write_file``, ``execute``, and ``julia_eval`` alike.
+Adding a folder just validates the path and records it on the live backend so
+the session can list what was added (via the ``--add-dir`` flag at launch or the
+TUI ``/add-dir`` command). Records are session-scoped: they live until the
+process exits and are not persisted.
 """
 
 from __future__ import annotations
@@ -21,32 +15,22 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from deepagents.backends import CompositeBackend, FilesystemBackend
-
 from jutul_agent.paths import workspace_root
 
-MOUNTED_DIRS_ROOT = "/dirs/"
-
-# Route names become virtual-path segments, so keep them prefix-match- and
-# filesystem-friendly: collapse anything outside this set to a single dash.
+# Collapse anything outside this set to a single dash for a readable short name.
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class MountError(ValueError):
-    """A folder could not be mounted (missing path, not a directory, ...)."""
+    """A folder could not be added (missing path, not a directory, ...)."""
 
 
 @dataclass(frozen=True)
 class Mount:
-    """A directory mounted into the agent filesystem under ``/dirs/<name>/``."""
+    """A folder the user added to the session, used at its real ``path``."""
 
     name: str
-    route: str
     path: Path
-
-
-def _route_for(name: str) -> str:
-    return f"{MOUNTED_DIRS_ROOT}{name}/"
 
 
 def _slugify(path: Path) -> str:
@@ -88,50 +72,46 @@ def resolve_dir(raw: str | Path, *, workspace: Path | None = None) -> Path:
     return candidate
 
 
-def mounted_dirs(backend: CompositeBackend) -> list[Mount]:
-    """The directories currently mounted under ``/dirs/`` on ``backend``."""
+def _added_dirs(backend) -> list[Mount]:
+    """The mutable list of added folders, stored on the live backend."""
+    dirs = getattr(backend, "_added_dirs", None)
+    if dirs is None:
+        dirs = []
+        backend._added_dirs = dirs
+    return dirs
 
-    mounts: list[Mount] = []
-    for route, route_backend in backend.routes.items():
-        if not route.startswith(MOUNTED_DIRS_ROOT) or route == MOUNTED_DIRS_ROOT:
-            continue
-        name = route[len(MOUNTED_DIRS_ROOT) : -1]
-        # ``FilesystemBackend`` stores the resolved root as ``cwd``; fall back
-        # to the name if a custom backend doesn't expose it.
-        root = getattr(route_backend, "cwd", None)
-        mounts.append(Mount(name=name, route=route, path=Path(root) if root else Path(name)))
-    mounts.sort(key=lambda mount: mount.name)
-    return mounts
+
+def mounted_dirs(backend) -> list[Mount]:
+    """The folders added to this session, sorted by name."""
+    return sorted(_added_dirs(backend), key=lambda mount: mount.name)
 
 
 def mount_dir(
-    backend: CompositeBackend,
+    backend,
     raw: str | Path,
     *,
     workspace: Path | None = None,
 ) -> Mount:
-    """Resolve ``raw`` and mount it *writable* under ``/dirs/<name>/`` on ``backend``.
+    """Validate ``raw`` and record it as an added folder; return its ``Mount``.
 
-    Idempotent: if the same directory is already mounted, the existing ``Mount``
-    is returned unchanged. The workspace root is rejected — it is already mounted
-    at ``/``. Raises ``MountError`` for a missing or non-directory path.
+    The real-path backend already reads and writes any real path, so the agent
+    uses the folder's absolute path directly; recording it just lets the session
+    list and track what was added. Idempotent (an already-added folder returns
+    its existing record). The workspace itself is rejected because it is already
+    the working directory. Raises ``MountError`` for a missing or non-directory path.
     """
 
     ws = (workspace or workspace_root()).resolve()
     path = resolve_dir(raw, workspace=ws)
     if path == ws:
-        raise MountError("the workspace is already mounted at / — no need to add it")
+        raise MountError("the workspace is already the working directory, no need to add it")
 
-    current = mounted_dirs(backend)
-    for mount in current:
+    registry = _added_dirs(backend)
+    for mount in registry:
         if mount.path == path:
             return mount
 
-    name = _unique_name({mount.name for mount in current}, _slugify(path))
-    route = _route_for(name)
-    backend.routes[route] = FilesystemBackend(root_dir=path, virtual_mode=True)
-    # Keep the longest-prefix-first ordering the composite relies on for routing.
-    backend.sorted_routes = sorted(
-        backend.routes.items(), key=lambda item: len(item[0]), reverse=True
-    )
-    return Mount(name=name, route=route, path=path)
+    name = _unique_name({mount.name for mount in registry}, _slugify(path))
+    mount = Mount(name=name, path=path)
+    registry.append(mount)
+    return mount

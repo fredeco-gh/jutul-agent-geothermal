@@ -22,9 +22,9 @@ What makes it work for scientific computing:
 - A persistent Julia REPL per session. State, loaded packages, and compiled
   methods carry across turns, and a first solve is fast because each
   simulator ships a precompiled warm package.
-- The agent reads real source. Every package in the environment is mounted
-  read-only at `/packages/`, so answers come from the installed version, not
-  from memory.
+- The agent reads real source. Every package in the environment is on disk at
+  its real `pkgdir` path (read-only in the shared depot), so answers come from
+  the installed version, not from memory.
 - Everything is recorded. Each session writes a trace of every message, tool
   call, and artifact. Transcripts and the benchmark grade against it.
 - Models are interchangeable: OpenAI, Anthropic, Google, or local models via

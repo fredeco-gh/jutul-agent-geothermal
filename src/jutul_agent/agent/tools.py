@@ -8,19 +8,15 @@ workspace backend.
 
 from __future__ import annotations
 
-import contextlib
 import re
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langchain_core.tools import tool
 
 from jutul_agent.juliakernel.result import OnChunk, OutputChunk
 from jutul_agent.paths import resolve_in_workspace, workspace_root
 from jutul_agent.session import Session
-
-if TYPE_CHECKING:
-    from jutul_agent.agent.packages_backend import PackageMounts
 
 # langgraph exposes the active tool call's output-delta writer only through this
 # ContextVar. Reading it directly keeps the tool's plain ``code: str`` signature (a
@@ -59,7 +55,7 @@ def _capture_delta_writer() -> OnChunk | None:
 _STALE_LOAD_RE = re.compile(r"restart julia to access the new version", re.IGNORECASE)
 _STALE_LOAD_HINT = (
     "\n\n[harness] The new version won't load until Julia restarts (`reset_julia`), "
-    "which clears all REPL state — do it only when you need the new version."
+    "which clears all REPL state, so do it only when you need the new version."
 )
 
 # A just-added package failing to precompile is usually the env holding it at an
@@ -82,7 +78,7 @@ _MODULE_DESYNC_HINT = (
 )
 
 
-def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | None = None):
+def make_julia_eval_tool(session: Session):
     @tool
     async def julia_eval(code: str) -> str:
         """Evaluate Julia code in a persistent REPL session.
@@ -105,15 +101,9 @@ def make_julia_eval_tool(session: Session, *, package_mounts: PackageMounts | No
             # error rather than a raw traceback, and point at the way out.
             return (
                 f"ERROR: the Julia session is unavailable ({type(exc).__name__}: {exc}). "
-                "The process may have been killed or crashed — call `reset_julia` to "
+                "The process may have been killed or crashed; call `reset_julia` to "
                 "start a fresh session."
             )
-        # A `Pkg.add`/`Pkg.develop` here changes the env; keep /packages/ in
-        # sync so the new package is browsable. Cheap unless the
-        # manifest actually changed, and never allowed to break the eval.
-        if package_mounts is not None:
-            with contextlib.suppress(Exception):
-                await package_mounts.refresh()
         if result.error:
             # Keep anything the code printed before it threw, then the error.
             text = f"ERROR: {result.error}"
@@ -137,8 +127,8 @@ def make_reset_julia_tool(session: Session):
     async def reset_julia() -> str:
         """Restart Julia with a fresh, empty session.
 
-        A recovery tool, not a routine one. It clears ALL state — loaded packages,
-        variables, and anything you built (models, simulation results) — and the
+        A recovery tool, not a routine one. It clears ALL state (loaded packages,
+        variables, and anything you built like models or simulation results) and the
         next run pays compilation again. Use it deliberately, mainly when a module
         must be reloaded (Julia can't swap a module already loaded this session,
         e.g. after installing or updating one), or to recover when the session has
@@ -205,12 +195,12 @@ def make_record_attempt_tool(session: Session):
                 the root (baseline) attempt.
             candidate_path: Workspace path to the file being edited (optional).
             plot_artifact_path: Workspace-relative path of the comparison
-                plot created with ``julia_plot`` for this attempt — usually
+                plot created with ``julia_plot`` for this attempt, usually
                 ``artifacts/<slot>.png``.
             notes: Free-form short label (optional).
 
-        Returns ``"attempt #N (parent #M) · key=value · id=<uuid>"`` — the
-        last token is the id to pass back as ``parent_attempt_id`` next time.
+        Returns ``"attempt #N (parent #M) · key=value · id=<uuid>"``. The last
+        token is the id to pass back as ``parent_attempt_id`` next time.
         """
         attempt_id = str(uuid.uuid4())
         index = len(indices) + 1

@@ -13,10 +13,11 @@ You drive a single persistent Julia process. Loaded modules, defined values,
 and compiled methods persist across turns — pay the load cost once and re-use
 the same bindings.
 
-The REPL's working directory is the **workspace root**. Reference workspace
-files by bare relative path — `include("script.jl")` for a file the file tools
-wrote as `script.jl` — never by an absolute OS path or an invented prefix
-(`/workspace/...`, `/root/...`, `/tmp/...`).
+The REPL's working directory is the **workspace**, the same place the file tools
+work, with the same paths. Reference workspace files by bare relative path
+(`include("script.jl")` for a file written as `script.jl`); a file's absolute
+path works too. A bare leading slash (`/script.jl`) is the machine root, not the
+workspace.
 
 **Always run Julia code through `julia_eval` (or `julia_plot` for figures).**
 Never reach for `execute` to spawn `julia`, `julia --project`, `julia -e ...`,
@@ -38,13 +39,12 @@ extend. Do not dump a full script into the REPL and hope.
 - `methods(f)` - all method signatures.
 - `methodswith(T)` - methods that dispatch on `T`.
 - `fieldnames(typeof(x))` - fields of a value.
-- `pkgdir(Module)` - package path on disk (each package is also mounted at
-  `/packages/<Package>/`).
+- `pkgdir(Module)` - the package's real source path on disk.
 
 The installed package is the source of truth. If your training prior says the
 API has a function but `methods` finds nothing, trust `methods`. To read
-examples or source, browse the read-only `/packages/<Package>/` mounts with the
-file tools (`glob`/`grep`/`read_file`).
+examples or source, get the path with `pkgdir(<Package>)` and browse it with the
+file tools (`glob`/`grep`/`read_file`); it's read-only (the shared depot).
 
 ## Code in your reply
 
@@ -55,30 +55,30 @@ works unless you have actually run it.
 
 Read the full stack trace. Common fixes:
 
-- **File not found** — you probably used a virtual or absolute path
-  (`/experiments/...`, `/tmp/...`, `C:\...`). Retry with a workspace-relative
-  path (`experiments/...`); `pwd()` / `isfile("...")` in the REPL confirm.
-  Do not guess other prefixes.
-- **Package not found** — confirm with `using Pkg; Pkg.status()`. If a Julia
+- **File not found**: check the path. A workspace file is a relative path
+  (`experiments/...`) or its absolute path; `pwd()` / `isfile("...")` in the
+  REPL confirm. A bare leading slash (`/experiments/...`) is the machine root,
+  not the workspace, so drop it or use the absolute path.
+- **Package not found**: confirm with `using Pkg; Pkg.status()`. If a Julia
   standard library already covers the need, prefer it over adding a dependency.
-  Otherwise `Pkg.add` it when the task needs it; the added package is then
-  browsable under `/packages/<Package>/`.
-- **Method/API error** — probe with `@doc`, `methods`, and a smaller snippet
+  Otherwise `Pkg.add` it when the task needs it; the added package's source is
+  then at `pkgdir(<Package>)`.
+- **Method/API error**: probe with `@doc`, `methods`, and a smaller snippet
   before retrying the full script.
-- **Old version installed, or a just-added package won't precompile** — a
+- **Old version installed, or a just-added package won't precompile**: a
   long-lived env holds shared dependencies at their pinned versions, so a plain
   `Pkg.add` may only fit an old one. Inspect with `Pkg.status(outdated = true)`
   (`⌃`/`⌅` flag held-back packages) and `Pkg.why("Dep")`, then `Pkg.update()` to
   re-resolve the whole env and retry. Only a package still held back after a full
   update is a genuine compatibility limit.
-- **A loaded module won't resolve (`PkgId(...) not found`)** — the session's
+- **A loaded module won't resolve (`PkgId(...) not found`)**: the session's
   loaded modules are out of sync with the env, usually after a mid-session
   package change. Julia can't reload a module from inside the REPL, so this needs
   `reset_julia` (see below).
 
 `reset_julia` restarts Julia with an empty session. It is the right fix when a
-module must be reloaded, but it clears **all** state — loaded packages, values,
-and results — and recompiles on the next run. Use it deliberately, not as a
+module must be reloaded, but it clears **all** state (loaded packages, values,
+and results) and recompiles on the next run. Use it deliberately, not as a
 default; install the packages you need *before* building up expensive state so a
 reset stays cheap.
 

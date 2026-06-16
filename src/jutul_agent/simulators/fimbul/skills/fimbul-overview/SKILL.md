@@ -35,22 +35,24 @@ geothermal physics through the same Fimbul/JutulDarcy API surface.
 
 ## Finding what you need
 
-Fimbul's source is mounted read-only at `/packages/Fimbul/`; browse it with the
-file tools (see the `workspace-and-source` skill):
+Fimbul's source is read-only depot source at `pkgdir(Fimbul)`; get the path in
+`julia_eval`, then browse it with the file tools (see the `workspace-and-source`
+skill):
 
 ```text
-glob("/packages/Fimbul/examples/**/*.jl")              # analytical / production / storage
-grep("function egg_geothermal", path="/packages/Fimbul/src")   # a case factory's source
-read_file("/packages/Fimbul/examples/production/doublet_demo.jl")
+# pkgdir(Fimbul) -> /.../Fimbul/<hash>
+glob("/.../Fimbul/examples/**/*.jl")              # analytical / production / storage
+grep("function egg_geothermal", path="/.../Fimbul/src")   # a case factory's source
+read_file("/.../Fimbul/examples/production/doublet_demo.jl")
 ```
 
-Fimbul builds on JutulDarcy, whose source is mounted alongside at
-`/packages/JutulDarcy/`. Reach for it (and the JutulDarcy skills) for the grid,
-mesh, and well primitives Fimbul reuses:
+Fimbul builds on JutulDarcy, whose source sits alongside at `pkgdir(JutulDarcy)`.
+Reach for it (and the JutulDarcy skills) for the grid, mesh, and well primitives
+Fimbul reuses:
 
 ```text
-glob("/packages/JutulDarcy/examples/**/*.jl")          # reservoir + well setup
-grep("setup_well", path="/packages/JutulDarcy/src")
+glob("/.../JutulDarcy/examples/**/*.jl")          # reservoir + well setup
+grep("setup_well", path="/.../JutulDarcy/src")
 ```
 
 For docstrings, stay in the REPL: `julia_eval("@doc egg_geothermal_doublet")`.

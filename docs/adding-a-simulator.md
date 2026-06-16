@@ -68,7 +68,7 @@ the background at session start.
 
 Add at least `skills/<name>-overview/SKILL.md`: what the package does, the
 canonical entry points, the standard workflow, where the examples live. Write
-for a model that has the package source mounted at `/packages/<Pkg>/` and a
+for a model that reads the package source at its real `pkgdir` path and has a
 live REPL. Point at things to read and probe rather than duplicating the
 documentation. See [improving the agent](improving-the-agent.md) for how
 skills are surfaced and when to use a skill versus the system prompt.
@@ -97,5 +97,6 @@ To develop against a local checkout of the simulator package:
 uv run jutul-agent init --sim mysim --source-path /path/to/MySim.jl
 ```
 
-The checkout is mounted writable at `/packages/MySim/`, so the agent can read
-and edit the package source itself.
+The checkout resolves at its real path (writable, since it is a dev checkout
+rather than a shared-depot install), so the agent can read and edit the
+package source itself.
