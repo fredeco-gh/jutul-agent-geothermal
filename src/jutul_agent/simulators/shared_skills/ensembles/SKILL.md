@@ -34,6 +34,12 @@ It spawns **warm** workers (they inherit this session's project and system image
 no second precompile), runs the cases in parallel, returns the results in order, and
 removes the workers it spawned afterwards.
 
+While it runs, `run_ensemble` shows a live progress bar (`run_ensemble  60%|…|
+ETA …`) that advances as each case finishes. Worker output only reaches this
+session interleaved and prefixed (`From worker N:`), and a solve under
+`info_level = -1` is silent — so that bar is the clean signal a parallel run is
+progressing. Don't mistake the quiet for a hang, and tell the user the same if they ask.
+
 ## Rules (Distributed gotchas)
 
 - **Anything defined only in this session does not exist on the workers.** Workers
