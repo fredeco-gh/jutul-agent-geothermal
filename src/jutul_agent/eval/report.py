@@ -2,7 +2,7 @@
 
 The published artifact is a *snapshot*: each model runs the suite a few times
 and the cells aggregate those runs (a 2/3 fraction is two passes of three
-runs). Cross-run history beyond the snapshot is deliberately not shown —
+runs). Cross-run history beyond the snapshot is deliberately not shown;
 skills, tasks, and the harness all move between snapshots, so older rows
 rarely measure the same problem. The raw ``.eval`` logs stay local; the
 rendered page and its JSON source are committed.
@@ -77,6 +77,7 @@ class SampleRecord:
     messages: int
     commit: str
     epoch: int = 1  # which repetition of the sample this run is
+    tool_calls: int = 0  # tool calls the agent made this run (harness efficiency)
 
 
 def _model_short(model: str) -> str:
@@ -101,10 +102,15 @@ def _price(model: str, usage: dict[str, int]) -> float | None:
 
 
 def _classify(sample, scores: dict[str, str]) -> tuple[str, str, list[str]]:
-    """(verdict, category, failed scorer names) for one sample."""
+    """(verdict, category, failed scorer names) for one sample.
+
+    Only explicit ``INCORRECT`` ("I") scorers count as failures. The efficiency
+    scorers (tool_call_count, …) report a numeric value, not pass/fail, so they
+    must never be read as a failed check.
+    """
     if sample.error is not None:
         return "infra", "infra", []
-    failed = [name for name, value in scores.items() if value != "C"]
+    failed = [name for name, value in scores.items() if value == "I"]
     if not failed:
         return "pass", "pass", []
     limit = getattr(sample, "limit", None)
@@ -119,7 +125,7 @@ def _dedupe(records: list[SampleRecord]) -> list[SampleRecord]:
     """Drop exact duplicate executions, keeping every distinct run and epoch.
 
     Aggregation is across runs, so two runs of the same (task, sample, model)
-    are both kept — a fraction like 2/3 means it passed two of three runs.
+    are both kept; a fraction like 2/3 means it passed two of three runs.
     The key includes run and epoch, so only the same execution read twice
     (overlapping log-prefix globs) collapses; a later read of the same key wins.
     """
@@ -157,6 +163,7 @@ def collect(prefixes: str | list[str], log_dir: Path | None = None) -> list[Samp
                 usage["out"] += mu.output_tokens or 0
                 usage["cr"] += mu.input_tokens_cache_read or 0
                 usage["cw"] += mu.input_tokens_cache_write or 0
+            tool_calls = sum(len(getattr(m, "tool_calls", None) or []) for m in (s.messages or []))
             scores = {k: str(v.value) for k, v in (s.scores or {}).items()}
             verdict, category, failed = _classify(s, scores)
             runconfig = (s.store or {}).get("jutul/runconfig") or {}
@@ -185,6 +192,7 @@ def collect(prefixes: str | list[str], log_dir: Path | None = None) -> list[Samp
                 messages=len(s.messages or []),
                 commit=commit,
                 epoch=getattr(s, "epoch", 1) or 1,
+                tool_calls=tool_calls,
             )
             records.append(record)
     return _dedupe(records)
@@ -215,7 +223,7 @@ def _per_run_total(records: list[SampleRecord], attr: str) -> float | None:
     """One full pass's worth of ``attr``: per-sample mean across runs, summed.
 
     Gives the cost (or wall time) of running the suite once, averaged over
-    however many times each sample ran — so it stays comparable whether a model
+    however many times each sample ran, so it stays comparable whether a model
     ran once or three times. ``None`` when no record carries the value.
     """
     from collections import defaultdict
@@ -228,6 +236,15 @@ def _per_run_total(records: list[SampleRecord], attr: str) -> float | None:
     if not groups:
         return None
     return sum(sum(values) / len(values) for values in groups.values())
+
+
+def _humanize_tokens(n: float) -> str:
+    """Compact token count: 850 -> '850', 85_000 -> '85k', 4_600_000 -> '4.6M'."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return f"{n:.0f}"
 
 
 def _frac(passed: int, total: int) -> str:
@@ -271,9 +288,9 @@ def render_markdown(records: list[SampleRecord]) -> str:
         f"Snapshot generated {today} from runs {runs[0]} … {runs[-1]}"
         + (f" (jutul-agent {', '.join(commits)})" if commits else "")
         + ". Every sample runs the real agent end to end in a fresh workspace and "
-        "is graded on the session trace as well as the answer — see "
+        "is graded on the session trace as well as the answer. See "
         "[how evaluation works](evaluation.md). Each model ran the suite "
-        f"**{times}**; cells aggregate across runs, so a fraction like 2/3 means "
+        f"**{times}**, and cells aggregate across runs, so a fraction like 2/3 means "
         "the sample passed two of three runs.\n\n"
     )
 
@@ -281,7 +298,13 @@ def render_markdown(records: list[SampleRecord]) -> str:
     w("## Overview\n\n")
     w(
         "Pass rate is passing runs over runs that completed (infrastructure errors "
-        "excluded). Cost and wall time are for **one** pass over the suite (the "
+        "excluded). Tool calls and tokens are the per-run totals across the suite, "
+        "the harness-efficiency signals: at equal pass rate, fewer means the harness "
+        "got the agent there in less work. Input tokens note how many were served "
+        "from the prompt cache (a cheap fraction of the input price); a model that "
+        "caches aggressively processes a large input cheaply, which is why cost "
+        "doesn't track raw token counts and is shown alongside them. "
+        "Cost and wall time are for **one** pass over the suite (the "
         "per-run average), measured on a single machine. Within a model samples run "
         "one at a time, but wall time still depends on that machine and on how many "
         "models shared it during the run, so read it as indicative and comparable "
@@ -290,17 +313,39 @@ def render_markdown(records: list[SampleRecord]) -> str:
         "`eval/report.py`) and include prompt-cache reads/writes; the self-hosted "
         "model is priced against a hosted reference.\n\n"
     )
-    w("| Model | Pass rate | Cost / run | Wall / run |\n")
-    w("|---|---|---|---|\n")
+    w(
+        "| Model | Pass rate | Tool calls / run | Input tokens / run | "
+        "Output tokens / run | Cost / run | Wall / run |\n"
+    )
+    w("|---|---|---|---|---|---|---|\n")
     for m in models:
         rs = [r for r in records if r.model == m]
         done = [r for r in rs if r.verdict != "infra"]
         passed = sum(r.verdict == "pass" for r in done)
+        calls_run = _per_run_total(rs, "tool_calls")
+        # Input is everything fed to the model (fresh input + cache reads +
+        # cache writes). The cache-read share is annotated because it is billed
+        # at a fraction of the input price, so a heavily cached model processes a
+        # large input cheaply. Output is shown separately because it is priced highest.
+        input_run = sum(
+            _per_run_total(rs, attr) or 0
+            for attr in ("tokens_in", "tokens_cache_read", "tokens_cache_write")
+        )
+        cached_run = _per_run_total(rs, "tokens_cache_read") or 0
+        output_run = _per_run_total(rs, "tokens_out") or 0
         cost_run = _per_run_total(rs, "cost_usd")
         wall_run = _per_run_total(rs, "wall_s")
+        calls = f"{calls_run:.0f}" if calls_run is not None else "—"
+        input_tok = _humanize_tokens(input_run) if input_run else "—"
+        if cached_run:
+            input_tok += f" ({_humanize_tokens(cached_run)} cached, {cached_run / input_run:.0%})"
+        output_tok = _humanize_tokens(output_run) if output_run else "—"
         cost = f"${cost_run:.2f}" if cost_run is not None else "—"
         wall = f"{wall_run / 3600:.1f} h" if wall_run else "—"
-        w(f"| {short[m]} | {_frac(passed, len(done))} | {cost} | {wall} |\n")
+        w(
+            f"| {short[m]} | {_frac(passed, len(done))} | {calls} | {input_tok} | "
+            f"{output_tok} | {cost} | {wall} |\n"
+        )
     w("\n")
 
     # Aggregations: by suite and by simulator.
@@ -317,9 +362,15 @@ def render_markdown(records: list[SampleRecord]) -> str:
     # Full detail, folded away: one row per (sample, model) aggregated across
     # runs. markdown="1" lets md_in_html parse the table inside the raw
     # <details> block (without it the pipes render as text).
-    w('<details markdown="1">\n<summary>All samples (pass count, cost, wall time)</summary>\n\n')
-    w("| Suite | Sample | Sim | Model | Passed | Failures | Cost | Wall |\n")
-    w("|---|---|---|---|---|---|---|---|\n")
+    w(
+        '<details markdown="1">\n'
+        "<summary>All samples (pass count, tool calls, tokens, cost, wall time)</summary>\n\n"
+    )
+    w(
+        "| Suite | Sample | Sim | Model | Passed | Failures | "
+        "Tool calls | Input | Output | Cost | Wall |\n"
+    )
+    w("|---|---|---|---|---|---|---|---|---|---|---|\n")
     keyed = sorted(
         {(r.task, r.sample, r.model) for r in records},
         key=lambda k: (_suite(k[0]), k[1], _model_sort_key(k[2])),
@@ -335,27 +386,37 @@ def render_markdown(records: list[SampleRecord]) -> str:
         notes = (
             ", ".join(fails) + (f"; {infra} infra" if infra else "") if (fails or infra) else "—"
         )
+        calls_run = _per_run_total(rs, "tool_calls")
+        input_run = sum(
+            _per_run_total(rs, attr) or 0
+            for attr in ("tokens_in", "tokens_cache_read", "tokens_cache_write")
+        )
+        output_run = _per_run_total(rs, "tokens_out") or 0
         cost_run = _per_run_total(rs, "cost_usd")
         wall_run = _per_run_total(rs, "wall_s")
+        calls = f"{calls_run:.0f}" if calls_run is not None else "—"
+        input_tok = _humanize_tokens(input_run) if input_run else "—"
+        output_tok = _humanize_tokens(output_run) if output_run else "—"
         cost = f"${cost_run:.2f}" if cost_run is not None else "—"
         wall = f"{wall_run / 60:.0f} min" if wall_run else "—"
         w(
             f"| {_suite(task)} | `{sample}` | {rs[0].simulator or 'general'} | "
-            f"{short[model]} | {_frac(passed, len(done))} | {notes} | {cost} | {wall} |\n"
+            f"{short[model]} | {_frac(passed, len(done))} | {notes} | "
+            f"{calls} | {input_tok} | {output_tok} | {cost} | {wall} |\n"
         )
     w("\n</details>\n\n")
 
     w("## Reading the results\n\n")
     w(
-        "A sample passes only when every scorer passes — the answer checks *and* "
+        "A sample passes only when every scorer passes: the answer checks *and* "
         "the trace checks (the required mechanism appears in code the agent "
         "actually ran). Failures fall into:\n\n"
-        "- **wrong answer** — the reported values failed the golden or structural check.\n"
-        "- **serial / mechanism** — the answer may be right, but a required mechanism "
+        "- **wrong answer**: the reported values failed the golden or structural check.\n"
+        "- **serial / mechanism**: the answer may be right, but a required mechanism "
         "is missing from the trace (e.g. a sweep that ran serially when the prompt "
         "asked for a parallel ensemble).\n"
-        "- **hit budget** — the sample reached its message or time cap before finishing.\n"
-        "- **infra error** — the run failed before the agent could work (provider or "
+        "- **hit budget**: the sample reached its message or time cap before finishing.\n"
+        "- **infra error**: the run failed before the agent could work (provider or "
         "harness error); excluded from pass rates, not a model result.\n\n"
         "Composite tasks are noisy at a single epoch, so each model runs the suite a "
         "few times and the cells aggregate the runs. Regenerate this page with:\n\n"

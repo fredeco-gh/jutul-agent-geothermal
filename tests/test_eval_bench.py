@@ -133,13 +133,18 @@ def test_runconfig_hashes_the_tunable_inputs() -> None:
 
 def test_task_suites_import_and_build() -> None:
     from jutul_agent.eval.tasks import (
+        api_discovery,
         battmo,
         canary,
+        filesystem,
+        filesystem_source,
         fimbul,
         guardrails,
         jutuldarcy,
         mocca,
         plotting,
+        search,
+        search_source,
     )
 
     for module, factory in [
@@ -150,6 +155,11 @@ def test_task_suites_import_and_build() -> None:
         (battmo, battmo.battmo),
         (fimbul, fimbul.fimbul),
         (mocca, mocca.mocca),
+        (filesystem, filesystem.filesystem),
+        (filesystem_source, filesystem_source.filesystem_source),
+        (search, search.search),
+        (search_source, search_source.search_source),
+        (api_discovery, api_discovery.api_discovery_solver),
     ]:
         suite = factory()
         assert suite.dataset, f"{module.__name__}: empty dataset"
@@ -160,7 +170,20 @@ def test_eval_cli_lists_suites_and_rejects_unknown(capsys) -> None:
 
     assert eval_cmd.run(eval_cmd.build_parser().parse_args(["--list"])) == 0
     out = capsys.readouterr().out
-    suites = ("canary", "guardrails", "plotting", "jutuldarcy", "battmo", "fimbul", "mocca")
+    suites = (
+        "canary",
+        "guardrails",
+        "plotting",
+        "jutuldarcy",
+        "battmo",
+        "fimbul",
+        "mocca",
+        "filesystem",
+        "filesystem_source",
+        "search",
+        "search_source",
+        "api_discovery",
+    )
     for suite in suites:
         assert suite in out
 
@@ -422,3 +445,142 @@ async def test_numeric_answer_ignores_interleaved_labels() -> None:
         )
     )
     assert (await sweep(wrong_order, Target(""))).value == "I"
+
+
+async def test_used_any_tool_passes_on_any_match(tmp_path: Path) -> None:
+    from jutul_agent.eval.scorers import used_any_tool
+
+    state = _state(tmp_path, [("tool_call", {"name": "glob", "args": {}})])
+    assert (await used_any_tool(["grep", "glob"])(state, Target(""))).value == "C"
+    assert (await used_any_tool(["read_file"])(state, Target(""))).value == "I"
+
+
+async def test_workspace_file_exists_checks_the_workspace_on_disk(tmp_path: Path) -> None:
+    from jutul_agent.eval.scorers import workspace_file_exists
+
+    (tmp_path / "results").mkdir()
+    (tmp_path / "results" / "cubes.txt").write_text("1\n8\n27\n64\n125\n", encoding="utf-8")
+    (tmp_path / "empty.txt").write_text("", encoding="utf-8")
+    state = _state(tmp_path, [])
+
+    assert (await workspace_file_exists("results/cubes.txt")(state, Target(""))).value == "C"
+    assert (await workspace_file_exists("results/*.txt")(state, Target(""))).value == "C"
+    assert (await workspace_file_exists("missing.txt")(state, Target(""))).value == "I"
+    # An empty file is a stub, not a saved result.
+    assert (await workspace_file_exists("empty.txt")(state, Target(""))).value == "I"
+
+
+async def test_answer_cites_requires_all_and_forbids_misses() -> None:
+    from inspect_ai.model import ModelOutput
+
+    from jutul_agent.eval.scorers import answer_cites
+
+    def state(text: str) -> SimpleNamespace:
+        return SimpleNamespace(output=ModelOutput.from_content(model="test", content=text))
+
+    cite = answer_cites(required=("wells.jl", "newton.jl"), forbidden=("darcy.jl",))
+    assert (await cite(state("The callers are wells.jl and newton.jl."), Target(""))).value == "C"
+    # Case-insensitive substring match.
+    assert (await cite(state("Wells.JL and NEWTON.jl call it."), Target(""))).value == "C"
+    # One required item missing.
+    assert (await cite(state("Only wells.jl calls it."), Target(""))).value == "I"
+    # Names the forbidden definition file.
+    assert (await cite(state("wells.jl, newton.jl, and darcy.jl."), Target(""))).value == "I"
+
+
+async def test_no_unresolvable_path_in_julia_flags_only_bad_paths(tmp_path: Path) -> None:
+    from jutul_agent.eval.scorers import no_unresolvable_path_in_julia
+
+    def julia(code: str) -> list[tuple[str, dict]]:
+        return [("tool_call", {"name": "julia_eval", "args": {"code": code}})]
+
+    def shell(command: str) -> list[tuple[str, dict]]:
+        return [("tool_call", {"name": "execute", "args": {"command": command}})]
+
+    # A workspace file written with a leading slash points at the machine root.
+    bad = _state(tmp_path / "a", julia('include("/model.jl")'))
+    assert (await no_unresolvable_path_in_julia()(bad, Target(""))).value == "I"
+
+    # Any leading-slash path whose root is not a real directory is unresolvable.
+    bogus = _state(tmp_path / "b", julia('read("/pkgcache/Foo/src/Foo.jl", String)'))
+    assert (await no_unresolvable_path_in_julia()(bogus, Target(""))).value == "I"
+
+    # The relative path is correct; arithmetic division is not a path; a path in
+    # a comment is not an invocation.
+    ok = _state(
+        tmp_path / "c", julia('x = 6 / 3\n# old: include("/model.jl")\ninclude("model.jl")')
+    )
+    assert (await no_unresolvable_path_in_julia()(ok, Target(""))).value == "C"
+
+    # The file's real absolute path is allowed in Julia.
+    real = _state(tmp_path / "d", julia(f'include("{tmp_path}/model.jl")'))
+    assert (await no_unresolvable_path_in_julia()(real, Target(""))).value == "C"
+
+    # A bare leading-slash path in a shell command is caught; a host path is fine.
+    shell_bad = _state(tmp_path / "e", shell("cat /model.jl"))
+    assert (await no_unresolvable_path_in_julia()(shell_bad, Target(""))).value == "I"
+    shell_ok = _state(tmp_path / "f", shell(f"ls {tmp_path}"))
+    assert (await no_unresolvable_path_in_julia()(shell_ok, Target(""))).value == "C"
+
+    # No path at all is fine.
+    none = _state(tmp_path / "g", julia("sum(1:100)"))
+    assert (await no_unresolvable_path_in_julia()(none, Target(""))).value == "C"
+
+
+async def test_efficiency_scorers_count_the_right_calls(tmp_path: Path) -> None:
+    from jutul_agent.eval.scorers import file_op_count, julia_probe_count, tool_call_count
+
+    events = [
+        ("tool_call", {"name": "read_file", "args": {"file_path": "a.jl"}}),
+        ("tool_call", {"name": "glob", "args": {"pattern": "**/*.jl"}}),
+        ("tool_call", {"name": "julia_eval", "args": {"code": "@doc build_grid"}}),
+        ("tool_call", {"name": "julia_eval", "args": {"code": "methods(solve_newton)"}}),
+        ("tool_call", {"name": "julia_eval", "args": {"code": "build_grid(10, 10).ncells"}}),
+    ]
+    state = _state(tmp_path, events)
+    # Every tool call.
+    assert (await tool_call_count()(state, Target(""))).value == 5
+    # Only the file/search tools (read_file + glob).
+    assert (await file_op_count()(state, Target(""))).value == 2
+    # Only the introspecting REPL calls (@doc + methods(), not the real compute).
+    assert (await julia_probe_count()(state, Target(""))).value == 2
+
+
+def test_filesystem_and_search_modules_expose_tasks_via_tasks_list() -> None:
+    from jutul_agent.eval.tasks import (
+        api_discovery,
+        filesystem,
+        filesystem_source,
+        search,
+        search_source,
+    )
+
+    assert [f.__name__ for f in filesystem.TASKS] == [
+        "filesystem",
+        "filesystem_nested",
+        "filesystem_edit",
+        "filesystem_save",
+        "filesystem_project",
+        "filesystem_transform",
+    ]
+    assert [f.__name__ for f in search.TASKS] == [
+        "search",
+        "search_callers",
+        "search_multihop",
+        "search_count",
+        "search_constant",
+    ]
+    assert [f.__name__ for f in search_source.TASKS] == ["search_source"]
+    assert [f.__name__ for f in filesystem_source.TASKS] == ["filesystem_source"]
+    assert [f.__name__ for f in api_discovery.TASKS] == [
+        "api_discovery_solver",
+        "api_discovery_internal",
+    ]
+    for factory in (
+        *filesystem.TASKS,
+        *filesystem_source.TASKS,
+        *search.TASKS,
+        *search_source.TASKS,
+        *api_discovery.TASKS,
+    ):
+        assert factory().dataset

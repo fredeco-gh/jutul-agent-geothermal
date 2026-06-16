@@ -22,6 +22,14 @@
   font-weight: 600;
 }
 
+/* Material caps the content column at ~61rem, which leaves the wide reference
+   tables (the benchmark most of all) cramped on a roomy screen and wraps their
+   cells over several lines. Give the content more room. Narrow viewports are
+   unaffected: this is a cap, so the column still shrinks to fit. */
+.md-grid {
+  max-width: 72rem;
+}
+
 /* Landing-page hero: gradient panel with the tagline and a terminal mockup */
 .ja-hero {
   display: flex;

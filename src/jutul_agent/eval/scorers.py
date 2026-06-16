@@ -18,11 +18,14 @@ from inspect_ai.scorer import (
     Scorer,
     Target,
     accuracy,
+    mean,
     scorer,
+    stderr,
 )
 from inspect_ai.solver import TaskState
 
 from jutul_agent.eval.solver import STORE_OUTPUT_DIR, STORE_TRACE_DB, STORE_WORKSPACE
+from jutul_agent.paths import is_host_path
 
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 # "338,350" must parse as one number, not two: strip commas used as
@@ -186,7 +189,7 @@ def tool_call_matches(tool: str, args_pattern: str) -> Scorer:
     """Pass when a call to ``tool`` has arguments matching ``args_pattern``.
 
     The pattern is searched in the JSON-serialized arguments, so it can pin
-    a specific parameter (e.g. ``"view": true`` on ``julia_plot`` — the
+    a specific parameter (e.g. ``"view": true`` on ``julia_plot``, meaning the
     agent must have actually looked at its own plot).
     """
     import json as _json
@@ -508,5 +511,251 @@ def no_repeated_identical_calls() -> Scorer:
                 else "no identical failing call repeated"
             ),
         )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
+def used_any_tool(options: list[str]) -> Scorer:
+    """Pass when at least one of ``options`` appears in the session trace.
+
+    The any-of complement of :func:`used_tools` (every) and
+    :func:`avoided_tools` (none): for a task a correct agent can satisfy with
+    any one of several interchangeable tools (locating a file by ``grep`` *or*
+    ``glob`` *or* ``ls``), so the grade measures that the work happened, not
+    which equivalent tool did it.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        calls = _trace_tool_calls(state)
+        hits = [name for name in options if name in calls]
+        return Score(
+            value=CORRECT if hits else INCORRECT,
+            explanation=(
+                f"used {hits}" if hits else f"none of {options} in trace: {calls or 'none'}"
+            ),
+        )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
+def workspace_file_exists(pattern: str, *, min_size: int = 1) -> Scorer:
+    """Pass when a non-empty file matching ``pattern`` exists in the workspace.
+
+    The "saved it to the right place" check: the task asked the agent to leave
+    a real file in the user's workspace, so the grade looks at the workspace on
+    disk, not at a textual claim of having written it. ``pattern`` is a glob
+    relative to the workspace root (``model.jl``, ``results/*.txt``,
+    ``**/*.jl``); a match must be at least ``min_size`` bytes, so an empty stub
+    does not pass.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        root = state.store.get(STORE_WORKSPACE)
+        matches: list[str] = []
+        if root:
+            base = Path(root)
+            for file in base.glob(pattern):
+                try:
+                    if file.is_file() and file.stat().st_size >= min_size:
+                        matches.append(file.relative_to(base).as_posix())
+                except OSError:
+                    continue
+        return Score(
+            value=CORRECT if matches else INCORRECT,
+            explanation=(
+                f"workspace files matching {pattern!r}: {sorted(matches)}"
+                if matches
+                else f"no non-empty workspace file matched {pattern!r}"
+            ),
+        )
+
+    return score
+
+
+@scorer(metrics=[accuracy()])
+def answer_cites(required: tuple[str, ...] = (), forbidden: tuple[str, ...] = ()) -> Scorer:
+    """Pass when the answer names every ``required`` token and no ``forbidden`` one.
+
+    The retrieval check for search tasks: ``required`` are the ground-truth
+    items a correct answer must contain (a filename, a symbol), ``forbidden``
+    are near-miss items it must not (the file that *defines* a function when
+    the task asked which files *call* it). Matching is case-insensitive
+    substring, so the surrounding path or prose framing does not matter.
+    """
+
+    req = tuple(token.lower() for token in required)
+    forb = tuple(token.lower() for token in forbidden)
+
+    async def score(state: TaskState, target: Target) -> Score:
+        text = state.output.completion.lower()
+        missing = [token for token in req if token not in text]
+        present = [token for token in forb if token in text]
+        problems: list[str] = []
+        if missing:
+            problems.append(f"missing {missing}")
+        if present:
+            problems.append(f"names forbidden {present}")
+        return Score(
+            value=CORRECT if not problems else INCORRECT,
+            explanation="; ".join(problems) or f"cites all of {list(required)}",
+        )
+
+    return score
+
+
+# A leading-slash path written as a string literal (``"/model.jl"``), capped so
+# one long string cannot dominate the scan, and a bare leading-slash token in a
+# shell command (``cat /model.jl``). The bare form is matched only for
+# ``execute`` (Julia paths are always quoted), and its look-behind keeps the
+# divisor in arithmetic like ``a/b`` from looking like a path.
+_QUOTED_PATH = re.compile(r"""(['"])(/[^'"\n]{0,200})\1""")
+_BARE_PATH = re.compile(r"(?<![\w./'\"-])(/\w[\w./\-]*)")
+_LINE_COMMENT = re.compile(r"#[^\n]*")
+
+
+@scorer(metrics=[accuracy()])
+def no_unresolvable_path_in_julia(
+    tools: tuple[str, ...] = ("julia_eval", "julia_plot", "execute"),
+) -> Scorer:
+    """Fail when Julia or the shell got a leading-slash path that can't resolve.
+
+    Paths are real everywhere, so a workspace file is a relative path
+    (``model.jl``) or its real absolute path. Writing it with a bare leading
+    slash (``/model.jl``) points at the machine root, where the file isn't, so
+    the call fails. This catches that mistake: treating a workspace file as if
+    it were rooted at ``/``.
+
+    A leading-slash literal that names a real host location (``/home/...``,
+    ``/tmp/...``) is fine. The check flags only leading-slash paths whose first
+    segment is not a real top-level directory. It shares
+    :func:`jutul_agent.paths.is_host_path` with the workspace backend so grader
+    and tool agree on which paths resolve.
+    """
+    from jutul_agent.trace import TraceLog
+
+    def _unresolvable_paths(text: str, *, shell: bool) -> list[str]:
+        text = _LINE_COMMENT.sub("", text)
+        found = [match.group(2) for match in _QUOTED_PATH.finditer(text)]
+        if shell:
+            found += [match.group(1) for match in _BARE_PATH.finditer(text)]
+        return [candidate for candidate in found if not is_host_path(candidate)]
+
+    async def score(state: TaskState, target: Target) -> Score:
+        path = state.store.get(STORE_TRACE_DB)
+        offenders: list[str] = []
+        if path and Path(path).exists():
+            log = TraceLog(Path(path))
+            try:
+                for event in log.iter_events():
+                    if event.kind != "tool_call":
+                        continue
+                    name = event.payload.get("name")
+                    if name not in tools:
+                        continue
+                    args = event.payload.get("args") or {}
+                    text = str(args.get("code") or args.get("command") or "")
+                    offenders += _unresolvable_paths(text, shell=name == "execute")
+            finally:
+                log.close()
+        offenders = sorted({path[:_EXPLAIN_MATCH] for path in offenders})
+        return Score(
+            value=CORRECT if not offenders else INCORRECT,
+            explanation=(
+                f"unresolvable leading-slash path(s) given to Julia/shell: {offenders}"
+                if offenders
+                else "all Julia/shell paths resolve"
+            ),
+        )
+
+    return score
+
+
+# ---------------------------------------------------------------------------
+# Efficiency scorers.
+#
+# These return a count, not pass/fail, and aggregate as a mean. Most capable
+# models eventually solve these tasks; the harness's job is to get them there
+# in fewer steps, so efficiency (read *alongside* the correctness scorers)
+# is how a prompt, skill, or filesystem change proves it helped rather than
+# merely kept the agent correct. A low count on a failing run is meaningless,
+# so always interpret these conditioned on the correctness scorers passing.
+
+# A REPL call that introspects the API rather than computing with it: docstring
+# and method lookups, field/name listing, type queries, source navigation.
+_PROBE = re.compile(
+    r"@doc\b|@which\b|@edit\b|@less\b|@code_\w+|"
+    r"\b(?:methods|names|fieldnames|propertynames|typeof|dump|isdefined|"
+    r"subtypes|supertype|supertypes|nameof|parentmodule|hasmethod|which)\s*\("
+)
+
+
+def _trace_tool_call_payloads(state: TaskState) -> list[dict]:
+    """Every recorded ``tool_call`` payload in this sample's session trace."""
+    from jutul_agent.trace import TraceLog
+
+    path = state.store.get(STORE_TRACE_DB)
+    if not path or not Path(path).exists():
+        return []
+    log = TraceLog(Path(path))
+    try:
+        return [event.payload for event in log.iter_events() if event.kind == "tool_call"]
+    finally:
+        log.close()
+
+
+@scorer(metrics=[mean(), stderr()])
+def tool_call_count() -> Scorer:
+    """How many tool calls the agent made (lower is better, given correctness).
+
+    The headline efficiency number: total round-trips through the tools. A
+    change that keeps every correctness scorer green while lowering this made
+    the agent more efficient at the same task.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        count = len(_trace_tool_calls(state))
+        return Score(value=count, explanation=f"{count} tool calls")
+
+    return score
+
+
+@scorer(metrics=[mean(), stderr()])
+def file_op_count(
+    tools: tuple[str, ...] = ("read_file", "write_file", "edit_file", "ls", "glob", "grep"),
+) -> Scorer:
+    """How many file/search tool calls the agent made (lower is better).
+
+    Isolates filesystem churn from the rest of the work: re-reading,
+    re-listing, and retrying writes is the visible cost of path confusion, so
+    this is the efficiency number to watch when changing how paths work.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        count = sum(1 for name in _trace_tool_calls(state) if name in tools)
+        return Score(value=count, explanation=f"{count} file/search tool calls")
+
+    return score
+
+
+@scorer(metrics=[mean(), stderr()])
+def julia_probe_count() -> Scorer:
+    """How many REPL calls were API probes (``@doc``, ``methods``, ``names``, …).
+
+    Exploration is not bad (reading the real API beats guessing), but a
+    harness that surfaces the right API faster needs fewer probes. Counts
+    ``julia_eval``/``julia_plot`` calls whose code introspects rather than
+    computes, so a skill or mount change that cuts the hunting shows up here.
+    """
+
+    async def score(state: TaskState, target: Target) -> Score:
+        count = sum(
+            1
+            for payload in _trace_tool_call_payloads(state)
+            if payload.get("name") in ("julia_eval", "julia_plot")
+            and _PROBE.search(str((payload.get("args") or {}).get("code", "")))
+        )
+        return Score(value=count, explanation=f"{count} API-probe REPL calls")
 
     return score

@@ -6,7 +6,24 @@ import pytest
 
 pytest.importorskip("inspect_ai", reason="eval extra not installed")
 
-from jutul_agent.eval.report import PRICES, SampleRecord, _price, render_markdown
+from jutul_agent.eval.report import PRICES, SampleRecord, _classify, _price, render_markdown
+
+
+def test_classify_ignores_numeric_efficiency_scorers() -> None:
+    """Efficiency scorers report a number, not pass/fail — never a failed check."""
+    from types import SimpleNamespace
+
+    ok = SimpleNamespace(error=None, limit=None)
+    # A passing answer plus numeric efficiency scorers ("5.0", "2.0") is a pass.
+    verdict, _category, failed = _classify(
+        ok, {"includes": "C", "tool_call_count": "5.0", "file_op_count": "2.0"}
+    )
+    assert verdict == "pass"
+    assert failed == []
+    # An explicit INCORRECT still fails; the numeric scorer stays out of `failed`.
+    verdict, _category, failed = _classify(ok, {"numeric_close": "I", "tool_call_count": "9.0"})
+    assert verdict == "fail"
+    assert failed == ["numeric_close"]
 
 
 def _record(**overrides) -> SampleRecord:
@@ -53,6 +70,24 @@ def test_render_has_overview_suite_and_simulator_sections() -> None:
     assert 'class="bench-fail"' in page
     assert "serial / mechanism" in page
     assert "$0.15" in page
+
+
+def test_humanize_tokens_scales_units() -> None:
+    from jutul_agent.eval.report import _humanize_tokens
+
+    assert _humanize_tokens(850) == "850"
+    assert _humanize_tokens(85_000) == "85k"
+    assert _humanize_tokens(4_600_000) == "4.6M"
+
+
+def test_overview_shows_input_with_cache_annotation_and_output() -> None:
+    # Input = in 8000 + cache_read 50000 + cache_write 0 = 58k, of which 50k (86%)
+    # cached. Output = 400.
+    page = render_markdown([_record()])
+    assert "Input tokens / run" in page
+    assert "Output tokens / run" in page
+    assert "58k (50k cached, 86%)" in page
+    assert "| 400 |" in page
 
 
 def test_suite_grouping_collapses_task_variants() -> None:
