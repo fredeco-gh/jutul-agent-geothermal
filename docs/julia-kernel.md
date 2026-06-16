@@ -50,17 +50,37 @@ stays small: one reader task and one pending future per eval
 
 ## Interrupts and threading
 
-`interrupt()` sends SIGINT, which Julia delivers to the running eval as an
-`InterruptException`, so a stuck simulation cancels while the session and
-its loaded state survive. Two details make this reliable:
+`interrupt()` delivers a catchable `InterruptException` to the running eval, so a
+stuck simulation cancels while the session and its loaded state survive. The kernel
+is spawned in its own process group so the interrupt targets only Julia, never the
+agent:
+
+- **POSIX:** `SIGINT` to the kernel's session (spawned with `start_new_session`).
+- **Windows:** `CTRL_BREAK_EVENT` to the kernel's process group (spawned with
+  `CREATE_NEW_PROCESS_GROUP`). There is no per-process `SIGINT` on Windows, but
+  Julia's console handler turns Ctrl+Break into the *same* `InterruptException`
+  when `exit_on_sigint` is false (server.jl sets it). It also reaches the kernel's
+  `Distributed` workers, which share its group.
+
+Two details make delivery reliable:
 
 - The kernel always launches with an interactive thread (`--threads N,1`).
   That pins the eval loop to one thread while the output pumps run on the
   default pool. Julia delivers the interrupt on the root task's thread, and
   a pump sharing that thread could swallow it inside one of its own
   uninterruptible windows.
-- The result handoff runs with interrupts deferred, so a late Ctrl+C cannot
+- The result handoff runs with interrupts deferred, so a late interrupt cannot
   tear an eval's output apart from its result frame.
+
+If a signal can't be delivered (e.g. no console to target on Windows) or the
+eval ignores it, the supervisor falls back to a restart (the only case where
+REPL state is lost).
+
+`N` (the compute thread count) defaults to physical cores minus one and is set by
+the `--threads` flag or `JUTUL_AGENT_JULIA_THREADS` (see
+[configuration](configuration.md)); Jutul's assembly and preconditioner use those
+threads for a single solve. The eval/benchmark harness overrides this to
+single-threaded so graded results stay deterministic.
 
 A pure no-allocation spin (`while true; end`) is uninterruptible on any
 Julia configuration. If an interrupt cannot recover the eval within a

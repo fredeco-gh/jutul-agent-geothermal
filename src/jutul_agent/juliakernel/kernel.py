@@ -8,9 +8,9 @@ process at the fd level, so an eval's result frame arrives only after all of
 its output; completion is one event, ordered by TCP. Evaluation runs
 in-process in that Julia process, so a ``Distributed`` worker pool launched
 from user code uses it the normal way (the process is the cluster master). The
-kernel is the supervisor: it spawns, interrupts (SIGINT), and respawns the
-process, so a reset never takes the surrounding Python session down with it.
-The package depends only on the standard library.
+kernel is the supervisor: it spawns, interrupts (SIGINT on POSIX, CTRL_BREAK on
+Windows), and respawns the process, so a reset never takes the surrounding
+Python session down with it. The package depends only on the standard library.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import os
 import secrets
 import signal
 import socket
+import subprocess
 from pathlib import Path
 from typing import IO, Self
 
@@ -30,7 +31,7 @@ from .result import EvalResult, OnChunk
 from .text import render_terminal_output
 
 _SERVER_JL = Path(__file__).resolve().parent / "server.jl"
-# After cancelling an eval we SIGINT it and wait this long for its result frame;
+# After cancelling an eval we interrupt it and wait this long for its result frame;
 # past this we treat it as wedged and restart.
 _INTERRUPT_DRAIN_TIMEOUT = 10.0
 
@@ -117,13 +118,29 @@ class JuliaKernel:
         await self._teardown(graceful=False)
         await self._spawn()
 
-    async def interrupt(self) -> None:
-        """Send SIGINT to the running eval (best-effort; the process survives)."""
+    async def interrupt(self) -> bool:
+        """Try to soft-interrupt the running eval; return whether a signal was sent.
+
+        The eval cancels as an ``InterruptException`` while the session and its
+        loaded state survive. On POSIX that's SIGINT to the kernel's own process
+        group (``start_new_session`` isolated it from ours). On Windows there is no
+        per-process SIGINT, but ``CTRL_BREAK_EVENT`` to the kernel's process group
+        (created via ``CREATE_NEW_PROCESS_GROUP``) reaches Julia's console handler,
+        which — with ``exit_on_sigint(false)``, set in server.jl — delivers the same
+        catchable ``InterruptException`` rather than killing the process. Both stay
+        off our own process group, so the agent is never hit.
+
+        Returns ``False`` only if no signal could be sent (e.g. no console to
+        target on Windows); the caller then restarts to stop a runaway eval.
+        """
         proc = self._proc
         if proc is None or proc.returncode is not None:
-            return
-        with contextlib.suppress(ProcessLookupError, OSError, NotImplementedError):
-            proc.send_signal(signal.SIGINT)
+            return False
+        sig = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT
+        with contextlib.suppress(ProcessLookupError, OSError, NotImplementedError, ValueError):
+            proc.send_signal(sig)
+            return True
+        return False
 
     # ---- evaluation --------------------------------------------------------
 
@@ -162,13 +179,19 @@ class JuliaKernel:
     async def _recover_from_cancel(self, pending: PendingEval) -> None:
         """Leave the session usable after an eval was cancelled mid-flight.
 
-        If the eval is still running (its future is unresolved), SIGINT it and
-        wait for its result frame; the connection drops that stale result. If it
-        ignores the interrupt or the process dies, fall back to a restart (the
-        only case where REPL state is lost).
+        If the eval is still running (its future is unresolved), soft-interrupt it
+        and wait for its result frame; the connection drops that stale result. If
+        the interrupt can't be delivered, or the eval ignores it, or the process
+        dies, fall back to a restart (the only case where REPL state is lost) — a
+        running solve we can't interrupt must not be left to keep going.
         """
-        if not pending.future.done():
-            await self.interrupt()
+        # `and` short-circuits, so interrupt() is only attempted while the eval is
+        # still running; a False return (no soft interrupt available) means restart.
+        if not pending.future.done() and not await self.interrupt():
+            self._cancel_preserved_state = False
+            with contextlib.suppress(Exception):
+                await self.restart()
+            return
         try:
             async with asyncio.timeout(_INTERRUPT_DRAIN_TIMEOUT):
                 await pending.future
@@ -233,6 +256,14 @@ class JuliaKernel:
             self._stderr_fh = open(self._config.stderr_file, "wb")  # noqa: SIM115
 
         command, args, env = self._build_launch(port)
+        # Put the kernel in its own process group so an interrupt targets only it,
+        # never the agent. POSIX: a new session (setsid) for SIGINT. Windows:
+        # CREATE_NEW_PROCESS_GROUP, which is what lets CTRL_BREAK_EVENT reach this
+        # child (and its Distributed workers) without hitting our console.
+        if os.name == "nt":
+            group_kwargs: dict[str, object] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        else:
+            group_kwargs = {"start_new_session": True}
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 command,
@@ -241,7 +272,7 @@ class JuliaKernel:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self._config.cwd) if self._config.cwd is not None else None,
                 env=env,
-                start_new_session=True,  # own process group: our SIGINT hits only Julia
+                **group_kwargs,
             )
         except FileNotFoundError as exc:
             await self._teardown(graceful=False)  # close the listener / stderr log we opened
