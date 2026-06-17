@@ -399,7 +399,11 @@ def test_suite_modules_expose_all_tasks_via_tasks_list() -> None:
     from jutul_agent.eval.tasks import battmo, jutuldarcy, mocca
 
     assert [f.__name__ for f in battmo.TASKS] == ["battmo", "battmo_sweep"]
-    assert [f.__name__ for f in jutuldarcy.TASKS] == ["jutuldarcy", "jutuldarcy_rate_change"]
+    assert [f.__name__ for f in jutuldarcy.TASKS] == [
+        "jutuldarcy",
+        "jutuldarcy_rate_change",
+        "jutuldarcy_unit_conversion",
+    ]
     assert [f.__name__ for f in mocca.TASKS] == ["mocca", "mocca_honesty"]
     for factory in (*battmo.TASKS, *jutuldarcy.TASKS, *mocca.TASKS):
         assert factory().dataset

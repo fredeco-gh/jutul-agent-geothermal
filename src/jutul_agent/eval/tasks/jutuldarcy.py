@@ -15,6 +15,7 @@ from jutul_agent.eval.scorers import (
     no_interpreters_via_execute,
     no_repeated_identical_calls,
     numeric_answer,
+    numeric_close,
     used_tools,
 )
 from jutul_agent.eval.solver import jutul_agent_solver, load_eval_credentials
@@ -86,4 +87,48 @@ def jutuldarcy_rate_change() -> Task:
     )
 
 
-TASKS = [jutuldarcy, jutuldarcy_rate_change]
+@task
+def jutuldarcy_unit_conversion() -> Task:
+    # Golden-backed unit conversion: a fully specified case whose permeability is
+    # given in millidarcy. Converting it to SI is the one judgement the agent must
+    # get right; leaving it unconverted (100 m^2) makes the solve diverge, so it
+    # cannot reach the golden pressure. The golden was captured from a trusted run of
+    # this exact case in the JutulDarcy 0.3.8 env (final average reservoir pressure
+    # 203.705 bar), so `numeric_close` proves the conversion landed the right physics
+    # — a deterministic check, no brittle trace matching. Re-capture the golden only
+    # on a deliberate JutulDarcy upgrade, never by re-running until it matches.
+    sample = Sample(
+        id="jd-millidarcy-conversion",
+        input=(
+            "Using JutulDarcy, set up and run this exact two-phase case and report "
+            "the final average reservoir pressure in bar.\n"
+            "- Grid: 10 x 10 x 3 cells over a 1000 x 1000 x 30 m domain.\n"
+            "- Rock: uniform porosity 0.2 and uniform permeability of 100 millidarcy.\n"
+            "- Wells: a vertical injector at (1, 1) and a vertical producer at "
+            "(10, 10).\n"
+            "- Fluids: an immiscible liquid/vapor system with reference densities "
+            "1000 and 100 kg/m^3.\n"
+            "- Initial state: 150 bar, fully liquid-saturated.\n"
+            "- Schedule: 12 steps of 30 days; injector on a total-rate control of one "
+            "pore volume over the full schedule; producer on a 50 bar bottom-hole "
+            "pressure."
+        ),
+        metadata={"needs_env": True},
+    )
+    return Task(
+        dataset=[sample],
+        solver=jutul_agent_solver(simulator="jutuldarcy"),
+        scorer=[
+            # Golden from a trusted 0.3.8 run; the tolerance absorbs solver noise but
+            # is far tighter than the gap to any unconverted-permeability result.
+            numeric_close(203.705, 8.0),
+            used_tools(["julia_eval"]),
+            no_interpreters_via_execute(),
+        ],
+        time_limit=2400,
+        token_limit=2_000_000,
+        message_limit=120,
+    )
+
+
+TASKS = [jutuldarcy, jutuldarcy_rate_change, jutuldarcy_unit_conversion]
