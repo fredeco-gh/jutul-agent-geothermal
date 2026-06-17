@@ -12,7 +12,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from deepagents.backends import CompositeBackend, LocalShellBackend
-from deepagents.backends.protocol import EditResult, ExecuteResponse, GrepResult, WriteResult
+from deepagents.backends.protocol import (
+    EditResult,
+    ExecuteResponse,
+    GlobResult,
+    GrepResult,
+    WriteResult,
+)
+
+from jutul_agent.agent.windows_paths import split_windows_glob
 
 _BLOCKED_INTERPRETERS = frozenset({"julia"})
 
@@ -73,6 +81,11 @@ class RecursiveGrepBackend(CompositeBackend):
     See :func:`_recursive_glob`. Normalizing here, in the one backend the grep
     tool calls, fixes every route the composite forwards to, since it passes the
     same glob down to whichever sub-backend resolves the path.
+
+    It also rewrites a Windows drive-absolute ``glob`` pattern into a relative
+    pattern plus a base path (see :func:`split_windows_glob`): ``pathlib``'s
+    ``rglob`` rejects absolute patterns, so the absolute ``glob`` form the skills
+    use silently matches nothing on Windows otherwise. A no-op off Windows.
     """
 
     def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
@@ -82,6 +95,14 @@ class RecursiveGrepBackend(CompositeBackend):
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> GrepResult:
         return await super().agrep(pattern, path=path, glob=_recursive_glob(glob))
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        pattern, path = split_windows_glob(pattern, path)
+        return super().glob(pattern, path=path)
+
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        pattern, path = split_windows_glob(pattern, path)
+        return await super().aglob(pattern, path=path)
 
 
 class WorkspaceShellBackend(LocalShellBackend):

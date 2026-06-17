@@ -93,3 +93,42 @@ def test_enable_is_noop_off_windows(monkeypatch):
     before = utils.validate_path
     windows_paths.enable_windows_real_paths()
     assert utils.validate_path is before
+
+
+def test_split_windows_glob_drive_absolute_pattern(monkeypatch):
+    monkeypatch.setattr(windows_paths.os, "name", "nt")
+    # An absolute drive pattern is split into a relative pattern + base directory.
+    assert windows_paths.split_windows_glob(r"C:\proj\src\**\*.py", None) == (
+        "**/*.py",
+        r"C:\proj\src",
+    )
+    # Forward slashes (how a model often writes a Windows path) work the same.
+    assert windows_paths.split_windows_glob("C:/proj/src/**/*.py", None) == (
+        "**/*.py",
+        r"C:\proj\src",
+    )
+    # An exact file path (no metacharacter): the last component becomes the pattern.
+    assert windows_paths.split_windows_glob(r"C:\proj\src\model.jl", None) == (
+        "model.jl",
+        r"C:\proj\src",
+    )
+
+
+def test_split_windows_glob_leaves_other_inputs_untouched(monkeypatch):
+    monkeypatch.setattr(windows_paths.os, "name", "nt")
+    # Relative pattern: unchanged.
+    assert windows_paths.split_windows_glob("**/*.py", None) == ("**/*.py", None)
+    # An explicit path already given: don't second-guess it.
+    assert windows_paths.split_windows_glob(r"C:\proj\**\*.py", "C:\\base") == (
+        r"C:\proj\**\*.py",
+        "C:\\base",
+    )
+
+
+def test_split_windows_glob_is_noop_off_windows(monkeypatch):
+    monkeypatch.setattr(windows_paths.os, "name", "posix")
+    # Off Windows a drive-looking pattern is left for the backend to handle.
+    assert windows_paths.split_windows_glob(r"C:\proj\**\*.py", None) == (
+        r"C:\proj\**\*.py",
+        None,
+    )

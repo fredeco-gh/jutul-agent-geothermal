@@ -88,3 +88,46 @@ def enable_windows_real_paths() -> None:
     if os.name != "nt":
         return
     _install()
+
+
+# A glob metacharacter; the first path component carrying one starts the pattern.
+_GLOB_META = re.compile(r"[*?\[]")
+
+
+def split_windows_glob(pattern: str, path: str | None) -> tuple[str, str | None]:
+    """Rewrite a Windows drive-absolute glob pattern into ``(pattern, base path)``.
+
+    ``pathlib``'s ``rglob`` rejects non-relative patterns, so the deepagents glob
+    backend silently matches nothing for ``glob("C:\\dir\\**\\*.jl")`` — the exact
+    absolute form the skills tell the agent to use. We split off the longest
+    metacharacter-free prefix as the search base and return the remainder as a
+    relative pattern, which is the form the backend handles (``glob("**/*.jl",
+    path="C:\\dir")``).
+
+    A no-op off Windows, when an explicit ``path`` was already given, or when the
+    pattern is not drive-absolute — so relative patterns and POSIX paths are
+    untouched.
+    """
+
+    if os.name != "nt" or path is not None or not isinstance(pattern, str):
+        return pattern, path
+    if not _WIN_DRIVE.match(pattern):
+        return pattern, path
+
+    from pathlib import PureWindowsPath
+
+    parts = PureWindowsPath(pattern).parts  # ("C:\\", "dir", "**", "*.jl")
+    split_at = next(
+        (i for i, part in enumerate(parts) if _GLOB_META.search(part)),
+        len(parts),
+    )
+    # No metacharacter at all (an exact file path): treat the last component as the
+    # pattern so the base is still a directory rglob can search.
+    if split_at == len(parts):
+        split_at -= 1
+    if split_at <= 0:
+        return pattern, path  # the drive anchor itself is the pattern; leave it
+
+    base = str(PureWindowsPath(*parts[:split_at]))
+    relative = "/".join(parts[split_at:]) or "*"
+    return relative, base
