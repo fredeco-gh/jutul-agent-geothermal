@@ -1,12 +1,15 @@
 """Ensemble suite: the parallel-sweep workflow through ``run_ensemble``.
 
-One sample per simulator. The sweep itself is trivial arithmetic on
-purpose. The mechanism, not the math, is what is graded. Each sample
-runs inside its simulator's workspace env, because ``run_ensemble`` ships
-in the JutulAgent runtime package that only exists there, and worker
-processes inherit that env. The real check is the trace: ``run_ensemble``
-must appear in code the agent actually executed, so a serial fallback or a
-textual claim cannot pass.
+One task per simulator, each sweeping a real case the simulator ships or the
+workspace provides: a waterflood, a battery discharge, a geothermal doublet, a
+CO2-capture cycle. Each runs inside its simulator's workspace env, because
+``run_ensemble`` ships in the JutulAgent runtime package that only exists there,
+and worker processes inherit that env. The real check is the trace:
+``run_ensemble`` (or plain ``pmap``) must appear in code the agent actually
+executed, so a serial fallback or a textual claim cannot pass. A real
+simulation cannot be shortcut by recalling a value or reimplementing it in
+another language, which is what makes these robust mechanism checks (a cheap
+arithmetic sweep, by contrast, the model could just compute directly).
 """
 
 from __future__ import annotations
@@ -18,55 +21,11 @@ from jutul_agent.eval.scorers import (
     julia_code_matches,
     no_interpreters_via_execute,
     numeric_answer,
-    numeric_close,
     used_tools,
 )
 from jutul_agent.eval.solver import jutul_agent_solver, load_eval_credentials
 
 load_eval_credentials()
-
-_SIMULATORS = ("jutuldarcy", "battmo", "fimbul", "mocca")
-
-# Exact values: sum of squares 1..n is n(n+1)(2n+1)/6, so the targets are
-# 385, 338350, 333833500, 333383335000; deterministic and cheap.
-_PROMPT = (
-    "For each n in [10, 100, 1000, 10000], compute the sum of the "
-    "squares of the integers 1 through n. Run the four cases as a "
-    "parallel ensemble across 2 workers, and report the four results "
-    "in order."
-)
-
-
-@task
-def ensembles() -> Task:
-    samples = [
-        Sample(
-            id=f"ens-{sim}-parallel-sweep",
-            input=_PROMPT,
-            metadata={"needs_env": True, "simulator": sim},
-        )
-        for sim in _SIMULATORS
-    ]
-    return Task(
-        dataset=samples,
-        solver=jutul_agent_solver(),
-        scorer=[
-            numeric_close(385, 0.5),
-            numeric_close(338_350, 0.5),
-            numeric_close(333_833_500, 0.5),
-            numeric_close(333_383_335_000, 0.5),
-            # Plain Distributed (addprocs + pmap) is the skill-endorsed manual
-            # path; the contract is "parallel across workers", not one helper.
-            julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
-            no_interpreters_via_execute(),
-        ],
-        # Generous like the other needs_env suites: the first run per machine
-        # pays the golden-env build inside this budget.
-        time_limit=2400,
-        token_limit=1_000_000,
-        message_limit=40,
-    )
 
 
 # The reference case ships as a workspace fixture so the task measures the
@@ -243,7 +202,6 @@ def ensembles_mocca() -> Task:
 
 
 TASKS = [
-    ensembles,
     ensembles_jutuldarcy,
     ensembles_battmo,
     ensembles_fimbul,
