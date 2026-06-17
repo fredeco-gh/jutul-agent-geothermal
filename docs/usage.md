@@ -5,33 +5,41 @@
 You need two tools on PATH:
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/), which
-  installs Python and the project environment
+  installs Python and manages the tool
 - Julia 1.10 or newer, via [juliaup](https://github.com/JuliaLang/juliaup)
 
 On headless Linux, plotting also needs `xvfb`.
 
+Install jutul-agent as a uv tool. This puts a `jutul-agent` command on your
+PATH that runs from any folder:
+
 ```sh
-git clone https://github.com/SINTEF-agentlab/jutul-agent
-cd jutul-agent
-uv sync
+uv tool install git+https://github.com/SINTEF-agentlab/jutul-agent
 ```
+
+Once the package is on PyPI this shortens to `uv tool install jutul-agent`.
+Either way, `jutul-agent upgrade` keeps it current (see
+[Upgrading](#upgrading)).
 
 API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
 your environment or a `.env`. jutul-agent also prompts for a missing key and
 saves it to the user-global `.env`. Local models through
-[Ollama](https://ollama.com) need no key. `uv run jutul-agent doctor`
+[Ollama](https://ollama.com) need no key. `jutul-agent doctor`
 verifies the whole setup and prints a fix per finding.
+
+Prefer a clone for hacking on jutul-agent itself? See
+[development](development.md) — there you run commands as `uv run jutul-agent`.
 
 ## Workspaces
 
 `jutul-agent` runs in the directory you invoke it from. That directory is the
 workspace: the agent reads and writes files there, and the Julia environment
-lives in `.jutul-agent/julia-env/` inside it. Start it from a project folder,
-not from the jutul-agent checkout. Initialise once per folder:
+lives in `.jutul-agent/julia-env/` inside it. Start it from a project folder.
+Initialise once per folder:
 
 ```sh
 mkdir my-reservoir-study && cd my-reservoir-study
-uv run jutul-agent init --sim jutuldarcy --precompile
+jutul-agent init --sim jutuldarcy --precompile
 ```
 
 `init` writes `.jutul-agent/config.toml` and copies the simulator's Julia env
@@ -40,8 +48,8 @@ up front. The first time can take a while (Julia compiles the simulator and
 the plotting stack), after which sessions start in seconds. Useful variants:
 
 ```sh
-uv run jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
-uv run jutul-agent init --sim jutuldarcy --force --precompile
+jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
+jutul-agent init --sim jutuldarcy --force --precompile
 ```
 
 `--source-path` dev-links the simulator to a local checkout, mounted writable
@@ -55,13 +63,39 @@ dependencies, so use a separate folder for each. Pointing an existing
 workspace at another simulator rebuilds the env from the new template on the
 next run.
 
+## Upgrading
+
+jutul-agent is actively developed, so keep it current:
+
+```sh
+jutul-agent upgrade          # upgrade to the latest
+jutul-agent upgrade --check  # just report the latest vs what's installed
+```
+
+`upgrade` does the right thing for how you installed: a tool install runs
+`uv tool upgrade jutul-agent`; a dev checkout is told to `git pull && uv sync`.
+On Windows the running executable can't replace itself, so the upgrade runs in
+a new console window and jutul-agent exits to release the file — reopen it when
+that window finishes.
+At launch, jutul-agent also prints a one-line notice when a newer version is
+available (a background check, cached for a day; it never delays startup). Turn
+the notice off with `JUTUL_AGENT_NO_UPDATE_CHECK=1`.
+
+An upgrade ships new simulator env templates, but existing workspace envs are
+only rebuilt from them on request. When a workspace's env was built from an
+older template, launch (and `jutul-agent doctor`) say so; rebuild it with:
+
+```sh
+jutul-agent init --sim <name> --force --precompile
+```
+
 ## Adding folders
 
 Mount folders outside the workspace so the agent can use them with the same
 file tools:
 
 ```sh
-uv run jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
+jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
 ```
 
 Inside the TUI, `/add-dir <path>` mounts one immediately and `/add-dir` lists
@@ -72,7 +106,7 @@ Mounts last for the session and are not written to config.
 ## The TUI
 
 ```sh
-uv run jutul-agent
+jutul-agent
 ```
 
 | Command | Effect |
@@ -108,10 +142,10 @@ The conversation survives the process: every session checkpoints its
 thread, so you can pick an earlier one back up.
 
 ```sh
-uv run jutul-agent --continue          # reopen the most recent session
-uv run jutul-agent --resume            # pick from a list of recent sessions
-uv run jutul-agent --resume 2026-06-12 # by id, or any unique prefix
-uv run jutul-agent sessions            # list what's resumable
+jutul-agent --continue          # reopen the most recent session
+jutul-agent --resume            # pick from a list of recent sessions
+jutul-agent --resume 2026-06-12 # by id, or any unique prefix
+jutul-agent sessions            # list what's resumable
 ```
 
 A resumed TUI replays the prior exchanges and the model continues with the
@@ -130,7 +164,7 @@ needs.
 Pass the prompt as a positional argument to run one turn and exit:
 
 ```sh
-uv run jutul-agent --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
+jutul-agent --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
 ```
 
 Headless mode cannot pause for approval, so use `--approval-mode auto` (the
@@ -145,10 +179,10 @@ prompts, responses, every tool call with arguments and output, artifacts,
 token usage. Render one:
 
 ```sh
-uv run jutul-agent transcript                   # last session, HTML
-uv run jutul-agent transcript <id>              # specific session
-uv run jutul-agent transcript --format markdown
-uv run jutul-agent transcript --bundle          # zip with artifacts included
+jutul-agent transcript                   # last session, HTML
+jutul-agent transcript <id>              # specific session
+jutul-agent transcript --format markdown
+jutul-agent transcript --bundle          # zip with artifacts included
 ```
 
 ## Models
@@ -177,8 +211,14 @@ anything missing. Requirements and caveats:
 
 ### Other providers
 
-Install the provider's LangChain package (for example
-`uv add langchain-openrouter`), then use its `provider:model` id. If the
+Add the provider's LangChain package to the tool install, then use its
+`provider:model` id:
+
+```sh
+uv tool upgrade jutul-agent --with langchain-openrouter
+```
+
+(From a dev checkout, use `uv add langchain-openrouter` instead.) If the
 package is missing, jutul-agent names the exact one to install.
 
 ## Troubleshooting
@@ -186,7 +226,7 @@ package is missing, jutul-agent names the exact one to install.
 Start with the built-in check:
 
 ```sh
-uv run jutul-agent doctor
+jutul-agent doctor
 ```
 
 It verifies Julia is on PATH and 1.10+, the active model's key is set (or

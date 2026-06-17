@@ -4,6 +4,7 @@ Three modes, dispatched on the first argument:
 
 - ``jutul-agent init|setup [--sim <name>]``  bootstrap the current workspace.
 - ``jutul-agent doctor``                     diagnose the workspace setup.
+- ``jutul-agent upgrade``                    update the install to the latest.
 - ``jutul-agent transcript [<id>]``         render a session trace.
 - ``jutul-agent sessions``                  list resumable sessions.
 - ``jutul-agent eval [<suite>...]``          run bench suites through Inspect.
@@ -59,6 +60,13 @@ def main(argv: list[str] | None = None) -> int:
         args = doctor_cmd.build_parser().parse_args(argv[1:])
         apply_workspace_flags(args)
         return doctor_cmd.run(args)
+
+    if argv and argv[0] == "upgrade":
+        from jutul_agent.interfaces.cli import upgrade as upgrade_cmd
+
+        args = upgrade_cmd.build_parser().parse_args(argv[1:])
+        apply_workspace_flags(args)
+        return upgrade_cmd.run(args)
 
     if argv and argv[0] == "transcript":
         args = transcript_cmd.build_parser().parse_args(argv[1:])

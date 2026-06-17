@@ -28,10 +28,15 @@ def test_help_exits_zero_subprocess() -> None:
 
 
 def test_version_exits_zero(capsys) -> None:
+    from jutul_agent import __version__
+
     with pytest.raises(SystemExit) as exc:
         main(["--version"])
     assert exc.value.code == 0
-    assert "0.0.0" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    # Version is derived from git tags by hatch-vcs, so assert the wiring (the
+    # resolved __version__ is printed) rather than a fixed string.
+    assert f"jutul-agent {__version__}" in out
 
 
 def test_default_invocation_without_sim_errors(

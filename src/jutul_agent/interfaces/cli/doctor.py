@@ -28,6 +28,8 @@ from jutul_agent.paths import workspace_root
 from jutul_agent.simulators import registry
 from jutul_agent.workspace import (
     auto_detect_simulator,
+    env_declares_warm_packages,
+    env_template_drifted,
     load_workspace_config,
     resolve_julia_project,
 )
@@ -82,6 +84,7 @@ def run(args: argparse.Namespace) -> int:
     sim_name = _check_simulator(report, sim_name)
     project = _check_julia_project(report, ws)
     _check_simulator_installed(report, project, sim_name)
+    _check_env_template_current(report, ws, project, sim_name)
     _check_plotting_display(report)
 
     # Confirm Julia actually boots in this env; catches a broken/half-resolved
@@ -277,6 +280,36 @@ def _check_simulator_installed(report: _Report, project: Path | None, sim_name: 
         f"{pkg} is in Project.toml but not in Manifest.toml (env not instantiated)",
         f"Run `jutul-agent init --sim {sim_name} --precompile` to install it.",
     )
+
+
+def _check_env_template_current(
+    report: _Report, ws: Path, project: Path | None, sim_name: str | None
+) -> None:
+    """Warn when the managed env was built from an older simulator template.
+
+    The matching launch-time check only warns on stderr mid-startup; surfacing
+    it here too means a user debugging a stale env sees it in the one report
+    they're told to paste. Only applies to a managed ``.jutul-agent/julia-env``
+    (a user-owned root Project.toml is theirs), and only when a stamp exists.
+    """
+
+    if project is None or sim_name is None or sim_name not in registry.names():
+        return
+    if (ws / "Project.toml").resolve() == (project / "Project.toml").resolve():
+        return  # user-owned root env
+    if not env_declares_warm_packages(project):
+        return
+
+    template = registry.get(sim_name).julia_env_template_path
+    if env_template_drifted(project, template):
+        report.line(
+            WARN,
+            "Env template current",
+            "built from an older template than the installed jutul-agent",
+            f"Rebuild it with `jutul-agent init --sim {sim_name} --force --precompile`.",
+        )
+    else:
+        report.line(PASS, "Env template current")
 
 
 def _check_plotting_display(report: _Report) -> None:

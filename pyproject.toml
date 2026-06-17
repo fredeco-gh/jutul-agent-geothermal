@@ -1,6 +1,6 @@
 [project]
 name = "jutul-agent"
-version = "0.0.0"
+dynamic = ["version"]
 description = "Specialized scientific agent for AD-enabled simulators built on the Jutul framework."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -55,20 +55,22 @@ docs = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+# Version is derived from git tags (the latest `vX.Y.Z` tag, plus a dev suffix
+# for commits past it) and baked into `_version.py` at build time. Releasing is
+# `git tag vX.Y.Z` — no manual version bump. The runtime reads it back via
+# importlib.metadata (see jutul_agent/__init__.py), which is what the update
+# check compares against the latest published release.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/jutul_agent/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jutul_agent"]
-
-# Per-simulator folders carry julia_env/ templates (incl. each env's per-simulator
-# JutulAgent<Sim> warm package) and skills/ markdown, plus the shared JutulAgent
-# package under julia_runtime/ and the kernel's Julia server — none picked up by the
-# default Python-only wheel build, so force-include them.
-[tool.hatch.build.targets.wheel.force-include]
-"src/jutul_agent/simulators" = "jutul_agent/simulators"
-"src/jutul_agent/julia_runtime" = "jutul_agent/julia_runtime"
-"src/jutul_agent/juliakernel/server.jl" = "jutul_agent/juliakernel/server.jl"
 
 # Whitelist what ships in the source distribution. Keeps local development
 # scratch directories at the repo root from ever leaking into a release.

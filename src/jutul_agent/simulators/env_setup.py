@@ -23,12 +23,15 @@ from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.workspace import (
     WorkspaceBootstrapError,
     bootstrap_julia_env,
+    ensure_env_template_stamp,
     env_declares_warm_packages,
     env_precompile_is_current,
+    env_template_drifted,
     mark_env_precompiled,
     resolve_julia_project,
     sync_julia_env_with_template,
     workspace_is_simulator_source,
+    write_env_template_stamp,
 )
 
 
@@ -373,6 +376,7 @@ def prepare_workspace_env(
 
     _ensure_simulator_installed(adapter, workspace, julia_project, sim_name)
     _ensure_env_warmed(workspace, julia_project, sim_name)
+    _reconcile_env_template(adapter, workspace, julia_project, sim_name)
 
 
 def _foreign_simulator(julia_project: Path, adapter: SimulatorAdapter) -> str | None:
@@ -457,6 +461,9 @@ def _sync_workspace_env(
     print(f"Updating workspace env with {', '.join(added)} (added upstream)...", flush=True)
     try:
         resolve_and_instantiate(julia_project, precompile=False, capture=True)
+        # The env now matches the current template; refresh the stamp so the
+        # drift check below doesn't then flag the very change we just healed.
+        write_env_template_stamp(julia_project, adapter.julia_env_template_path)
     except EnvSetupError as exc:
         if before is not None:
             project_toml.write_text(before, encoding="utf-8")
@@ -503,6 +510,38 @@ def _ensure_simulator_installed(
             _rebuild_managed_env(adapter, ws, sim_name, reason="could not be resolved")
             return
         _warn_rebuild(pkg, sim_name, exc)
+
+
+def _reconcile_env_template(
+    adapter: SimulatorAdapter, ws: Path, julia_project: Path, sim_name: str | None
+) -> None:
+    """Warn when the managed env was built from an older template than the install.
+
+    The other reconcile steps self-heal *added* deps; this catches the changes
+    they can't (a dep dropped, a compat tightened, a ``[sources]`` path moved)
+    after an upgrade, pointing at the one-command rebuild the docs prescribe.
+    Never touches a user-owned root env, and stays quiet for an env whose stamp
+    already matches — baselining a stamp-less (pre-feature) env instead of nagging.
+    """
+
+    if (ws / "Project.toml").exists() or not env_declares_warm_packages(julia_project):
+        return
+
+    template = adapter.julia_env_template_path
+    if not env_template_drifted(julia_project, template):
+        ensure_env_template_stamp(julia_project, template)
+        return
+
+    rebuild = "jutul-agent init --force --precompile"
+    if sim_name:
+        rebuild += f" --sim {sim_name}"
+    print(
+        "warning: this workspace's Julia env was built from an older "
+        f"{adapter.display_name} template than the installed jutul-agent. It will "
+        "still run, but to pick up the new template rebuild it with:\n"
+        f"             {rebuild}",
+        file=sys.stderr,
+    )
 
 
 def _ensure_env_warmed(ws: Path, julia_project: Path, sim_name: str | None) -> None:
