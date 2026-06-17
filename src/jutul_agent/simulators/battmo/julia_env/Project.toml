@@ -12,6 +12,12 @@ Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"
 JutulAgent = "79b12aa6-73c9-4fa8-9c54-e97745f42687"
 JutulAgentBattMo = "f9f14f6a-5be2-4b55-b75d-847ac964f0ff"
 
+# Floor at the release the skills are written against, so a stale env can't drift
+# behind them (it fails to resolve and the drift check prompts a rebuild). Bump it
+# when the skills are updated for a newer BattMo.
+[compat]
+BattMo = "0.2.8"
+
 # Both deps are jutul-agent's in-env Julia runtime, declared as relative `[sources]`
 # paths so they survive the copy into a workspace. JutulAgent is the shared,
 # sim-agnostic core (figure capture, ensemble helpers, generic-Makie warm-up) — it

@@ -192,7 +192,8 @@ def test_eval_cli_lists_suites_and_rejects_unknown(capsys) -> None:
 
 
 def test_golden_env_realigns_a_cached_env_once_per_run(tmp_path: Path, monkeypatch) -> None:
-    """A cached env is re-resolved on first use; a fresh build is not."""
+    """A cached env is re-resolved on first use; a fresh build is not; and the
+    golden is brought current (warm source + bake) exactly once per simulator."""
     from jutul_agent import paths
     from jutul_agent.eval import solver
     from jutul_agent.simulators import env_setup
@@ -200,16 +201,23 @@ def test_golden_env_realigns_a_cached_env_once_per_run(tmp_path: Path, monkeypat
     monkeypatch.setattr(paths, "state_home", lambda: tmp_path)
     updated: list[Path] = []
     built: list[Path] = []
+    aligned: list[Path] = []
     monkeypatch.setattr(env_setup, "update_env", updated.append)
     monkeypatch.setattr(
         env_setup,
         "bootstrap_workspace",
         lambda adapter, *, workspace, precompile: built.append(workspace),
     )
+    monkeypatch.setattr(
+        env_setup,
+        "prepare_workspace_env",
+        lambda adapter, *, workspace, julia_project, sim_name: aligned.append(julia_project),
+    )
 
     monkeypatch.setattr(solver, "_ALIGNED_ENVS", set())
     solver._golden_env(adapter=None, simulator="fresh")
     assert built and not updated
+    assert len(aligned) == 1  # the golden is aligned once after building
 
     manifest = tmp_path / "eval-envs" / "cached" / ".jutul-agent" / "julia-env" / "Manifest.toml"
     manifest.parent.mkdir(parents=True)
@@ -217,6 +225,7 @@ def test_golden_env_realigns_a_cached_env_once_per_run(tmp_path: Path, monkeypat
     solver._golden_env(adapter=None, simulator="cached")
     solver._golden_env(adapter=None, simulator="cached")
     assert len(updated) == 1
+    assert len(aligned) == 2  # fresh + cached, aligned once each, not on the repeat
 
 
 def test_eval_cli_model_defaults_to_the_agent_default() -> None:
@@ -390,7 +399,11 @@ def test_suite_modules_expose_all_tasks_via_tasks_list() -> None:
     from jutul_agent.eval.tasks import battmo, jutuldarcy, mocca
 
     assert [f.__name__ for f in battmo.TASKS] == ["battmo", "battmo_sweep"]
-    assert [f.__name__ for f in jutuldarcy.TASKS] == ["jutuldarcy", "jutuldarcy_rate_change"]
+    assert [f.__name__ for f in jutuldarcy.TASKS] == [
+        "jutuldarcy",
+        "jutuldarcy_rate_change",
+        "jutuldarcy_unit_conversion",
+    ]
     assert [f.__name__ for f in mocca.TASKS] == ["mocca", "mocca_honesty"]
     for factory in (*battmo.TASKS, *jutuldarcy.TASKS, *mocca.TASKS):
         assert factory().dataset

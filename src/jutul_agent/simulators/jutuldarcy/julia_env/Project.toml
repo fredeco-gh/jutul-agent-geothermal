@@ -14,6 +14,12 @@ JutulAgentJutulDarcy = "69df87d8-8b4b-4157-81d2-8b93ff139141"
 JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
 MultiComponentFlash = "35e5bd01-9722-4017-9deb-64a5d32478ff"
 
+# Floor at the release the skills are written against, so a stale env can't drift
+# behind them (it fails to resolve and the drift check prompts a rebuild). 0.3.8
+# adds HYPRE-by-default and `JutulDarcy.CaseValidation`, which the skills rely on.
+[compat]
+JutulDarcy = "0.3.8"
+
 # Both deps are jutul-agent's in-env Julia runtime, declared as relative `[sources]`
 # paths so they survive the copy into a workspace. JutulAgent is the shared,
 # sim-agnostic core (figure capture, ensemble helpers, generic-Makie warm-up) — it

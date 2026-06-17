@@ -15,6 +15,7 @@ from jutul_agent.interfaces.cli._helpers import (
     add_workspace_flags,
     known_packages_map,
 )
+from jutul_agent.julia.threads import THREADS_ENV_VAR
 from jutul_agent.paths import workspace_root
 from jutul_agent.session import (
     default_session_id,
@@ -66,6 +67,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Override the resolved workspace Julia project.",
+    )
+    parser.add_argument(
+        "--threads",
+        default=None,
+        metavar="N",
+        help=(
+            "Julia compute threads for this run: an integer, or 'auto' for all "
+            f"logical cores. Precedence: --threads > ${THREADS_ENV_VAR} > default "
+            "(physical cores minus one). The kernel adds one interactive thread on top."
+        ),
     )
     parser.add_argument(
         "--add-dir",
@@ -272,10 +283,20 @@ async def _run_session(
     state_dir = session_dir(session_id)
     state_dir.mkdir(parents=True, exist_ok=True)
 
+    from jutul_agent.julia.threads import (
+        HYPRE_THREADS_ENV_VAR,
+        blas_thread_env,
+        resolve_compute_threads,
+        resolve_hypre_threads,
+    )
+
+    compute_threads = resolve_compute_threads(args.threads)
+
     print(f"Workspace:     {ws}", file=sys.stderr)
     if resume_id:
         print(f"Resuming:      {session_id}", file=sys.stderr)
     print(f"Julia project: {julia_project}", file=sys.stderr)
+    print(f"Julia threads: {compute_threads} compute + 1 interactive", file=sys.stderr)
     _warn_if_plotting_unavailable()
 
     # On headless Linux, plotting needs a virtual display. We manage Xvfb directly
@@ -284,12 +305,18 @@ async def _run_session(
     from contextlib import ExitStack
 
     with ExitStack() as display_stack:
-        kernel_env = _open_headless_display(display_stack)
+        kernel_env = _open_headless_display(display_stack) or {}
+        # Reserve BLAS so N compute threads don't oversubscribe (sparse solves don't
+        # need threaded BLAS); merged over any DISPLAY the headless path set.
+        kernel_env = {**kernel_env, **blas_thread_env(compute_threads)}
+        # HYPRE's own (OpenMP) thread count; read by the warm-up snippet.
+        kernel_env[HYPRE_THREADS_ENV_VAR] = str(resolve_hypre_threads())
         kernel_config = KernelConfig(
             julia_project=julia_project,
             stderr_file=state_dir / "julia-startup.log",
             cwd=ws,
-            env=kernel_env,
+            env=kernel_env or None,
+            threads=str(compute_threads),
         )
         try:
             return await _run_with_backend(
@@ -539,7 +566,7 @@ def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
     never breaks startup, and the task is cancelled on session teardown.
     """
 
-    from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP
+    from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP, HYPRE_THREADS_SETUP
 
     loads = ["try; @eval using JutulAgent; catch; end"]
     if warm_package:
@@ -549,6 +576,9 @@ def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
     async def _run_warmup() -> None:
         with contextlib.suppress(Exception):
             await julia.eval(bootstrap)
+        # After the warm packages load, set HYPRE's thread count before the first solve.
+        with contextlib.suppress(Exception):
+            await julia.eval(HYPRE_THREADS_SETUP)
         with contextlib.suppress(Exception):
             await julia.eval(GL_CONTEXT_WARMUP)
 

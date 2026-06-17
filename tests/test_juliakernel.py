@@ -295,8 +295,11 @@ async def test_interrupt_survives_and_recovers() -> None:
 async def test_cancelled_eval_interrupts_and_preserves_state() -> None:
     """Cancelling a running eval interrupts it and keeps the session + state alive.
 
-    Instead of restarting Julia (losing packages and variables), the kernel SIGINTs
-    the eval and drains its result frame, so the process stays in protocol sync.
+    Instead of restarting Julia (losing packages and variables), the kernel
+    soft-interrupts the eval and drains its result frame, so the process stays in
+    protocol sync. POSIX uses SIGINT; Windows uses CTRL_BREAK to the kernel's
+    process group, which Julia (exit_on_sigint=false) turns into the same
+    catchable InterruptException.
     """
     async with JuliaKernel(KernelConfig()) as k:
         await k.eval("kept = 123")  # state that must survive the cancel

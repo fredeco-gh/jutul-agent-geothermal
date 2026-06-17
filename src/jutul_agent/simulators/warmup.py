@@ -25,3 +25,24 @@ GL_CONTEXT_WARMUP = """try
 catch
 end
 """
+
+# Pin HYPRE's OpenMP thread count for this session. JutulDarcy loads HYPRE (its
+# default CPR preconditioner) and lazily calls `HYPRE.Init()` with one thread at the
+# first solve. We look up the loaded HYPRE module by UUID — so this is a no-op for a
+# simulator that doesn't pull HYPRE in, and needs no env-level dependency — then
+# `Init()` (idempotent: the later lazy Init is a no-op) and `SetNumThreads` to the
+# count Python computed (`JUTUL_AGENT_HYPRE_THREADS`). HYPRE clamps it to
+# [1, Sys.CPU_THREADS] internally. Best-effort: any failure leaves HYPRE's
+# single-threaded default. ``run._start_warmup`` runs this after the warm packages.
+HYPRE_THREADS_SETUP = """try
+    let n = tryparse(Int, get(ENV, "JUTUL_AGENT_HYPRE_THREADS", ""))
+        hypre = get(Base.loaded_modules,
+            Base.PkgId(Base.UUID("b5ffcf37-a2bd-41ab-a3da-4bd9bc8ad771"), "HYPRE"), nothing)
+        if n !== nothing && n >= 1 && hypre !== nothing
+            hypre.Init()
+            hypre.SetNumThreads(n)
+        end
+    end
+catch
+end
+"""

@@ -268,6 +268,7 @@ class TUIApp(App[None]):
         self._turn_runner = TurnRunner(agent, thread_id=session.session_id, trace=session.trace)
         self._turn_worker: Any = None
         self._cancel_requested = False
+        self._cancel_rendered = False
         self._julia_running_on_cancel = False
         self._pending_interrupts: list[TurnInterrupt] = []
         self._tool_blocks: list[ToolBlock] = []
@@ -488,6 +489,7 @@ class TUIApp(App[None]):
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
+        self._cancel_rendered = False
         self._turn_worker = self.run_worker(self._run_compaction(), exclusive=True, name="turn")
 
     async def _run_compaction(self) -> None:
@@ -795,6 +797,7 @@ class TUIApp(App[None]):
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
+        self._cancel_rendered = False
         self._julia_running_on_cancel = False
 
         await self._mount_welcome_if_empty()
@@ -1176,6 +1179,13 @@ class TUIApp(App[None]):
             await self._finish_turn()
 
     async def _render_turn_cancelled(self) -> None:
+        # One cancel propagates CancelledError up through every nested
+        # _resume_turn/_run_turn in an auto-approve chain, and each would render.
+        # Render only the first (it carries the Julia-running detail, before the
+        # inner _finish_turn clears the flag); swallow the rest.
+        if self._cancel_rendered:
+            return
+        self._cancel_rendered = True
         await self._flush_stream()
         await self._mark_running_tools_cancelled()
         self._reset_approval_state()
@@ -1522,6 +1532,7 @@ class TUIApp(App[None]):
         self._prompt.disabled = True
         self._busy = True
         self._cancel_requested = False
+        self._cancel_rendered = False
         self._julia_running_on_cancel = False
         await self._preview_pending_decision(decision)
         self._set_status("resuming…")

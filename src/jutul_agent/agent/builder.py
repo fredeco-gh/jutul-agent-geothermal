@@ -50,6 +50,7 @@ from jutul_agent.agent.tools import (
     make_reset_julia_tool,
     make_write_report_tool,
 )
+from jutul_agent.agent.windows_paths import enable_windows_real_paths
 from jutul_agent.models import PROVIDERS, provider_of
 from jutul_agent.paths import SHARED_SKILLS_DIR, workspace_memory_dir, workspace_root
 from jutul_agent.session import Session
@@ -356,6 +357,9 @@ def build_agent(
     """
 
     register_provider_profiles()
+    # The file tools run on real paths; on Windows, let deepagents' path validation
+    # accept real ``C:\\...`` paths instead of rejecting them as "not virtual".
+    enable_windows_real_paths()
 
     memory_dir = ensure_memory_dir(session.memory_dir(workspace_memory=workspace_memory_dir()))
     backend = build_backend(

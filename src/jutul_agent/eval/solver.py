@@ -158,9 +158,21 @@ def _golden_env(adapter: Any, simulator: str) -> Path:
     after a new release. On its first use in a run, a cached env is therefore
     re-resolved against the registry (``update_env``); if that fails, the run
     fails rather than grade a misaligned environment.
+
+    The golden is then brought fully current once with ``prepare_workspace_env``
+    (the normal launch reconcile): the in-env JutulAgent runtime is refreshed and
+    marked, and the env precompiled. Without this, a golden whose warm-source
+    marker is stale (e.g. cached before the runtime changed) makes *every*
+    per-sample copy re-copy the runtime and re-bake the env — turning a one-time
+    cost into a per-sample one. Aligning the golden lets each copy's reconcile be
+    the intended cheap no-op.
     """
     from jutul_agent.paths import state_home
-    from jutul_agent.simulators.env_setup import bootstrap_workspace, update_env
+    from jutul_agent.simulators.env_setup import (
+        bootstrap_workspace,
+        prepare_workspace_env,
+        update_env,
+    )
 
     golden = state_home() / "eval-envs" / simulator
     env = golden / ".jutul-agent" / "julia-env"
@@ -169,6 +181,8 @@ def _golden_env(adapter: Any, simulator: str) -> Path:
         bootstrap_workspace(adapter, workspace=golden, precompile=True)
     elif simulator not in _ALIGNED_ENVS:
         update_env(env)
+    if simulator not in _ALIGNED_ENVS:
+        prepare_workspace_env(adapter, workspace=golden, julia_project=env, sim_name=simulator)
     _ALIGNED_ENVS.add(simulator)
     return env
 

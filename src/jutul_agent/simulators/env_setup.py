@@ -28,8 +28,11 @@ from jutul_agent.workspace import (
     env_precompile_is_current,
     env_template_drifted,
     mark_env_precompiled,
+    mark_warm_source,
+    recopy_warm_sources,
     resolve_julia_project,
     sync_julia_env_with_template,
+    warm_source_is_current,
     workspace_is_simulator_source,
     write_env_template_stamp,
 )
@@ -372,6 +375,7 @@ def prepare_workspace_env(
             _rebuild_managed_env(adapter, workspace, sim_name, reason=f"was built for {foreign}")
             return
         _sync_workspace_env(adapter, workspace, julia_project, sim_name)
+        _refresh_warm_sources(adapter, workspace, julia_project, sim_name)
 
     _ensure_simulator_installed(adapter, workspace, julia_project, sim_name)
     _ensure_env_warmed(workspace, julia_project, sim_name)
@@ -476,6 +480,45 @@ def _sync_workspace_env(
             f"         (cause: {exc})",
             file=sys.stderr,
         )
+
+
+def _refresh_warm_sources(
+    adapter: SimulatorAdapter,
+    ws: Path,
+    julia_project: Path,
+    sim_name: str | None,
+) -> None:
+    """Re-copy the in-env JutulAgent runtime when the install's source has changed.
+
+    The warm packages are dev-pathed copies, only laid down at bootstrap, so after
+    a jutul-agent update an existing managed env keeps the old JutulAgent until a
+    manual rebuild. We detect that by fingerprint, re-copy the packages, and
+    re-resolve so a new in-package dependency installs; the bake re-runs in
+    :func:`_ensure_env_warmed` because the re-copy dropped the precompile marker.
+    The env is marked current only after a successful resolve, so a conflict (which
+    we warn about and launch through) retries next launch.
+    """
+
+    template = adapter.julia_env_template_path
+    if warm_source_is_current(julia_project, template):
+        return
+    if not recopy_warm_sources(julia_project, template):
+        return  # user-owned env (no [sources]); nothing to refresh
+
+    print("Updating the in-env JutulAgent runtime (jutul-agent was updated)…", flush=True)
+    try:
+        resolve_and_instantiate(julia_project, precompile=False, capture=True)
+    except EnvSetupError as exc:
+        rebuild = "jutul-agent init --force --precompile"
+        if sim_name:
+            rebuild += f" --sim {sim_name}"
+        print(
+            f"warning: could not refresh the JutulAgent runtime ({exc}). The agent "
+            f"will start on the previous copy; rebuild cleanly with: {rebuild}",
+            file=sys.stderr,
+        )
+        return
+    mark_warm_source(julia_project, template)
 
 
 def _ensure_simulator_installed(

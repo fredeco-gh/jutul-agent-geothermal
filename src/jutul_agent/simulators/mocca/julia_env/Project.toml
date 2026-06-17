@@ -12,6 +12,12 @@ JutulAgent = "79b12aa6-73c9-4fa8-9c54-e97745f42687"
 JutulAgentMocca = "118bae70-9d54-4e00-8665-eefd5efc28fa"
 Mocca = "eb14e3ba-90c8-11ed-0ecf-1dd2ea0d109c"
 
+# Floor at the release the skills are written against, so a stale env can't drift
+# behind them (it fails to resolve and the drift check prompts a rebuild). Bump it
+# when the skills are updated for a newer Mocca.
+[compat]
+Mocca = "0.1.0"
+
 # Both deps are jutul-agent's in-env Julia runtime, declared as relative `[sources]`
 # paths so they survive the copy into a workspace. JutulAgent is the shared,
 # sim-agnostic core (figure capture, ensemble helpers, generic-Makie warm-up) — it

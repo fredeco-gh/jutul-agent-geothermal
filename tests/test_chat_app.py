@@ -412,6 +412,25 @@ async def test_ctrl_c_disarm_resets_after_window(session: Session, monkeypatch) 
         assert app._quit_armed is False
 
 
+async def test_turn_cancelled_renders_once(session: Session) -> None:
+    """One cancel renders one 'Turn cancelled' note, even though the CancelledError
+    propagates through each nested _resume_turn/_run_turn in an auto-approve chain."""
+    app = TUIApp(agent=_stub_agent(), session=session)
+    async with app.run_test():
+        await wait_until_ready(app)
+        app._cancel_rendered = False
+        app._julia_running_on_cancel = False
+        # Simulate the error bubbling up through four nested except handlers.
+        for _ in range(4):
+            await app._render_turn_cancelled()
+        notes = [
+            b
+            for b in app.query(MessageBlock)
+            if b.border_title == "System" and b.content_text.startswith("Turn cancelled")
+        ]
+        assert len(notes) == 1
+
+
 async def test_ctrl_c_interrupts_running_turn(session: Session, monkeypatch) -> None:
     app = TUIApp(agent=_stub_agent(), session=session)
     async with app.run_test():
