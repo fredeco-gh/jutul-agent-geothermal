@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deepagents.backends import FilesystemBackend
-
-from fakes import make_fake_adapter
 from jutul_agent.agent.builder import build_backend
 from jutul_agent.agent.memory import (
     MEMORY_INDEX_FILENAME,
-    MEMORY_ROUTE,
     ensure_memory_dir,
     make_remember_tool,
 )
@@ -41,16 +37,26 @@ def test_ensure_memory_dir_seeds_index_once(tmp_path: Path) -> None:
     assert index.read_text(encoding="utf-8") == "# customized\n"
 
 
-def test_build_backend_mounts_memory_route(tmp_path: Path) -> None:
-    adapter = make_fake_adapter(tmp_path)
+def test_memory_is_read_and_written_at_its_real_path(tmp_path: Path) -> None:
+    # Memory is real files the agent reads and edits at their real path
+    # (and the user can open them directly).
     memory_dir = ensure_memory_dir(tmp_path / "memory")
+    backend = build_backend(workspace=tmp_path)
 
-    backend = build_backend(adapter, workspace=tmp_path, memory_dir=memory_dir)
+    index = str(memory_dir / MEMORY_INDEX_FILENAME)
+    assert "Memory index" in (backend.read(index).file_data or {}).get("content", "")
+    assert backend.write(str(memory_dir / "note.md"), "hi").error is None
+    assert (memory_dir / "note.md").read_text(encoding="utf-8") == "hi"
 
-    assert MEMORY_ROUTE in backend.routes
-    route_backend = backend.routes[MEMORY_ROUTE]
-    assert isinstance(route_backend, FilesystemBackend)
-    assert route_backend.cwd == memory_dir.resolve()
+
+def test_memory_middleware_builds_over_the_real_dir(tmp_path: Path) -> None:
+    from deepagents.middleware.memory import MemoryMiddleware
+
+    from jutul_agent.agent.memory import build_memory_middleware
+
+    memory_dir = ensure_memory_dir(tmp_path / "memory")
+    backend = build_backend(workspace=tmp_path)
+    assert isinstance(build_memory_middleware(backend, memory_dir), MemoryMiddleware)
 
 
 async def test_remember_writes_note_and_indexes_it(tmp_path: Path) -> None:

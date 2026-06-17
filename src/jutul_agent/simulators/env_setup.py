@@ -86,9 +86,9 @@ def project_has_package(julia_project: Path, package: str) -> bool:
 
 # One tab-separated "JPKG" line per resolved package: name, on-disk source dir,
 # and whether it is a `Pkg.develop` checkout (writable) rather than a registry
-# install. The single source of the enumeration protocol; run through a Julia
-# subprocess here and through the live kernel by the /packages/ backend. The
-# JPKG tag lets the parser skip any unrelated output interleaved on stdout.
+# install. Run through a Julia subprocess to resolve installed sources without
+# loading them; the JPKG tag lets the parser skip any unrelated output
+# interleaved on stdout.
 ENUMERATE_PACKAGES_CODE = (
     "import Pkg\n"
     "for (_u, _i) in Pkg.dependencies()\n"
@@ -122,11 +122,10 @@ def resolve_env_package_sources(julia_project: Path) -> dict[str, tuple[Path, bo
 
     Enumerates ``Pkg.dependencies()`` (reads the manifest, no loading/compiling)
     so the agent can browse the simulator, its dependencies, and anything it
-    later installs under ``/packages/<Package>/``. Returns ``{name: (source_dir,
-    is_dev)}`` where ``is_dev`` marks a ``Pkg.develop`` checkout (mounted
-    writable). Best-effort: an unresolved manifest, missing Julia, or a vanished
-    path yields ``{}``; ``PackageMounts`` re-enumerates through the live kernel
-    once the env resolves.
+    later installs at their real ``pkgdir`` paths. Returns ``{name: (source_dir,
+    is_dev)}`` where ``is_dev`` marks a ``Pkg.develop`` checkout (writable).
+    Best-effort: an unresolved manifest, missing Julia, or a vanished path
+    yields ``{}``.
     """
 
     if shutil.which("julia") is None:

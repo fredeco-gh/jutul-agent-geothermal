@@ -19,7 +19,7 @@ fixing mistakes and refining the next run.</p>
 <div class="ja-terminal">
 <div class="ja-terminal-bar"><span></span><span></span><span></span>
 <div class="ja-terminal-title">jutul-agent · my-battery-run</div></div>
-<pre><code><span class="ja-t-dim">$</span> uv run jutul-agent
+<pre><code><span class="ja-t-dim">$</span> jutul-agent
 <span class="ja-t-prompt">&gt;</span> Set up a constant-current discharge for the
   chen_2020 cell and plot the voltage curve.
 
@@ -48,7 +48,7 @@ fixing mistakes and refining the next run.</p>
     ---
 
     The component map and the pieces behind it: the persistent Julia
-    kernel, the virtual filesystem, memory, context, and the trace.
+    kernel, the filesystem, memory, context, and the trace.
 
     [:octicons-arrow-right-24: Architecture](architecture.md) ·
     [Turns](turns.md) ·

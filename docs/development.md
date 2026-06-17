@@ -19,7 +19,7 @@ when those change. The `eval` extra adds Inspect AI for the bench.
 
 ```
 src/jutul_agent/
-  paths.py         install / workspace / state-home anchors, virtual-path policy
+  paths.py         install / workspace / state-home anchors, path-resolution policy
   workspace.py     config loader, simulator auto-detect, env bootstrap helpers
   session.py       Session: the unit of one invocation
   models.py        provider metadata, model catalog

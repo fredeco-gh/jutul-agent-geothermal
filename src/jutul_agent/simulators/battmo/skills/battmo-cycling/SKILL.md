@@ -20,11 +20,11 @@ cell_parameters = load_cell_parameters(; from_default_set = "chen_2020")
 ```
 
 To enumerate other default sets that ship with your installed version,
-search the mounted source with the file tools:
+search the installed source with the file tools (path is `pkgdir(BattMo)`):
 
 ```text
-grep("from_default_set", path="/packages/BattMo/src")
-read_file("/packages/BattMo/examples/beginner_tutorials/5_create_parameter_sets.jl")
+grep("from_default_set", path="/.../BattMo/src")
+read_file("/.../BattMo/examples/beginner_tutorials/5_create_parameter_sets.jl")
 ```
 
 Edit a loaded parameter set as a dictionary-like structure before passing it

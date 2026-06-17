@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,7 @@ from deepagents import (
     create_deep_agent,
     register_harness_profile,
 )
-from deepagents.backends import CompositeBackend, FilesystemBackend
+from deepagents.backends import CompositeBackend
 
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
 from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
@@ -38,10 +39,8 @@ from jutul_agent.agent.memory import (
     build_memory_middleware,
     ensure_memory_dir,
     make_remember_tool,
-    memory_backend_route,
 )
 from jutul_agent.agent.mounts import mount_dir
-from jutul_agent.agent.packages_backend import PackageMounts, PackagesBackend, PackageSource
 from jutul_agent.agent.prompts import assemble_session_prompt
 from jutul_agent.agent.recovery import InvalidToolCallRecoveryMiddleware
 from jutul_agent.agent.summarization import build_summarization_middleware
@@ -56,17 +55,27 @@ from jutul_agent.paths import SHARED_SKILLS_DIR, workspace_memory_dir, workspace
 from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import TraceRecorder
-from jutul_agent.workspace import resolve_julia_project
 
 __all__ = ["PackageSource", "build_agent", "build_backend", "resolve_model"]
 
 DEFAULT_MODEL = "openai:gpt-5.4-mini"
 MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
 
-_SHARED_SKILLS_ROUTE = "/skills/shared/"
-_SIMULATOR_SKILLS_ROUTE = "/skills/simulator/"
-_SESSION_ROUTE = "/session/"
-_PACKAGES_ROUTE = "/packages/"
+
+@dataclass(frozen=True)
+class PackageSource:
+    """An installed Julia package's real source dir and write policy.
+
+    Records where a package the active environment resolves lives on disk
+    (found with ``pkgdir``) and whether the agent may write there. ``writable``
+    is set only for a ``Pkg.develop`` checkout; a registry install in the shared
+    depot stays read-only, and ``build_backend`` uses the read-only ones to
+    guard depot writes.
+    """
+
+    name: str
+    path: Path
+    writable: bool = False
 
 
 _provider_profiles_registered = False
@@ -254,55 +263,57 @@ def _resolve_model_for_agent(model: Any) -> Any:
     return model
 
 
+def _depot_readonly_roots(
+    package_sources: Sequence[PackageSource] | None,
+) -> tuple[Path, ...]:
+    """Real directories the agent must not write into: the shared Julia depot.
+
+    Registry package source (``writable=False``) lives under a depot
+    ``.../packages/`` directory that is shared across projects; editing it would
+    corrupt other projects, so writes there are refused. We guard the whole
+    ``packages`` ancestor (so a package the agent ``Pkg.add``s mid-session is
+    covered too), and never a ``Pkg.develop`` checkout, which lives outside the
+    depot and stays writable. Reads/greps are unaffected.
+    """
+    roots: set[Path] = set()
+    for src in package_sources or ():
+        if src.writable:
+            continue
+        path = Path(src.path).resolve()
+        depot_packages = next((p for p in (path, *path.parents) if p.name == "packages"), path)
+        roots.add(depot_packages)
+    return tuple(sorted(roots))
+
+
 def build_backend(
-    adapter: SimulatorAdapter,
     *,
     workspace: Path | None = None,
-    memory_dir: Path | None = None,
-    session_dir: Path | None = None,
     package_sources: Sequence[PackageSource] | None = None,
     mounted_dirs: Sequence[str | Path] | None = None,
 ) -> CompositeBackend:
-    """Mount the workspace plus the skill, memory, session, and package routes.
+    """The agent's filesystem: one real-path backend over the workspace.
 
-    The shell default is rooted at ``workspace`` (defaults to
-    ``workspace_root()``). Skill markdown is mounted under ``/skills/shared/`` and
-    ``/skills/simulator/``, the per-workspace memory dir at ``/memory/``, and the
-    live session state read-only at ``/session/`` when ``session_dir`` is set.
-    When ``package_sources`` is given, a ``/packages/`` :class:`PackagesBackend`
-    exposes one ``/packages/<name>/`` sub-route per package. Any ``mounted_dirs``
-    are added writable under ``/dirs/<name>/`` (see ``agent.mounts``).
+    The workspace is rooted at ``workspace`` (defaults to ``workspace_root()``)
+    and runs in real-path mode, so a relative path resolves against it and an
+    absolute path as itself, the same file the shell and the Julia REPL see.
+    Package source, skills, memory, and added folders are all read and written
+    at their real paths through this backend.
+    Writes into the shared Julia depot (registry ``package_sources``) are refused
+    so the agent can study installed source but not corrupt it. ``mounted_dirs``
+    are validated and recorded (see ``agent.mounts``), and the agent uses their
+    real paths. The composite wrapper carries the recursive-grep fix and an (empty)
+    route table the live session can still extend.
     """
-
-    routes: dict[str, Any] = {}
-    if SHARED_SKILLS_DIR.exists():
-        routes[_SHARED_SKILLS_ROUTE] = FilesystemBackend(
-            root_dir=SHARED_SKILLS_DIR, virtual_mode=True
-        )
-    if adapter.skills_dir.exists():
-        routes[_SIMULATOR_SKILLS_ROUTE] = FilesystemBackend(
-            root_dir=adapter.skills_dir, virtual_mode=True
-        )
-    if memory_dir is not None:
-        route, backend = memory_backend_route(memory_dir)
-        routes[route] = backend
-    if session_dir is not None:
-        routes[_SESSION_ROUTE] = FilesystemBackend(root_dir=session_dir, virtual_mode=True)
-    if package_sources is not None:
-        # One /packages/ route whose sub-routes mirror the active env; seeded
-        # with the simulator packages here and refreshed by PackageMounts when the env changes.
-        packages_backend = PackagesBackend()
-        packages_backend.set_packages(package_sources)
-        routes[_PACKAGES_ROUTE] = packages_backend
 
     ws = workspace or workspace_root()
     backend = RecursiveGrepBackend(
         default=WorkspaceShellBackend(
             root_dir=ws,
-            virtual_mode=True,
+            virtual_mode=False,
             inherit_env=True,
+            readonly_roots=_depot_readonly_roots(package_sources),
         ),
-        routes=routes,
+        routes={},
     )
     for raw in mounted_dirs or ():
         mount_dir(backend, raw, workspace=ws)
@@ -310,13 +321,19 @@ def build_backend(
 
 
 def skill_sources(adapter: SimulatorAdapter) -> list[str | tuple[str, str]]:
-    """Skill sources for `SkillsMiddleware`, with explicit labels."""
+    """Skill sources for ``SkillsMiddleware``: the real skill directories.
+
+    Bundled skills ship with the package (so they resolve at a real path even
+    from a pip install, no repo checkout needed). The middleware reads their
+    ``SKILL.md`` through the real-path backend. Labels are explicit. This is the
+    seam for user/project skills later (append their real dirs, last wins).
+    """
 
     sources: list[str | tuple[str, str]] = []
     if SHARED_SKILLS_DIR.exists():
-        sources.append((_SHARED_SKILLS_ROUTE, "Built-in"))
+        sources.append((str(SHARED_SKILLS_DIR), "Built-in"))
     if adapter.skills_dir.exists():
-        sources.append((_SIMULATOR_SKILLS_ROUTE, adapter.display_name))
+        sources.append((str(adapter.skills_dir), adapter.display_name))
     return sources
 
 
@@ -342,27 +359,12 @@ def build_agent(
 
     memory_dir = ensure_memory_dir(session.memory_dir(workspace_memory=workspace_memory_dir()))
     backend = build_backend(
-        session.simulator,
-        memory_dir=memory_dir,
-        session_dir=session.state_dir,
         package_sources=package_sources,
         mounted_dirs=mounted_dirs,
     )
 
-    # Keep /packages/ in sync with the env: refreshed after each julia_eval so a
-    # package installed via `Pkg.add` becomes browsable under /packages/<Pkg>/.
-    package_mounts: PackageMounts | None = None
-    packages_backend = backend.routes.get(_PACKAGES_ROUTE)
-    if isinstance(packages_backend, PackagesBackend):
-        package_mounts = PackageMounts(
-            packages_backend,
-            session.julia,
-            resolve_julia_project(workspace_root()),
-            seed=package_sources or (),
-        )
-
     tools = [
-        make_julia_eval_tool(session, package_mounts=package_mounts),
+        make_julia_eval_tool(session),
         make_reset_julia_tool(session),
         make_julia_plot_tool(session),
         make_recapture_tool(session),
@@ -387,6 +389,7 @@ def build_agent(
             session.simulator,
             open_windows=session.open_windows,
             resumed=session.resumed,
+            workspace=workspace_root(),
         ),
         skills=skill_sources(session.simulator),
         subagents=subagents,
@@ -396,7 +399,7 @@ def build_agent(
         middleware=[
             m
             for m in (
-                build_memory_middleware(backend),
+                build_memory_middleware(backend, memory_dir),
                 build_summarization_middleware(
                     resolved_model,
                     model_id=model_spec if isinstance(model_spec, str) else None,

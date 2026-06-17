@@ -362,16 +362,14 @@ def _warn_if_plotting_unavailable() -> None:
 
 
 async def _resolve_package_sources(julia_project: Path) -> list[Any]:
-    """Resolve the source dirs to mount under ``/packages/`` for this session.
+    """Resolve the installed package source dirs for this session.
 
-    Enumerates every package the environment resolves so the agent can browse
-    the simulator, its dependencies, and anything it installs at
-    ``/packages/<Package>/``. It is fully populated before the first turn. A
-    ``Pkg.develop`` checkout is mounted writable (the agent can edit it);
-    registry installs stay read-only. Resolution is one fast, no-compile Julia
-    call run off the event loop. If it can't run (e.g. an unresolved manifest),
-    ``PackageMounts`` re-enumerates through the live kernel after each REPL
-    call and fills the routes in as soon as the env resolves.
+    Enumerates every package the environment resolves so the read-only guard
+    knows which depot paths to protect; the agent reads them at their real
+    ``pkgdir`` paths. A ``Pkg.develop`` checkout stays writable; registry
+    installs are read-only. Resolution is one fast, no-compile Julia call run
+    off the event loop, done once at session start; an unresolved manifest
+    yields an empty set.
     """
 
     from jutul_agent.agent.builder import PackageSource
@@ -494,12 +492,12 @@ async def _run_with_backend(
                 if backend is not None:
                     if package_sources:
                         writable = [src.name for src in package_sources if src.writable]
-                        summary = f"Packages: {len(package_sources)} mounted under /packages/"
+                        summary = f"Packages: {len(package_sources)} installed (read-only source)"
                         if writable:
-                            summary += f" ({len(writable)} writable dev: {', '.join(writable)})"
+                            summary += f"; writable dev checkout(s): {', '.join(writable)}"
                         print(summary, file=sys.stderr)
                     for mount in mounted_dirs(backend):
-                        print(f"Added folder:  {mount.path} -> {mount.route}", file=sys.stderr)
+                        print(f"Added folder:  {mount.path}", file=sys.stderr)
                 if args.prompt:
                     if agent is None:
                         print(

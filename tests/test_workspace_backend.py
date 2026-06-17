@@ -1,10 +1,8 @@
-"""Tests for the read-only package-source backend and its ``/packages/`` mounts.
+"""Tests for the workspace backend: real paths, the depot write-guard, and grep.
 
-Installed package source (the simulator plus the Jutul-stack packages it builds
-on) is mounted under ``/packages/<Package>/`` so the agent can read and grep
-examples/source with the normal file tools. Registry packages live in the
-shared Julia depot and must not be edited; the mount is read-only there and
-writable only for a ``Pkg.develop`` checkout the user owns.
+The agent's filesystem is real paths; installed package source in the shared
+Julia depot is read-only (writes refused), a ``Pkg.develop`` checkout is
+writable, and a type-filtered grep recurses into subdirectories.
 """
 
 from __future__ import annotations
@@ -13,10 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from fakes import make_fake_adapter
-from jutul_agent.agent.backend import ReadOnlyFilesystemBackend, WorkspaceShellBackend
+from jutul_agent.agent.backend import WorkspaceShellBackend
 from jutul_agent.agent.builder import PackageSource, build_backend
-from jutul_agent.agent.packages_backend import PackagesBackend
 
 
 @pytest.fixture
@@ -27,101 +23,88 @@ def source_dir(tmp_path: Path) -> Path:
     return pkg
 
 
-def test_read_only_backend_reads(source_dir: Path) -> None:
-    backend = ReadOnlyFilesystemBackend(root_dir=source_dir, virtual_mode=True)
-    result = backend.read("/examples/demo.jl")
-    assert result.error is None
-    assert result.file_data is not None
-
-
-def test_read_only_backend_refuses_write(source_dir: Path) -> None:
-    backend = ReadOnlyFilesystemBackend(root_dir=source_dir, virtual_mode=True)
-    result = backend.write("/examples/new.jl", "x = 1")
-    assert result.error is not None
-    assert "read-only" in result.error
-    assert not (source_dir / "examples" / "new.jl").exists()
-
-
-def test_read_only_backend_refuses_edit(source_dir: Path) -> None:
-    backend = ReadOnlyFilesystemBackend(root_dir=source_dir, virtual_mode=True)
-    result = backend.edit("/examples/demo.jl", "1", "2")
-    assert result.error is not None
-    assert "read-only" in result.error
-    assert "println(1)" in (source_dir / "examples" / "demo.jl").read_text(encoding="utf-8")
-
-
-async def test_read_only_backend_async_write_also_refused(source_dir: Path) -> None:
-    backend = ReadOnlyFilesystemBackend(root_dir=source_dir, virtual_mode=True)
-    result = await backend.awrite("/examples/new.jl", "x = 1")
-    assert result.error is not None
-
-
-def test_workspace_backend_real_absolute_path_resolves_to_real_file(tmp_path: Path) -> None:
-    # The agent often reuses a file's real absolute path (e.g. from pwd()/Julia).
-    # Plain virtual_mode would re-root it into a phantom <ws>/<abs> tree; here it
-    # must map to the real file so the file tools and the REPL agree.
+def test_workspace_backend_relative_and_absolute_resolve_to_the_same_file(tmp_path: Path) -> None:
+    # Real-path mode (as production runs it): a relative path resolves against
+    # the workspace and the file's absolute path resolves to itself — the same
+    # file the REPL and execute see, with no phantom <ws>/<abs> re-rooting.
     ws = tmp_path.resolve()
-    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=False, inherit_env=True)
 
-    backend.write(str(ws / "model.jl"), "x = 1\n")
+    backend.write("model.jl", "x = 1\n")
     assert (ws / "model.jl").read_text() == "x = 1\n"
-    # No phantom copy mirroring the absolute path was created: the only model.jl
-    # under the workspace is the one at its root.
-    assert list(ws.rglob("model.jl")) == [ws / "model.jl"]
-
-    # Real-absolute, virtual-absolute, and relative paths read the same file.
-    for key in (str(ws / "model.jl"), "/model.jl", "model.jl"):
+    # The relative path and the file's real absolute path read the same file.
+    for key in ("model.jl", str(ws / "model.jl")):
         result = backend.read(key)
         assert result.error is None
         assert "x = 1" in result.file_data["content"]
 
 
-def test_workspace_backend_virtual_paths_still_nest(tmp_path: Path) -> None:
+def test_workspace_backend_nests_relative_subdirs(tmp_path: Path) -> None:
     ws = tmp_path.resolve()
-    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
-    backend.write("/sub/dir/a.jl", "y = 2\n")
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=False, inherit_env=True)
+    backend.write("sub/dir/a.jl", "y = 2\n")
     assert (ws / "sub" / "dir" / "a.jl").read_text() == "y = 2\n"
 
 
-def test_workspace_backend_rejects_out_of_workspace_absolute(tmp_path: Path) -> None:
-    # The agent sometimes writes to a real host path thinking the file tools see
-    # the real filesystem; that must error, not silently make a phantom tree.
+def test_workspace_backend_absolute_path_writes_the_real_file(tmp_path: Path) -> None:
+    # In real-path mode an absolute path is honored as itself (no workspace-only
+    # restriction, no phantom): the file tools behave like the real filesystem,
+    # matching execute and julia_eval.
     ws = tmp_path.resolve()
-    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=True, inherit_env=True)
+    backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=False, inherit_env=True)
 
-    # A real absolute path outside the workspace (a sibling of it). Cross-platform:
-    # it carries a drive on Windows and a real top-level dir on POSIX.
-    outside = tmp_path.parent / "model.jl"
-    res = backend.write(str(outside), "x = 1")
-    assert res.error is not None
-    assert "outside the workspace" in res.error
-    assert not outside.exists()  # nothing written
-
-    ed = backend.edit(str(outside), "x", "y")
-    assert ed.error is not None
-    assert "outside the workspace" in ed.error
-
-    # A plain virtual path (maps under the workspace) is still fine.
-    ok = backend.write("/model.jl", "x = 1")
-    assert ok.error is None
-    assert (ws / "model.jl").exists()
+    target = ws / "nested" / "model.jl"
+    res = backend.write(str(target), "x = 1\n")
+    assert res.error is None
+    assert target.read_text() == "x = 1\n"
+    # Exactly one file was created, at the real absolute path (no re-rooted copy).
+    assert list(ws.rglob("model.jl")) == [target]
 
 
-def test_build_backend_mounts_package_source_read_only(tmp_path: Path, source_dir: Path) -> None:
-    adapter = make_fake_adapter(tmp_path)
+def test_registry_package_source_is_read_only_at_its_real_path(
+    tmp_path: Path, source_dir: Path
+) -> None:
+    # Registry source lives in the shared depot: the agent reads/greps it at its
+    # real path, but writes are refused so it can't corrupt the depot.
     backend = build_backend(
-        adapter,
         workspace=tmp_path,
         package_sources=[PackageSource(name="BattMo", path=source_dir)],
     )
+    assert backend.read(str(source_dir / "examples" / "demo.jl")).error is None
+    write = backend.write(str(source_dir / "examples" / "x.jl"), "y")
+    assert write.error is not None
+    assert "read-only" in write.error
+    assert not (source_dir / "examples" / "x.jl").exists()
 
-    pkgs = backend.routes["/packages/"]
-    assert isinstance(pkgs, PackagesBackend)
-    assert pkgs.package_names() == ["BattMo"]
-    # readable through the composite
-    assert backend.read("/packages/BattMo/examples/demo.jl").error is None
-    # not writable (registry install)
-    assert backend.write("/packages/BattMo/examples/x.jl", "y").error is not None
+
+def test_developed_source_outside_the_depot_is_writable(tmp_path: Path, source_dir: Path) -> None:
+    # A Pkg.develop checkout (writable=True) is not a read-only root, so the
+    # agent can edit it at its real path.
+    backend = build_backend(
+        workspace=tmp_path,
+        package_sources=[PackageSource(name="BattMo", path=source_dir, writable=True)],
+    )
+    result = backend.write(str(source_dir / "examples" / "x.jl"), "y = 1")
+    assert result.error is None
+    assert (source_dir / "examples" / "x.jl").read_text(encoding="utf-8") == "y = 1"
+
+
+def test_depot_readonly_roots_guard_the_packages_dir(tmp_path: Path) -> None:
+    from jutul_agent.agent.builder import _depot_readonly_roots
+
+    depot = tmp_path / ".julia" / "packages"
+    registry = depot / "JutulDarcy" / "abc123"
+    dev = tmp_path / "dev" / "MyPkg"
+    # A registry source guards the whole depot `packages` dir (so a mid-session
+    # Pkg.add is covered); a dev checkout is excluded; no sources -> nothing.
+    roots = _depot_readonly_roots(
+        [
+            PackageSource(name="JutulDarcy", path=registry, writable=False),
+            PackageSource(name="MyPkg", path=dev, writable=True),
+        ]
+    )
+    assert roots == (depot,)
+    assert _depot_readonly_roots(None) == ()
 
 
 def test_recursive_glob_normalizes_bare_extension() -> None:
@@ -142,69 +125,16 @@ def test_grep_with_extension_filter_recurses_into_subdirs(tmp_path: Path, source
     deep.parent.mkdir(parents=True)
     deep.write_text("function plot_variable_graph(x) end\n", encoding="utf-8")
 
-    backend = build_backend(
-        make_fake_adapter(tmp_path),
-        workspace=tmp_path,
-        package_sources=[PackageSource(name="BattMo", path=source_dir)],
-    )
-    hit = backend.grep("plot_variable_graph", path="/packages/BattMo", glob="*.jl")
+    backend = build_backend(workspace=tmp_path)
+    hit = backend.grep("plot_variable_graph", path=str(source_dir), glob="*.jl")
     matches = getattr(hit, "matches", hit)
     assert matches, "grep with glob='*.jl' must recurse into src/ext/"
-
-
-def test_build_backend_mounts_developed_source_writable(tmp_path: Path, source_dir: Path) -> None:
-    adapter = make_fake_adapter(tmp_path)
-    backend = build_backend(
-        adapter,
-        workspace=tmp_path,
-        package_sources=[PackageSource(name="BattMo", path=source_dir, writable=True)],
-    )
-    # A developed checkout is writable through the composite.
-    result = backend.write("/packages/BattMo/examples/x.jl", "y = 1")
-    assert result.error is None
-    assert (source_dir / "examples" / "x.jl").exists()
-
-
-def test_build_backend_mounts_multiple_packages_by_name(tmp_path: Path) -> None:
-    # A Fimbul-like simulator mounts the package it builds on alongside its own.
-    fimbul = tmp_path / "Fimbul"
-    jutuldarcy = tmp_path / "JutulDarcy"
-    fimbul.mkdir()
-    jutuldarcy.mkdir()
-    adapter = make_fake_adapter(tmp_path)
-    backend = build_backend(
-        adapter,
-        workspace=tmp_path,
-        package_sources=[
-            PackageSource(name="Fimbul", path=fimbul),
-            PackageSource(name="JutulDarcy", path=jutuldarcy),
-        ],
-    )
-    pkgs = backend.routes["/packages/"]
-    assert isinstance(pkgs, PackagesBackend)
-    assert pkgs.package_names() == ["Fimbul", "JutulDarcy"]
-
-
-def test_build_backend_skips_missing_and_absent_sources(tmp_path: Path) -> None:
-    adapter = make_fake_adapter(tmp_path)
-    # No package sources at all: no /packages/ route is created.
-    backend = build_backend(adapter, workspace=tmp_path, package_sources=None)
-    assert not any(route.startswith("/packages/") for route in backend.routes)
-
-    # A declared source whose path doesn't exist is silently skipped, leaving the
-    # /packages/ route present but empty.
-    backend = build_backend(
-        adapter,
-        workspace=tmp_path,
-        package_sources=[PackageSource(name="Ghost", path=tmp_path / "nope")],
-    )
-    assert backend.routes["/packages/"].package_names() == []
 
 
 def test_execute_refuses_shell_julia_only(tmp_path) -> None:
     from jutul_agent.agent.backend import WorkspaceShellBackend
 
-    backend = WorkspaceShellBackend(root_dir=tmp_path, virtual_mode=True)
+    backend = WorkspaceShellBackend(root_dir=tmp_path, virtual_mode=False)
     for command in (
         "julia -e 'include(\"analysis.jl\")'",
         "pwd && julia script.jl",

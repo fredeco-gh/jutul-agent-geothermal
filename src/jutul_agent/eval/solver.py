@@ -118,16 +118,14 @@ def _final_text(messages: list[Any]) -> str:
 
 
 async def _eval_package_sources(julia_project: Path | None) -> list[Any] | None:
-    """The ``/packages/<Package>/`` mounts, resolved as a real session does.
+    """The installed package sources, resolved as a real session does.
 
-    The assembled prompt always points the agent at ``/packages/`` to read a
-    package's source, examples, and docs. A real CLI session resolves those
-    mounts from the instantiated manifest and passes them to ``build_agent``
-    (see ``run.py``); the eval must do the same or the mounts the prompt
-    advertises do not exist, and the agent wastes turns discovering their
-    absence before falling back to shell tools on raw depot paths. Resolved
-    from the env's manifest (no compile); ``None`` for env-less samples, which
-    have no packages to browse.
+    A real CLI session enumerates the env's package sources and passes them to
+    ``build_agent`` (see ``run.py``) so the read-only guard protects the depot
+    while the agent reads source at its real ``pkgdir`` path. The eval must do
+    the same, so its filesystem matches a live session. Resolved from the env's
+    manifest (no compile); ``None`` for env-less samples, which have no packages
+    to browse.
     """
     if julia_project is None:
         return None

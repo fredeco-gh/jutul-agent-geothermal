@@ -87,10 +87,10 @@ reservoir state (`states[end][:Saturations]`, an `(nphases, ncells)` matrix).
 
 ## Canonical example
 
-For a worked end-to-end version, locate and read the wells intro from the
-mounted source:
+For a worked end-to-end version, locate and read the wells intro in the
+installed source (its path is `pkgdir(JutulDarcy)`):
 
 ```text
-glob("/packages/JutulDarcy/examples/**/wells_intro*.jl")
-read_file("/packages/JutulDarcy/examples/introduction/wells_intro.jl")
+glob("/.../JutulDarcy/examples/**/wells_intro*.jl")
+read_file("/.../JutulDarcy/examples/introduction/wells_intro.jl")
 ```

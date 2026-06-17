@@ -1,9 +1,9 @@
 """Usage suite: everyday questions a simulator user actually asks.
 
 These are the "unit tests for the agent harness": each sample pins one
-ordinary interaction — look up an API in the installed package, pull a
+ordinary interaction (look up an API in the installed package, pull a
 number out of loaded parameters, browse the shipped examples, do a small
-computation on workspace data — and checks that the answer is grounded in
+computation on workspace data) and checks that the answer is grounded in
 the session rather than recalled or invented. None of them runs a long
 simulation, so the suite stays cheap.
 """
@@ -30,14 +30,14 @@ load_eval_credentials()
 
 @task
 def usage_jutuldarcy() -> Task:
-    # API lookup grounded in the mounted source: the answer is a specific
+    # API lookup grounded in the installed source: the answer is a specific
     # function name, and the prompt forbids answering from memory.
     sample = Sample(
         id="use-jd-well-api",
         input=(
             "Which JutulDarcy function creates a vertical well that "
             "perforates every layer at a given (i, j) column? Verify "
-            "against the installed package — not from memory — and give "
+            "against the installed package, not from memory, and give "
             "the function name."
         ),
         target="setup_vertical_well",
@@ -83,7 +83,7 @@ def usage_battmo() -> Task:
 
 @task
 def usage_mocca() -> Task:
-    # Example discovery through the read-only /packages mount: the shipped
+    # Example discovery in the installed package source: the shipped
     # example names are not guessable from memory.
     sample = Sample(
         id="use-mc-list-examples",

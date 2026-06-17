@@ -1,20 +1,18 @@
-"""Filesystem backends for the agent's mounted routes.
+"""Filesystem backend for the agent's workspace.
 
-``ReadOnlyFilesystemBackend`` serves reads and search but rejects writes; it
-backs the read-only ``/packages/<Package>/`` mounts (editing the shared Julia
-depot would corrupt it for every project). ``WorkspaceShellBackend`` is the
-writable default at ``/``. ``RecursiveGrepBackend`` is the top-level composite,
-fixing a grep glob that otherwise silently skips subdirectories.
+``WorkspaceShellBackend`` is the real-path default: it reads and writes the real
+filesystem from the workspace, refuses writes into read-only roots (installed
+package source in the shared Julia depot), and blocks shell ``julia``.
+``RecursiveGrepBackend`` is the top-level composite, fixing a grep glob that
+otherwise silently skips subdirectories.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.backends import CompositeBackend, LocalShellBackend
 from deepagents.backends.protocol import EditResult, ExecuteResponse, GrepResult, WriteResult
-
-from jutul_agent.paths import is_host_path
 
 _BLOCKED_INTERPRETERS = frozenset({"julia"})
 
@@ -45,10 +43,11 @@ _NO_JULIA_SHELL_MSG = (
 )
 
 _READ_ONLY_MSG = (
-    "Error: '{path}' is read-only package source mounted under /packages/. "
-    "It's reference material — read and grep it freely, but don't edit it. "
-    "Write your own code in the workspace, or to change the package itself, "
-    "`Pkg.develop` it (jutul-agent init --source-path ...) and edit the checkout."
+    "Error: '{path}' is read-only installed package source in the shared Julia "
+    "depot. Read and grep it freely (it's reference material), but don't edit "
+    "it: the depot is shared across projects. Write your own code in the "
+    "workspace, or to change the package itself, `Pkg.develop` it "
+    "(jutul-agent init --source-path ...) and edit that checkout."
 )
 
 
@@ -71,9 +70,9 @@ def _recursive_glob(glob: str | None) -> str | None:
 class RecursiveGrepBackend(CompositeBackend):
     """Top-level composite whose grep recurses on a bare ``*.ext`` filter.
 
-    See :func:`_recursive_glob`. Normalizing here, the one backend the grep tool
-    calls, fixes every route, including the nested ``/packages/`` composite, since
-    the composite forwards the same glob to the sub-backend it resolves to.
+    See :func:`_recursive_glob`. Normalizing here, in the one backend the grep
+    tool calls, fixes every route the composite forwards to, since it passes the
+    same glob down to whichever sub-backend resolves the path.
     """
 
     def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
@@ -85,40 +84,23 @@ class RecursiveGrepBackend(CompositeBackend):
         return await super().agrep(pattern, path=path, glob=_recursive_glob(glob))
 
 
-class ReadOnlyFilesystemBackend(FilesystemBackend):
-    """``FilesystemBackend`` that allows reads and search but refuses writes.
-
-    ``awrite``/``aedit`` delegate to these sync methods, so overriding the sync
-    side also covers the async tools.
-    """
-
-    def write(self, file_path: str, content: str) -> WriteResult:
-        return WriteResult(error=_READ_ONLY_MSG.format(path=file_path))
-
-    def edit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> EditResult:
-        return EditResult(error=_READ_ONLY_MSG.format(path=file_path))
-
-
 class WorkspaceShellBackend(LocalShellBackend):
-    """Workspace default backend that tolerates a file's real absolute path.
+    """Workspace default backend: real paths, with a guard against shell ``julia``.
 
-    Under ``virtual_mode`` every path is treated as relative to the workspace
-    root. ``_resolve_path`` first strips the workspace-root prefix so an absolute
-    path that already points inside the workspace resolves to the real file
-    rather than a re-rooted ``<ws>/home/...`` copy. The file tools and
-    ``julia_eval`` (whose cwd is the workspace) then agree whether the agent uses
-    a workspace-relative path (``model.jl``), a virtual one (``/model.jl``), or
-    the real on-disk path.
+    Constructed with ``virtual_mode=False`` so the file tools speak the real
+    filesystem: a relative path resolves against the workspace (the backend's
+    ``cwd``) and an absolute path as itself, the same way ``julia_eval`` and
+    ``execute`` resolve paths from that working directory. One path string
+    therefore names one file in the file tools, the shell, and the REPL. Package
+    source, skills, memory, and added folders are all read and written at their
+    real paths through this one backend.
 
-    An absolute path outside the workspace (``/root/x.jl``, ``/tmp/...``) is the
-    agent mistaking the file tools for the real filesystem; ``write``/``edit``
-    reject it with a corrective message.
+    ``readonly_roots`` are real directories writes are refused under: the
+    shared Julia depot's installed package source. Reads and greps there are
+    fine (that's how the agent studies a package); only ``write``/``edit`` are
+    blocked, so the agent can't corrupt the depot for other projects. A
+    ``Pkg.develop`` checkout lives outside the depot and stays writable, so the
+    registry-vs-dev distinction falls out of the path, with no special-casing.
 
     ``execute`` refuses to launch ``julia``: Julia belongs in the session
     kernel, where state persists and output streams; a shell julia is a cold
@@ -129,62 +111,29 @@ class WorkspaceShellBackend(LocalShellBackend):
     the bench's trace checks, not by a blanket ban.
     """
 
-    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
-            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
-        return super().execute(command, timeout=timeout)
+    def __init__(self, *args, readonly_roots: tuple[Path, ...] = (), **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._readonly_roots = tuple(Path(root).resolve() for root in readonly_roots)
 
-    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
-            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
-        return await super().aexecute(command, timeout=timeout)
-
-    def _resolve_path(self, key: str) -> Path:
-        if self.virtual_mode:
-            path = Path(key)
-            if path.is_absolute():
-                try:
-                    rel = path.relative_to(self.cwd)
-                except ValueError:
-                    rel = None
-                if rel is not None:
-                    # An absolute path inside the workspace → rewrite it
-                    # workspace-relative so it maps to the real file rather than a
-                    # re-rooted phantom.
-                    key = "/" + rel.as_posix()
-        return super()._resolve_path(key)
-
-    def _outside_workspace_reason(self, key: str) -> str | None:
-        """Corrective message if ``key`` is an absolute host path outside the workspace.
-
-        An absolute path inside the workspace is fine (``_resolve_path`` maps it).
-        An absolute path *outside* it is the agent mistaking the file tools for the
-        real filesystem.
-        """
-
-        if not self.virtual_mode:
+    def _readonly_reason(self, file_path: str) -> str | None:
+        """Corrective message if ``file_path`` lands inside a read-only root, else ``None``."""
+        if not self._readonly_roots:
             return None
-        path = Path(key)
-        if not path.is_absolute():
-            return None  # workspace-relative
+        path = Path(file_path)
+        target = path if path.is_absolute() else self.cwd / path
         try:
-            path.relative_to(self.cwd)
-            return None  # inside the workspace; _resolve_path handles it
-        except ValueError:
-            pass
-        if not is_host_path(key):
+            target = target.resolve()
+        except OSError:
             return None
-        name = key.rstrip("/").rstrip("\\").replace("\\", "/").rsplit("/", 1)[-1] or "file"
-        return (
-            f"'{key}' is outside the workspace. Write your files with a "
-            f"workspace-relative path (e.g. '{name}'); the REPL's working directory "
-            f'is the workspace, so `include("{name}")` then finds it.'
-        )
+        for root in self._readonly_roots:
+            if target == root or root in target.parents:
+                return _READ_ONLY_MSG.format(path=file_path)
+        return None
 
     def write(self, file_path: str, content: str) -> WriteResult:
-        reason = self._outside_workspace_reason(file_path)
+        reason = self._readonly_reason(file_path)
         if reason is not None:
-            return WriteResult(error="Error: " + reason)
+            return WriteResult(error=reason)
         return super().write(file_path, content)
 
     def edit(
@@ -194,7 +143,17 @@ class WorkspaceShellBackend(LocalShellBackend):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        reason = self._outside_workspace_reason(file_path)
+        reason = self._readonly_reason(file_path)
         if reason is not None:
-            return EditResult(error="Error: " + reason)
+            return EditResult(error=reason)
         return super().edit(file_path, old_string, new_string, replace_all=replace_all)
+
+    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
+            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
+        return super().execute(command, timeout=timeout)
+
+    async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if interpreter_invocation(command, _BLOCKED_INTERPRETERS) is not None:
+            return ExecuteResponse(output=_NO_JULIA_SHELL_MSG, exit_code=2)
+        return await super().aexecute(command, timeout=timeout)

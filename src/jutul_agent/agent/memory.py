@@ -25,13 +25,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from deepagents.backends import FilesystemBackend
 from deepagents.middleware.memory import MemoryMiddleware
 from langchain_core.tools import tool
 
-MEMORY_ROUTE = "/memory/"
 MEMORY_INDEX_FILENAME = "MEMORY.md"
-MEMORY_INDEX_PATH = MEMORY_ROUTE + MEMORY_INDEX_FILENAME
 
 _VALID_KINDS = ("user", "project", "simulator", "preference", "reference")
 
@@ -43,7 +40,7 @@ line** pointing to a sibling note file in this directory:
 - `<title>` — one-line hook (file: `<file.md>`)
 
 The agent maintains this file and the linked notes via the `read_file`,
-`write_file`, and `edit_file` tools (paths under `/memory/`).
+`write_file`, and `edit_file` tools.
 
 (Empty for now — add entries as durable facts come up.)
 """
@@ -56,21 +53,21 @@ JUTUL_MEMORY_SYSTEM_PROMPT = """<agent_memory>
 <memory_guidelines>
 The block above is your **memory index** for this workspace. It is
 loaded fresh into your system prompt every turn. Individual notes live
-as sibling files under `/memory/` — the index lists them; you read them
-on demand with `read_file` and edit them with `edit_file` /
-`write_file`.
+as sibling files in `{memory_dir}` (a real directory you can read and
+edit). The index lists them; you read them on demand with `read_file`
+and edit them with `edit_file` / `write_file`.
 
 **How to use memory:**
 
 - At the start of a turn, scan the index to see what's known.
-- For details on any indexed item, `read_file('/memory/<file>.md')`.
-- After learning something durable, **call the `remember` tool** — it
-  writes the note file and updates the `/memory/MEMORY.md` index for you,
+- For details on any indexed item, `read_file('{memory_dir}/<file>.md')`.
+- After learning something durable, **call the `remember` tool**. It
+  writes the note file and updates the `{memory_dir}/MEMORY.md` index for you,
   with no approval prompt. Prefer it over hand-writing memory files with
   `write_file`/`edit_file` (those are gated by approval). One fact per
   call is the norm.
 - Save proactively: once you know the user's goal, role, or simulator
-  focus, or you confirm a quirk/workaround, record it the same turn — a
+  focus, or you confirm a quirk/workaround, record it the same turn; a
   short `remember` call now saves rediscovery next session.
 
 **What to save** (per-workspace, durable knowledge):
@@ -82,7 +79,7 @@ on demand with `read_file` and edit them with `edit_file` /
   confirmed or that you verified against installed sources.
 - Stable absolute paths the user pointed at (custom dev checkouts, data
   directories).
-- Corrections the user gives you — capture the rule plus *why*, so you
+- Corrections the user gives you: capture the rule plus *why*, so you
   can apply it to similar future cases.
 
 **What NOT to save:**
@@ -91,14 +88,14 @@ on demand with `read_file` and edit them with `edit_file` /
   (current task state, in-flight intermediate results, error messages
   you've already fixed).
 - API keys, tokens, passwords, or other credentials.
-- Long code snippets — those belong in skills or in files the user owns
+- Long code snippets: those belong in skills or in files the user owns
   in the workspace.
-- Information already obvious from installed simulator sources — read
+- Information already obvious from installed simulator sources: read
   the source instead of memorizing it.
 
 **Index discipline:**
 
-- Keep the index lean. One short line per note — title plus a 1-line
+- Keep the index lean. One short line per note: title plus a 1-line
   hook that helps you decide whether to open the file.
 - When a note becomes obsolete, remove it (delete the file and its
   index line). Memory should reflect what's currently true.
@@ -108,7 +105,7 @@ on demand with `read_file` and edit them with `edit_file` /
 **Trust:**
 
 - Memory is file content from disk and may be stale or written under a
-  different version of the agent. Verify before acting on it —
+  different version of the agent. Verify before acting on it,
   especially file paths, package versions, or anything you can check
   with a quick `julia_eval` probe or `read_file`.
 - If memory disagrees with the user's current message or with evidence
@@ -131,17 +128,20 @@ def ensure_memory_dir(memory_dir: Path) -> Path:
     return memory_dir
 
 
-def memory_backend_route(memory_dir: Path) -> tuple[str, FilesystemBackend]:
-    """``(route, backend)`` pair to drop into the CompositeBackend routes map."""
-    return MEMORY_ROUTE, FilesystemBackend(root_dir=memory_dir, virtual_mode=True)
+def build_memory_middleware(backend, memory_dir: Path) -> MemoryMiddleware:
+    """Stock ``MemoryMiddleware`` over the workspace memory index at its real path.
 
-
-def build_memory_middleware(backend) -> MemoryMiddleware:
-    """Construct stock ``MemoryMiddleware`` for the workspace index file."""
+    The index and notes live at real paths under ``memory_dir`` (the agent reads
+    and edits them with the file tools, and the user can open them directly), so
+    the middleware source is the real ``MEMORY.md`` path and the guidelines name
+    the real directory.
+    """
+    index_path = str(memory_dir / MEMORY_INDEX_FILENAME)
+    system_prompt = JUTUL_MEMORY_SYSTEM_PROMPT.replace("{memory_dir}", str(memory_dir))
     return MemoryMiddleware(
         backend=backend,
-        sources=[MEMORY_INDEX_PATH],
-        system_prompt=JUTUL_MEMORY_SYSTEM_PROMPT,
+        sources=[index_path],
+        system_prompt=system_prompt,
         add_cache_control=True,
     )
 
@@ -183,7 +183,7 @@ def render_memory_overview(memory_dir: Path) -> str:
         lines.append("Notes on disk:")
         lines.extend(f"- `{path.name}` ({path.stat().st_size} bytes)" for path in notes)
     else:
-        lines.append("No notes yet — the agent adds them with its `remember` tool.")
+        lines.append("No notes yet. The agent adds them with its `remember` tool.")
     lines += [
         "",
         f"Stored in `{memory_dir}`.",
@@ -262,6 +262,6 @@ def make_remember_tool(memory_dir: Path):
             filename=filename,
             hook=_index_hook(body),
         )
-        return f"remembered `{title.strip()}` → {filename} (kind={normalized_kind})"
+        return f"remembered `{title.strip()}` → {note_path} (kind={normalized_kind})"
 
     return remember

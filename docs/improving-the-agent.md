@@ -25,8 +25,8 @@ never sees them.
 Always-on rules go in `prompts.py`. Everything else can be a skill.
 
 Writing skills: keep the description specific enough that the model knows
-when to open it, point at source to read (`/packages/<Pkg>/`, `examples/`)
-and probes to run (`@doc`, `methods`) rather than restating documentation,
+when to open it, point at source to read (a package's `pkgdir`, its
+`examples/`) and probes to run (`@doc`, `methods`) rather than restating documentation,
 and prefer one worked example over prose. Keep frontmatter valid YAML.
 
 ## Tools over instructions
@@ -61,9 +61,9 @@ itself:
 
 - Discoverable APIs: meaningful docstrings on the entry points, a small
   number of canonical setup functions, consistent keyword names.
-- Runnable examples in the repository. The agent reads
-  `/packages/<Pkg>/examples/` and imitates them, so a missing example is a
-  missing capability.
+- Runnable examples in the repository. The agent reads a package's
+  `examples/` (at its `pkgdir` path) and imitates them, so a missing example
+  is a missing capability.
 - Structured returns rather than printed tables. A `Dict` of vectors can be
   checked and plotted. A pretty-printed summary cannot.
 - Errors that say what to do: "expected a `ScalarField`, got `Matrix`" beats

@@ -1,12 +1,15 @@
 """Ensemble suite: the parallel-sweep workflow through ``run_ensemble``.
 
-One sample per simulator. The sweep itself is trivial arithmetic on
-purpose. The mechanism, not the math, is what is graded. Each sample
-runs inside its simulator's workspace env, because ``run_ensemble`` ships
-in the JutulAgent runtime package that only exists there, and worker
-processes inherit that env. The real check is the trace: ``run_ensemble``
-must appear in code the agent actually executed, so a serial fallback or a
-textual claim cannot pass.
+One task per simulator, each sweeping a real case the simulator ships or the
+workspace provides: a waterflood, a battery discharge, a geothermal doublet, a
+CO2-capture cycle. Each runs inside its simulator's workspace env, because
+``run_ensemble`` ships in the JutulAgent runtime package that only exists there,
+and worker processes inherit that env. The real check is the trace:
+``run_ensemble`` (or plain ``pmap``) must appear in code the agent actually
+executed, so a serial fallback or a textual claim cannot pass. A real
+simulation cannot be shortcut by recalling a value or reimplementing it in
+another language, which is what makes these robust mechanism checks (a cheap
+arithmetic sweep, by contrast, the model could just compute directly).
 """
 
 from __future__ import annotations
@@ -18,83 +21,38 @@ from jutul_agent.eval.scorers import (
     julia_code_matches,
     no_interpreters_via_execute,
     numeric_answer,
-    numeric_close,
     used_tools,
 )
 from jutul_agent.eval.solver import jutul_agent_solver, load_eval_credentials
 
 load_eval_credentials()
 
-_SIMULATORS = ("jutuldarcy", "battmo", "fimbul", "mocca")
-
-# Exact values: sum of squares 1..n is n(n+1)(2n+1)/6, so the targets are
-# 385, 338350, 333833500, 333383335000 — deterministic and cheap.
-_PROMPT = (
-    "For each n in [10, 100, 1000, 10000], compute the sum of the "
-    "squares of the integers 1 through n. Run the four cases as a "
-    "parallel ensemble across 2 workers, and report the four results "
-    "in order."
-)
-
-
-@task
-def ensembles() -> Task:
-    samples = [
-        Sample(
-            id=f"ens-{sim}-parallel-sweep",
-            input=_PROMPT,
-            metadata={"needs_env": True, "simulator": sim},
-        )
-        for sim in _SIMULATORS
-    ]
-    return Task(
-        dataset=samples,
-        solver=jutul_agent_solver(),
-        scorer=[
-            numeric_close(385, 0.5),
-            numeric_close(338_350, 0.5),
-            numeric_close(333_833_500, 0.5),
-            numeric_close(333_383_335_000, 0.5),
-            # Plain Distributed (addprocs + pmap) is the skill-endorsed manual
-            # path; the contract is "parallel across workers", not one helper.
-            julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
-            no_interpreters_via_execute(),
-        ],
-        # Generous like the other needs_env suites: the first run per machine
-        # pays the golden-env build inside this budget.
-        time_limit=2400,
-        token_limit=1_000_000,
-        message_limit=40,
-    )
-
 
 # The reference case ships as a workspace fixture so the task measures the
-# parallel-ensemble workflow, not waterflood construction. JutulDarcy has no
-# canned parameterised waterflood (unlike the other sims' shipped factories),
-# and an agent-built case puts recovery in an arbitrary range where the
-# porosity trend need not hold; with the physics pinned in the fixture the
-# goldens are enforceable. Captured agent-free through the run_ensemble worker
-# path: 0.6692 / 0.5884 / 0.5259 / 0.4762 for porosity 0.15 / 0.20 / 0.25 /
-# 0.30 (recovery falls as a larger pore volume is swept by the same volume).
+# parallel-ensemble workflow, not waterflood construction. The grid is kept
+# deliberately coarse and the horizon short: this suite grades the parallel
+# mechanism (run_ensemble/pmap) plus the physical trend, so a fast case is
+# enough and an exact golden would only add a recapture burden. Recovery still
+# falls monotonically as a larger pore volume is swept by the same injected
+# volume, which is the property the scorer checks.
 _WATERFLOOD_CASE = """\
 # Reference waterflood case: run_waterflood_case(porosity) -> oil recovery
-# factor after 3 years of injection at 1000 m^3/day.
+# factor after ~2 years of injection at 1000 m^3/day on a coarse grid.
 using JutulDarcy, Jutul
 
 function run_waterflood_case(porosity::Real)
     Darcy, bar, kg, meter, day = si_units(:darcy, :bar, :kilogram, :meter, :day)
-    g = CartesianMesh((20, 20, 5), (500.0, 500.0, 20.0))
+    g = CartesianMesh((8, 8, 3), (500.0, 500.0, 20.0))
     domain = reservoir_domain(g; permeability = 0.2 * Darcy, porosity = porosity)
     inj = setup_vertical_well(domain, 1, 1, name = :Injector)
-    prd = setup_vertical_well(domain, 20, 20, name = :Producer)
+    prd = setup_vertical_well(domain, 8, 8, name = :Producer)
     sys = ImmiscibleSystem((AqueousPhase(), LiquidPhase());
         reference_densities = [1000.0, 850.0] .* kg / meter^3)
     model, parameters = setup_reservoir_model(domain, sys; wells = [inj, prd], extra_out = true)
     parameters[:Reservoir][:PhaseViscosities][1, :] .= 1e-3   # water 1 cP
     parameters[:Reservoir][:PhaseViscosities][2, :] .= 5e-3   # oil 5 cP
     state0 = setup_reservoir_state(model, Pressure = 150 * bar, Saturations = [0.0, 1.0])
-    dt = fill(30.0 * day, 36)
+    dt = fill(60.0 * day, 12)
     I_ctrl = InjectorControl(TotalRateTarget(1000.0 * meter^3 / day), [1.0, 0.0],
         density = 1000.0 * kg / meter^3)
     P_ctrl = ProducerControl(BottomHolePressureTarget(100 * bar))
@@ -131,10 +89,10 @@ def ensembles_jutuldarcy() -> Task:
         dataset=[sample],
         solver=jutul_agent_solver(),
         scorer=[
-            numeric_close(0.6692, 0.01),
-            numeric_close(0.5884, 0.01),
-            numeric_close(0.5259, 0.01),
-            numeric_close(0.4762, 0.01),
+            # Structural: four recovery factors, strictly decreasing with
+            # porosity. The exact values are not pinned; the suite grades the
+            # parallel mechanism and the physical trend, and a coarse fast case
+            # makes an exact golden a recapture burden without adding signal.
             numeric_answer(0.0, 1.0, count=4, order="decreasing"),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
             used_tools(["julia_eval"]),
@@ -179,14 +137,15 @@ def ensembles_battmo() -> Task:
 @task
 def ensembles_fimbul() -> Task:
     # The doublet is Fimbul's shipped geothermal_doublet factory, so the agent
-    # drives it directly. Goldens captured agent-free from that same factory
-    # call (num_years=100): produced-water temperature warms as the reinjection
-    # temperature rises and the cold front reaches the producer.
+    # drives it directly. A short horizon keeps the sweep fast; the suite grades
+    # the parallel mechanism and plausible produced-water temperatures, not an
+    # exact end-state (the cold-front trend needs a long horizon to resolve and
+    # would only add a recapture burden here).
     sample = Sample(
         id="ens-fb-injtemp-sweep",
         input=(
-            "Using Fimbul, run its standard geothermal doublet — the "
-            "geothermal_doublet factory — for 100 years, reinjecting at 10, "
+            "Using Fimbul, run its standard geothermal doublet (the "
+            "geothermal_doublet factory) for 25 years, reinjecting at 10, "
             "20, 30, and 40 deg C (geothermal_doublet's temperature_inj is in "
             "SI, so convert from Celsius). Run the four cases as a parallel "
             "ensemble across 4 workers, and report the produced-water "
@@ -199,11 +158,7 @@ def ensembles_fimbul() -> Task:
         dataset=[sample],
         solver=jutul_agent_solver(),
         scorer=[
-            numeric_close(67.223, 0.5),
-            numeric_close(67.908, 0.5),
-            numeric_close(69.104, 0.5),
-            numeric_close(70.81, 0.5),
-            numeric_answer(1.0, 250.0, count=4, order="increasing"),
+            numeric_answer(1.0, 250.0, count=4),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
             used_tools(["julia_eval"]),
             no_interpreters_via_execute(),
@@ -247,7 +202,6 @@ def ensembles_mocca() -> Task:
 
 
 TASKS = [
-    ensembles,
     ensembles_jutuldarcy,
     ensembles_battmo,
     ensembles_fimbul,

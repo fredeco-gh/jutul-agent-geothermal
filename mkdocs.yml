@@ -75,7 +75,7 @@ nav:
       - Improving the agent: improving-the-agent.md
   - Evaluation:
       - How evaluation works: evaluation.md
-      - Benchmark results: benchmark.md
+  - Benchmark: benchmark.md
   - Development:
       - Development: development.md
       - Testing: testing.md

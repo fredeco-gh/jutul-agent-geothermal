@@ -1,4 +1,4 @@
-"""Selectable approval menu (Claude Code-style) for pending tool interrupts."""
+"""Selectable approval menu for pending tool interrupts."""
 
 from __future__ import annotations
 

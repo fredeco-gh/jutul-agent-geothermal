@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
+from deepagents.backends import CompositeBackend, LocalShellBackend
 
 from fakes import make_fake_adapter
 from jutul_agent.agent.builder import build_backend, skill_sources
@@ -39,25 +39,28 @@ def test_assemble_session_prompt_includes_runtime_context(tmp_path: Path) -> Non
     assert "julia_eval" in prompt
     assert "write_file" in prompt
     assert "workspace" in prompt
-    # Source mounts are named by package and lead with the primary.
-    assert "/packages/TestSim/" in prompt
+    # Package source is referenced by its pkgdir path.
+    assert "pkgdir(TestSim)" in prompt
+    assert "/packages/" not in prompt
     # Retry guidance lives in HarnessProfile suffix, not the static prompt.
     assert "retry before responding" not in prompt
 
 
-def test_build_backend_mounts_workspace_and_skills(tmp_path: Path) -> None:
+def test_build_backend_is_a_single_real_path_backend(tmp_path: Path) -> None:
     adapter = make_fake_adapter(tmp_path)
 
-    backend = build_backend(adapter, workspace=tmp_path)
+    backend = build_backend(workspace=tmp_path)
 
+    # One real-path backend over the workspace.
     assert isinstance(backend, CompositeBackend)
     assert isinstance(backend.default, LocalShellBackend)
-    assert set(backend.routes) == {"/skills/shared/", "/skills/simulator/"}
-    assert isinstance(backend.routes["/skills/shared/"], FilesystemBackend)
-    assert isinstance(backend.routes["/skills/simulator/"], FilesystemBackend)
+    assert backend.default.virtual_mode is False
+    assert backend.routes == {}
+    # Skills are sourced from their real directories (the seam for user/project
+    # skills is appending more real dirs here, last wins).
     assert skill_sources(adapter) == [
-        ("/skills/shared/", "Built-in"),
-        ("/skills/simulator/", adapter.display_name),
+        (str(SHARED_SKILLS_DIR), "Built-in"),
+        (str(adapter.skills_dir), adapter.display_name),
     ]
 
 

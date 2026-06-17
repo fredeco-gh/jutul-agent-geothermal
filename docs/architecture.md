@@ -38,7 +38,7 @@ state directory, the trace log, and a handle to the Julia kernel.
 
 `build_agent` (`agent/builder.py`) assembles a
 [deepagents](https://github.com/langchain-ai/deepagents) agent around the
-session: the system prompt, the custom tools, the mounted filesystem, and the
+session: the system prompt, the custom tools, the filesystem, and the
 model. The agent loop itself (planning, tool dispatch, streaming) is
 deepagents/langgraph: jutul-agent deliberately does not own a loop. Generic
 agent machinery is built and improved elsewhere at a pace not worth
@@ -65,12 +65,14 @@ Custom tools (`agent/tools.py`, `agent/julia_plot.py`, `agent/memory.py`):
 - `remember` appends a note to workspace memory.
 
 Standard deepagents tools (`read_file`, `write_file`, `edit_file`, `glob`,
-`grep`, `ls`, `execute`) operate on a composite filesystem backend with one
-route per mount: the workspace at the root, `/skills/`, `/memory/`,
-`/packages/<Pkg>/` (the source of every package in the env, read-only unless
-it is a dev checkout), `/dirs/<name>/` for folders added with `--add-dir`,
-and `/session/` for live session state. Side-effecting tools go through the
-approval middleware (`ask`, `workspace`, or `auto` mode).
+`grep`, `ls`, `execute`) operate on a real-path filesystem backend rooted at
+the workspace: a relative path resolves against it and an absolute path as
+itself, the same file the shell and the Julia REPL see. Skills, memory,
+installed package source (each at its `pkgdir`), and folders added with
+`--add-dir` are all read and written at their real paths through this one
+backend; writes into the shared Julia depot (installed package source) are
+refused so the agent can study a package without corrupting it. Side-effecting
+tools go through the approval middleware (`ask`, `workspace`, or `auto` mode).
 
 ## The Julia kernel
 

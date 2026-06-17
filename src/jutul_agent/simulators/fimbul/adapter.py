@@ -21,12 +21,12 @@ FIMBUL = SimulatorAdapter(
         "transporting heat by advection and conduction. Typical workflow: a "
         "case factory (e.g. `egg_geothermal_doublet()`, `doublet_demo()`, "
         "`ates_demo()`) returns a `JutulCase` → `simulate_reservoir(case)` → "
-        "inspect states (key field is `:Temperature`). Examples are mounted "
-        "under `/packages/Fimbul/examples/` in three groups: "
+        "inspect states (key field is `:Temperature`). Examples live under "
+        "`examples/` in the installed source (`pkgdir(Fimbul)`) in three groups: "
         "`analytical/`, `production/` (doublet, EGS, AGS, coaxial BHE), and "
         "`storage/` (ATES, BTES, FTES, HTATES). Most workflows reuse "
-        "JutulDarcy's grid + well constructors; its source is mounted at "
-        "`/packages/JutulDarcy/` and the JutulDarcy skills/overview cover those "
+        "JutulDarcy's grid + well constructors; its source is at "
+        "`pkgdir(JutulDarcy)` and the JutulDarcy skills/overview cover those "
         "primitives."
     ),
 )

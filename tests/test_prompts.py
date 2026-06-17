@@ -49,6 +49,18 @@ def test_prompt_states_window_availability_per_session(tmp_path: Path) -> None:
     assert "Never tell the user a window opened" in headless
 
 
+def test_prompt_states_working_directory_when_given(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path)
+    with_ws = assemble_session_prompt(adapter, workspace=tmp_path)
+    without = assemble_session_prompt(adapter)
+    # Given a workspace, the absolute working directory is stated up front so
+    # the agent builds correct paths without a pwd/ls round-trip.
+    assert f"Working directory: {tmp_path}" in with_ws
+    # Omitted when not given (the RunConfig hash path) so a per-session path
+    # does not destabilize the attribution hash.
+    assert "Working directory" not in without
+
+
 def test_session_prompt_resume_note(tmp_path) -> None:
     from fakes import make_fake_adapter
     from jutul_agent.agent.prompts import assemble_session_prompt

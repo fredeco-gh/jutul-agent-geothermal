@@ -52,8 +52,9 @@ jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
 jutul-agent init --sim jutuldarcy --force --precompile
 ```
 
-`--source-path` dev-links the simulator to a local checkout, mounted writable
-so the agent can edit the package source. `--force` rebuilds the env from the
+`--source-path` dev-links the simulator to a local checkout the agent can read
+and edit at its real path (a dev checkout, so it is writable, unlike a
+registry install in the shared depot). `--force` rebuilds the env from the
 template, the standard fix after upgrading jutul-agent. `setup` is an alias
 for `init`. If you skip `init` entirely, the first run bootstraps the
 workspace and auto-detects the simulator from a `Project.toml` when it can.
@@ -91,17 +92,17 @@ jutul-agent init --sim <name> --force --precompile
 
 ## Adding folders
 
-Mount folders outside the workspace so the agent can use them with the same
+Add folders outside the workspace so the agent can use them with the same
 file tools:
 
 ```sh
 jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
 ```
 
-Inside the TUI, `/add-dir <path>` mounts one immediately and `/add-dir` lists
-the current mounts. Each appears at `/dirs/<name>/` for the file tools, while
-in `julia_eval` and `execute` the agent uses the folder's real absolute path.
-Mounts last for the session and are not written to config.
+Inside the TUI, `/add-dir <path>` adds one immediately and `/add-dir` lists
+the folders added so far. The agent uses each at its real absolute path in
+every tool: the file tools, `julia_eval`, and `execute`. Added folders last
+for the session and are not written to config.
 
 ## The TUI
 
@@ -113,7 +114,7 @@ jutul-agent
 |---|---|
 | `/model` | Open the model selector (or `/model <provider:model>`) |
 | `/approval-mode` | Set approval policy: `ask`, `workspace`, `auto` |
-| `/add-dir <path>` | Mount an extra folder |
+| `/add-dir <path>` | Add an extra folder |
 | `/context` | Show context usage: tokens held vs the model's window |
 | `/compact` | Summarize older turns to free context space |
 | `/memory` | View workspace memory (`/memory edit` opens it in `$EDITOR`) |

@@ -8,6 +8,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from markdown_it import MarkdownIt
 from rich.text import Text
 from textual.containers import Vertical
 from textual.widgets import Markdown, Static
@@ -38,6 +39,20 @@ _STREAM_RENDER_CAP = 256 * 1024
 # whole buffer through the terminal emulator and re-parses the markdown body,
 # so doing it per delta makes a chatty tool freeze the UI.
 _STREAM_REFRESH_SECONDS = 0.1
+
+
+def _link_friendly_parser() -> MarkdownIt:
+    """A gfm-like Markdown parser that also renders ``file://`` links.
+
+    Textual's default parser blocks the ``file:`` scheme, so a local file link
+    shows as raw ``[text](file://…)`` instead of a clickable link. Allowing it
+    lets a reported path open in the OS viewer (the click handler routes
+    ``file://`` to the local opener); other unsafe schemes stay blocked.
+    """
+    md = MarkdownIt("gfm-like")
+    default_validate = md.validateLink
+    md.validateLink = lambda url: url.startswith("file:") or default_validate(url)
+    return md
 
 
 def display_session_id(session_id: str) -> str:
@@ -112,7 +127,7 @@ class MessageBlock(Vertical):
 
     def compose(self):
         if self._markdown:
-            yield Markdown(self._content, id="message-body")
+            yield Markdown(self._content, id="message-body", parser_factory=_link_friendly_parser)
             return
         yield Static(self._content, classes="message-body", id="message-body", markup=False)
 
@@ -315,7 +330,7 @@ class ApprovalBlock(Vertical):
         return self._card.tool_name
 
     def compose(self):
-        yield Markdown(self._card.body, id="approval-body")
+        yield Markdown(self._card.body, id="approval-body", parser_factory=_link_friendly_parser)
         yield Static("", classes="approval-hint", id="approval-hint", markup=False)
 
     def on_mount(self) -> None:
@@ -564,7 +579,10 @@ class ToolBlock(Vertical):
 
     ToolBlock.compact {
         border: none;
-        border-left: tall $surface-lighten-1;
+        /* A thin solid rail (│) rather than a block glyph (▊): the block
+           renders with gaps in some terminals/fonts over SSH, and the thin
+           line matches the full card's border. */
+        border-left: solid $surface-lighten-1;
         margin: 0;
         padding: 0 1;
         background: transparent;
@@ -577,6 +595,13 @@ class ToolBlock(Vertical):
     ToolBlock Markdown {
         padding: 0;
         margin: 0;
+        /* File-path links sit inside muted summaries; keep them the same
+           muted tone (an underline still marks them clickable) so a card
+           reads as one calm line instead of a bright link in grey text. */
+        link-color: $text-muted;
+        link-style: underline;
+        link-color-hover: $accent;
+        link-style-hover: underline;
     }
     """
 
@@ -605,7 +630,7 @@ class ToolBlock(Vertical):
         self.border_subtitle = _status_text(self._status, self._reject_reason)
 
     def compose(self):
-        yield Markdown("", id="tool-body")
+        yield Markdown("", id="tool-body", parser_factory=_link_friendly_parser)
 
     async def on_mount(self) -> None:
         self._body_widget = self.query_one("#tool-body", Markdown)
@@ -842,8 +867,9 @@ def _render_tool_body(
             is_error=is_error,
         )
 
-    # julia_* tools show the Code section while running (before any output).
-    if tool_name in {"julia_eval", "julia_plot"}:
+    # Some tools render a running body before any output: julia_* show the Code
+    # section, write/edit show the target file and a growing character count.
+    if tool_name in {"julia_eval", "julia_plot", "write_file", "edit_file"}:
         body = display_tool_body(
             tool_name,
             args,

@@ -6,8 +6,9 @@ persisted across sessions.
 
 ## The model: an index plus notes
 
-Memory lives at `/memory/` in the agent's filesystem (on disk: the state
-home, keyed by workspace). It has one structural rule:
+Memory lives in a real directory under the state home, keyed by workspace
+(the agent reads and edits the files at their real paths, and you can open
+them directly). It has one structural rule:
 
 - `MEMORY.md` is the index. It is loaded into the system prompt of every
   session, so its contents are always visible. It holds one line per note:
@@ -41,7 +42,8 @@ claims (a path, an API) before acting on them.
 
 - Per workspace: the state home hashes the workspace path, so each project
   folder has independent memory. There is no global tier yet, though the
-  mount design leaves room for one (a second route alongside `/memory/`).
+  design leaves room for one (a second memory directory alongside the
+  per-workspace one).
 - `--ephemeral-memory` swaps in a throwaway directory: nothing read from or
   written to the real memory. The bench uses this so evaluation runs cannot
   learn from each other. It is also the right flag for one-off experiments.
