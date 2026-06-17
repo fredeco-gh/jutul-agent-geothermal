@@ -10,7 +10,7 @@ description: High-level JutulDarcy workflow, example discovery, and result unpac
 Use this skill for general JutulDarcy setup, example discovery, and result inspection.
 
 JutulDarcy is a reservoir simulator on the Jutul AD framework. A simulation is
-five layers that you compose in order:
+six steps that you compose in order:
 
 1. **Grid** - `CartesianMesh(dims, physical_dims)` for structured cases.
    Unstructured grids come from `UnstructuredMesh` or `.DATA`/MRST imports.
@@ -21,16 +21,23 @@ five layers that you compose in order:
    `setup_reservoir_model`.
 4. **Fluid system** - `ImmiscibleSystem`, `BlackOilSystem`,
    `CompositionalSystem`. Pick the smallest system that captures the physics.
-5. **Model + run** - `setup_reservoir_model(domain, sys; wells=...)` ->
-   `setup_reservoir_state(...)` -> controls + forces -> `simulate_reservoir`.
+5. **Model + state + forces** - `setup_reservoir_model(domain, sys; wells=...)` ->
+   `setup_reservoir_state(...)` -> controls + forces.
+6. **Validate, then run** - assemble the `JutulCase`, run
+   `JutulDarcy.CaseValidation.validate` on it, reconcile anything it flags, then
+   `simulate_reservoir`. Step 6 is part of running a simulation, not an optional
+   add-on — see below.
 
 ## Validate the case before simulating
 
-Always validate the assembled case before `simulate_reservoir`. JutulDarcy ships a
-reservoir-engineering check that knows the expected SI ranges for permeability,
-porosity, time steps, well rates, pressures, etc. — it catches the unit-conversion
-mistakes and unphysical values that are the most common setup error and that a
-plain solve would silently run with or fail cryptically on:
+Validating the assembled case before `simulate_reservoir` is a required step on
+every run — including quick, small, or example-based setups, and even when the
+user only said "set up and run". Do not skip it to "keep things simple": an
+unvalidated solve is the single most common way a setup silently produces wrong
+numbers. JutulDarcy ships a reservoir-engineering check that knows the expected SI
+ranges for permeability, porosity, time steps, well rates, pressures, etc. — it
+catches the unit-conversion mistakes and unphysical values that a plain solve
+would silently run with or fail cryptically on:
 
 ```julia
 case = JutulCase(model, dt, forces; state0, parameters)   # what simulate_reservoir builds internally
