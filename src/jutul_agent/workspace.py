@@ -16,6 +16,8 @@ Per-workspace *session* storage lives outside the workspace, under
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import shutil
 import tomllib
 from dataclasses import dataclass, field, replace
@@ -26,6 +28,11 @@ from jutul_agent.paths import workspace_root
 WORKSPACE_DIRNAME = ".jutul-agent"
 WORKSPACE_CONFIG_FILENAME = "config.toml"
 WORKSPACE_JULIA_ENV_DIRNAME = "julia-env"
+
+# Records which env template (and jutul-agent version) a workspace env was built
+# from, so an upgrade that changes the template can be flagged as "rebuild me".
+# See ``env_template_drifted`` and the launch/doctor checks that use it.
+TEMPLATE_STAMP_FILENAME = ".jutul-agent-template"
 
 # The shared, simulator-agnostic JutulAgent package: one source copy in the repo,
 # copied into every workspace env at bootstrap (next to that env's per-simulator
@@ -78,6 +85,73 @@ def mark_env_precompiled(env_dir: Path) -> None:
     """Record that the env's packages have been precompiled (see the marker check)."""
     with contextlib.suppress(OSError):
         (env_dir / PRECOMPILE_MARKER).touch()
+
+
+# ---------------------------------------------------------------------------
+# Env-template stamping (so an upgrade that changes the template is detectable).
+
+
+def template_fingerprint(template_path: Path) -> str:
+    """Fingerprint of a simulator's env template, or ``""`` if it can't be read.
+
+    Hashes the template's ``Project.toml`` (its declared deps, compats, and
+    ``[sources]``), which is what determines whether a workspace env needs
+    rebuilding after an upgrade. Patch-level changes that don't touch the
+    template leave this unchanged, so the staleness warning only fires when a
+    rebuild actually matters.
+    """
+
+    proj = template_path / "Project.toml"
+    try:
+        data = proj.read_bytes()
+    except OSError:
+        return ""
+    return hashlib.sha256(data).hexdigest()
+
+
+def write_env_template_stamp(env_dir: Path, template_path: Path) -> None:
+    """Record the template fingerprint (and jutul-agent version) that built ``env_dir``."""
+
+    from jutul_agent import __version__
+
+    fingerprint = template_fingerprint(template_path)
+    if not fingerprint:
+        return
+    payload = {"fingerprint": fingerprint, "version": __version__}
+    with contextlib.suppress(OSError):
+        (env_dir / TEMPLATE_STAMP_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def read_env_template_stamp(env_dir: Path) -> dict | None:
+    """Read ``env_dir``'s template stamp, or ``None`` if absent/unreadable."""
+
+    try:
+        return json.loads((env_dir / TEMPLATE_STAMP_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def env_template_drifted(env_dir: Path, template_path: Path) -> bool:
+    """Whether ``env_dir`` was built from a *different* template than the current one.
+
+    Only ever ``True`` when a stamp exists and its fingerprint differs from the
+    installed template's — a missing stamp (a pre-existing env from before this
+    feature) is treated as "unknown, don't nag", and baselined by
+    :func:`ensure_env_template_stamp`.
+    """
+
+    stamp = read_env_template_stamp(env_dir)
+    if stamp is None:
+        return False
+    current = template_fingerprint(template_path)
+    return bool(current) and stamp.get("fingerprint") != current
+
+
+def ensure_env_template_stamp(env_dir: Path, template_path: Path) -> None:
+    """Write a baseline stamp when one is missing, so existing envs aren't nagged."""
+
+    if read_env_template_stamp(env_dir) is None:
+        write_env_template_stamp(env_dir, template_path)
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +530,7 @@ def bootstrap_julia_env(
     # and version-specific, so the workspace resolves its own at instantiate time.
     shutil.copytree(template_path, target, ignore=shutil.ignore_patterns("Manifest.toml"))
     sync_shared_julia_package(target)
+    write_env_template_stamp(target, template_path)
     return target
 
 

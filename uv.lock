@@ -1153,7 +1153,6 @@ wheels = [
 
 [[package]]
 name = "jutul-agent"
-version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "deepagents" },

@@ -1,7 +1,8 @@
 # CLI reference
 
-All commands run through `uv run jutul-agent`. Two flags are accepted by
-every command:
+With a tool install (`uv tool install`), every command is just `jutul-agent
+…`. From a dev checkout, run them through `uv run jutul-agent …` instead. Two
+flags are accepted by every command:
 
 | Flag | Meaning |
 |---|---|
@@ -48,12 +49,34 @@ simulator's Julia env template.
 
 Diagnose the setup: Julia version, provider key (or Ollama reachability),
 which Julia project the workspace resolves to, whether the simulator package
-is actually in the manifest, display/xvfb for plotting, and a boot check of
-the env. Each finding comes with a fix.
+is actually in the manifest, whether the env was built from the current
+simulator template, display/xvfb for plotting, and a boot check of the env.
+Each finding comes with a fix.
 
 | Option | Meaning |
 |---|---|
 | `--sim <name>` | Simulator to check against (default: workspace config / auto-detect) |
+
+## jutul-agent upgrade
+
+Upgrade jutul-agent to the latest version, doing the right thing for how it
+was installed: a tool install runs `uv tool upgrade jutul-agent`; a dev
+checkout is pointed at `git pull && uv sync`. After upgrading, rebuild any
+workspace env that was set up with an older version
+(`jutul-agent init --sim <name> --force --precompile`).
+
+```sh
+jutul-agent upgrade           # upgrade to the latest
+jutul-agent upgrade --check   # report latest vs installed, change nothing
+```
+
+| Option | Meaning |
+|---|---|
+| `--check` | Only report the latest available version; don't upgrade |
+
+jutul-agent also checks for updates at launch and prints a one-line notice
+when a newer version exists (cached for a day; runs in the background so it
+never delays startup). Disable it with `JUTUL_AGENT_NO_UPDATE_CHECK=1`.
 
 ## jutul-agent transcript
 

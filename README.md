@@ -44,16 +44,19 @@ What makes it work for scientific computing:
 You need two tools on PATH:
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/), which
-  installs Python and the project environment
+  installs Python and manages the tool
 - Julia 1.10 or newer, via [juliaup](https://github.com/JuliaLang/juliaup)
 
 On headless Linux, plotting also needs `xvfb`.
 
+Install jutul-agent as a uv tool. This puts a `jutul-agent` command on your
+PATH that works from any folder:
+
 ```sh
-git clone https://github.com/SINTEF-agentlab/jutul-agent
-cd jutul-agent
-uv sync
+uv tool install git+https://github.com/SINTEF-agentlab/jutul-agent
 ```
+
+Upgrade any time with `jutul-agent upgrade`.
 
 API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
 your environment or a `.env`. jutul-agent also prompts for a missing key and
@@ -65,12 +68,12 @@ Details in the
 
 jutul-agent works in the directory you launch it from: that directory
 becomes the workspace where it reads and writes files. Start it from a
-fresh project folder, not from this repository checkout.
+fresh project folder.
 
 ```sh
 mkdir my-battery-run && cd my-battery-run
-uv run jutul-agent init --sim battmo --precompile
-uv run jutul-agent
+jutul-agent init --sim battmo --precompile
+jutul-agent
 ```
 
 ```
@@ -80,7 +83,7 @@ uv run jutul-agent
 `--sim` takes any simulator from the table above, and the workflow is the
 same for all of them. The first `--precompile` takes a while (Julia compiles
 the simulator and the plotting stack), after which sessions start in
-seconds. If anything fails, `uv run jutul-agent doctor` diagnoses the setup
+seconds. If anything fails, `jutul-agent doctor` diagnoses the setup
 and prints a fix per finding.
 
 ## Documentation
@@ -93,7 +96,13 @@ improving the agent, evaluation).
 
 ## Development
 
+Work from a clone instead of a tool install. `uv run` resolves the
+`jutul-agent` command from the checkout, so run every command through it
+(`uv run jutul-agent ...`); upgrade with `git pull && uv sync`.
+
 ```sh
+git clone https://github.com/SINTEF-agentlab/jutul-agent
+cd jutul-agent
 uv sync --extra eval
 uv run pre-commit install
 
