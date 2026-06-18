@@ -34,6 +34,9 @@ class SimulatorAdapter:
     package_imports: tuple[str, ...]
     primary_package: str
     domain_hints: str
+    # Per-simulator plausibility ranges for the session reviewer (vs ``domain_hints``,
+    # which orient the agent). Injected into the critic prompt for the active simulator.
+    review_hints: str = ""
     # Name of this env's per-simulator warm-up package (e.g.
     # ``"JutulAgentJutulDarcy"``). Loaded in the background at session start so its
     # precompiled, GLMakie-aware solver is resident; its solve/plot bake is what

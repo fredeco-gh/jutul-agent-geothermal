@@ -173,4 +173,16 @@ def run(args: argparse.Namespace) -> int:
         log_dir=str(log_dir),
     )
     print(f"\nLogs: {log_dir} (view with `uv run inspect view --log-dir {log_dir}`)")
+
+    # Write each sample's pass/fail back onto its session so the run can be reviewed
+    # against ground truth (`jutul-agent review`). Best-effort: never fail over it.
+    try:
+        from jutul_agent.review.eval_link import link_eval_results
+
+        linked = link_eval_results(logs)
+        if linked:
+            print(f"Linked eval verdicts onto {linked} session(s) for `jutul-agent review`.")
+    except Exception:
+        pass
+
     return 0 if all(log.status == "success" for log in logs) else 1

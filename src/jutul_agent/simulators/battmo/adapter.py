@@ -24,4 +24,8 @@ BATTMO = SimulatorAdapter(
         "Beginner walkthroughs live in `examples/beginner_tutorials/` "
         "(numbered 1-11)."
     ),
+    review_hints=(
+        "Batteries: cell voltage within the chemistry's window (~2.5..4.2 V for Li-ion) "
+        "and current/C-rate consistent with the nominal capacity."
+    ),
 )
