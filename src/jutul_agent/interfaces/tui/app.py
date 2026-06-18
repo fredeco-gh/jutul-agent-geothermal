@@ -191,6 +191,7 @@ class TUIApp(App[None]):
         height: 1fr;
         padding: 0 1 0 1;
         background: $background;
+        scrollbar-gutter: stable;
     }
     #input-panel {
         dock: bottom;
@@ -282,6 +283,9 @@ class TUIApp(App[None]):
         self._busy = False
         self._status_text = "ready"
         self._stream = _AssistantStream()
+        # Whether the current turn has rendered any assistant prose; if not, the
+        # turn end mounts a placeholder so an empty answer is not silent.
+        self._assistant_text_rendered = False
         # Context accounting: usage_metadata from the newest/first model call
         # and the resolved context window (fetched in a background worker).
         self._last_usage: dict[str, Any] | None = None
@@ -304,10 +308,7 @@ class TUIApp(App[None]):
             id="status",
         )
         with VerticalScroll(id="log"):
-            yield WelcomeBlock(
-                simulator_label=self._session.simulator.display_name,
-                session_id=self._session.session_id,
-            )
+            yield WelcomeBlock(simulator_label=self._session.simulator.display_name)
         with Vertical(id="input-panel"):
             yield ApprovalMenu(id="approval-menu")
             with Horizontal(id="input-row"):
@@ -1160,6 +1161,7 @@ class TUIApp(App[None]):
 
     async def _run_turn(self, prompt: str) -> None:
         self._set_status("thinking…")
+        self._assistant_text_rendered = False
         try:
             result = await self._turn_runner.run_prompt(prompt, on_message=self._render_message)
             await self._apply_turn_result(result)
@@ -1257,6 +1259,12 @@ class TUIApp(App[None]):
             await self._render_interrupts(result.interrupts)
             return
         self._active_approval_blocks = []
+        if not self._assistant_text_rendered:
+            # The turn finished without any assistant prose (e.g. an empty model
+            # reply). Show a muted placeholder so the user sees the turn completed.
+            await self._log.mount(
+                MessageBlock("Assistant", "assistant", "_(no response)_", markdown=True)
+            )
 
     def _should_auto_approve_pending(self) -> bool:
         if not self._pending_interrupts:
@@ -1395,6 +1403,7 @@ class TUIApp(App[None]):
     async def _render_message_chunk(self, msg: AIMessageChunk) -> None:
         text = self._extract_chunk_text(msg)
         if text:
+            self._assistant_text_rendered = True
             await self._stream.append_prose(self._log, text)
 
         tool_calls = self._extract_chunk_tool_calls(msg)
@@ -1581,12 +1590,7 @@ class TUIApp(App[None]):
     async def _mount_welcome_if_empty(self) -> None:
         if self._log.children:
             return
-        await self._log.mount(
-            WelcomeBlock(
-                simulator_label=self._session.simulator.display_name,
-                session_id=self._session.session_id,
-            )
-        )
+        await self._log.mount(WelcomeBlock(simulator_label=self._session.simulator.display_name))
         self._jump_to_latest()
 
     def _approval_help_lines(self) -> list[str]:

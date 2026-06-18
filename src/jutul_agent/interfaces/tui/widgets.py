@@ -264,19 +264,11 @@ class ReasoningBlock(MessageBlock):
 class WelcomeBlock(MessageBlock):
     """Landing card shown when the TUI starts or the visible log is cleared."""
 
-    def __init__(
-        self,
-        *,
-        simulator_label: str,
-        session_id: str,
-    ) -> None:
+    def __init__(self, *, simulator_label: str) -> None:
         super().__init__(
-            "Session",
+            "Welcome",
             "welcome",
-            _render_welcome_message(
-                simulator_label=simulator_label,
-                session_id=session_id,
-            ),
+            _render_welcome_message(simulator_label=simulator_label),
             markdown=True,
         )
 
@@ -364,25 +356,14 @@ class ApprovalBlock(Vertical):
         self._hint_widget.update(_approval_command_hint(self._card.allowed_decisions))
 
 
-def _render_welcome_message(
-    *,
-    simulator_label: str,
-    session_id: str,
-) -> str:
-    # The active model and approval mode live in the status bar, which stays
-    # current as they change; the welcome card is a one-time landing note.
-    lines = [
-        f"**jutul-agent** is ready for **{simulator_label}**.",
-        f"Session `{display_session_id(session_id)}`",
-        "",
-        "Ask a question or describe a task.",
-        "Shift+Tab cycles approval mode "
-        "(*workspace* auto-approves file edits; *auto* skips all prompts).",
-        "**Ctrl+C** interrupts a running turn. When idle: select text + "
-        "**Ctrl+C** copies it (or `/copy` for the whole last reply); "
-        "**Ctrl+C** twice exits.",
-    ]
-    return "\n".join(lines)
+def _render_welcome_message(*, simulator_label: str) -> str:
+    # Keep it short: the session id, model, and approval mode are all in the status
+    # bar, the prompt placeholder already invites a question, and the footer lists
+    # the keys. The card only adds the two non-obvious controls and points at /help.
+    return (
+        f"**jutul-agent** is ready for **{simulator_label}**.\n"
+        "**Ctrl+C** interrupts a turn (twice to exit) · `/help` for commands."
+    )
 
 
 def _approval_status_text(decision_type: str, message: str | None) -> str:

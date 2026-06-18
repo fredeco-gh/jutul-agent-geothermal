@@ -355,6 +355,20 @@ async def test_tui_reflows_wrapped_blocks_after_terminal_resize(session: Session
         assert system.region.y >= assistant.region.bottom
 
 
+async def test_empty_answer_shows_a_placeholder(session: Session) -> None:
+    human = HumanMessage(content="say nothing")
+    empty = AIMessage(content="")
+    agent = ScriptedV3Agent(
+        [v3_message_event(human), v3_message_event(empty), v3_values_event([human, empty])]
+    )
+    app = TUIApp(agent=agent, session=session)
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "say nothing")
+        assistant = [b for b in app.query(MessageBlock) if b.has_class("assistant")]
+        assert assistant, "an empty answer must still mount an assistant block"
+        assert any("no response" in b._content for b in assistant)
+
+
 async def test_tui_starts_with_welcome_card(session: Session) -> None:
     app = TUIApp(agent=_stub_agent(), session=session, model_label="openai:gpt-5.4-mini")
 
@@ -362,12 +376,13 @@ async def test_tui_starts_with_welcome_card(session: Session) -> None:
         await wait_until_ready(app)
         welcome_cards = list(app.query(WelcomeBlock))
         assert len(welcome_cards) == 1
-        assert welcome_cards[0].border_title == "Session"
-        assert "/transcript" not in welcome_cards[0]._content
-        assert "/approve" not in welcome_cards[0]._content
-        # The model lives in the status bar (which stays live as it changes),
-        # not the one-time welcome card.
+        assert welcome_cards[0].border_title == "Welcome"
+        assert "is ready for" in welcome_cards[0]._content
+        assert "/help" in welcome_cards[0]._content
+        # The model and session id live in the status bar (which stays live as they
+        # change), not the one-time welcome card.
         assert "openai:gpt-5.4-mini" not in welcome_cards[0]._content
+        assert session.session_id not in welcome_cards[0]._content
 
 
 async def test_ctrl_c_copies_selection_when_present(session: Session, monkeypatch) -> None:

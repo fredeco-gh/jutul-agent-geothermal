@@ -56,7 +56,7 @@ async def test_multi_tool_turn_renders_full_block_sequence(
         markdown_count = len(list(app.query(Markdown)))
         assistant_text = "\n".join(b._content for b in blocks if b.has_class("assistant"))
 
-    assert "Session" in titles
+    assert "Welcome" in titles
     assert "You" in titles
     assert "Assistant" in titles
     assert [block.border_title for block in tool_blocks] == [

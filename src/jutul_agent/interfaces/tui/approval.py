@@ -117,7 +117,6 @@ def render_interrupt_cards(
             ApprovalCard(
                 title=f"Approval · {tool_name}",
                 body=_render_card_body(
-                    interrupt_id=interrupt_id,
                     tool_name=tool_name,
                     tool_args=tool_args,
                     description=str(description) if description else None,
@@ -132,7 +131,6 @@ def render_interrupt_cards(
 
 def _render_card_body(
     *,
-    interrupt_id: str,
     tool_name: str,
     tool_args: dict[str, Any],
     description: str | None,
@@ -145,7 +143,6 @@ def _render_card_body(
         lines.append("")
 
     target = _tool_target(tool_name, tool_args)
-    lines.append(f"- Interrupt: {_inline_code(interrupt_id)}")
     lines.append(f"- Tool: {_inline_code(tool_name)}")
     if target is not None:
         lines.append(f"- Target: {_inline_code(target)}")
