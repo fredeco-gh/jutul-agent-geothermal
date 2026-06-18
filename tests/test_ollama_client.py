@@ -140,6 +140,28 @@ def test_context_window_none_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ollama_client.context_window("x") is None
 
 
+def test_ctx_budget_default_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)
+    assert ollama_client.ctx_budget() == 65536
+    monkeypatch.setenv("JUTUL_AGENT_OLLAMA_NUM_CTX", "16384")
+    assert ollama_client.ctx_budget() == 16384
+    monkeypatch.setenv("JUTUL_AGENT_OLLAMA_NUM_CTX", "not-an-int")
+    assert ollama_client.ctx_budget() == 65536  # bad value falls back to the default
+
+
+def test_num_ctx_clamps_model_context_to_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)  # budget = 65536
+    # A big-context model is capped at the budget...
+    monkeypatch.setattr(ollama_client, "context_window", lambda name: 262144)
+    assert ollama_client.num_ctx("qwen3.6:27b") == 65536
+    # ...a small model keeps its own (smaller) max, not an inflated value...
+    monkeypatch.setattr(ollama_client, "context_window", lambda name: 8192)
+    assert ollama_client.num_ctx("tiny") == 8192
+    # ...and when the daemon can't report, fall back to the budget.
+    monkeypatch.setattr(ollama_client, "context_window", lambda name: None)
+    assert ollama_client.num_ctx("mystery") == 65536
+
+
 async def test_installed_models_empty_when_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         ollama_client, "_client", lambda: _fake_client(list_error=ConnectionError("down"))
