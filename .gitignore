@@ -33,8 +33,15 @@ src/jutul_agent/simulators/*/julia_env/JutulAgent/
 
 # IDE
 .vscode/
-.claude/
 .idea/
+
+# Claude Code: share project commands, keep local settings/worktrees out.
+.claude/*
+!.claude/commands/
+.claude/settings.local.json
+
+# Scratch findings the `/review-mine` command writes before ingesting.
+.jutul-review/
 
 # OS
 .DS_Store

@@ -29,4 +29,8 @@ FIMBUL = SimulatorAdapter(
         "`pkgdir(JutulDarcy)` and the JutulDarcy skills/overview cover those "
         "primitives."
     ),
+    review_hints=(
+        "Geothermal on the Darcy stack: the reservoir ranges apply, plus temperatures "
+        "in Kelvin within sensible bounds."
+    ),
 )

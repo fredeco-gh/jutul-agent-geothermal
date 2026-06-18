@@ -26,4 +26,9 @@ JUTULDARCY = SimulatorAdapter(
         "`examples/` in the installed source (`pkgdir(JutulDarcy)`): `wells_intro.jl`, "
         "`intro_example.jl`, `compositional_5components.jl`, `data_input_file.jl`."
     ),
+    review_hints=(
+        "Reservoir flow: permeability in m^2 (~1e-16..1e-11; a much larger value usually "
+        "means millidarcy/darcy left unconverted), porosity in 0..1, times in seconds, "
+        "SI rates and pressures."
+    ),
 )

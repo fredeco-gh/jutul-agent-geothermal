@@ -196,6 +196,7 @@ async def _run_jutul_session(
     needs_display: bool,
     scratch: Path,
     store: Any,
+    ground_truth: str | None = None,
 ) -> str:
     from jutul_agent.agent.builder import build_agent
     from jutul_agent.agent.turns import TurnRunner
@@ -242,18 +243,29 @@ async def _run_jutul_session(
         env = None
         if needs_display and should_wrap_xvfb():
             env = {"DISPLAY": stack.enter_context(managed_display())}
+        # Persist the session trace to a discoverable eval workspace under the state
+        # home (not the temp scratch, which is cleaned up) so eval runs — where the
+        # answer is known and silent failures matter most — can be reviewed afterwards
+        # with `jutul-agent review`. Only the trace persists; the workspace and
+        # artifacts stay in scratch.
+        from jutul_agent.review.discovery import eval_sessions_state_root
+
         config = KernelConfig(julia_project=julia_project, cwd=workspace, env=env)
         async with JuliaKernel(config) as julia:
             session = Session.create(
                 julia=julia,
                 simulator=adapter,
-                state_root=scratch / "state",
+                state_root=eval_sessions_state_root(simulator),
                 ephemeral_memory=True,
             )
             store.set(STORE_WORKSPACE, str(workspace))
             store.set(STORE_TRACE_DB, str(session.state_dir / "trace.sqlite"))
             store.set(STORE_SESSION_ID, session.session_id)
             store.set(STORE_OUTPUT_DIR, str(session.output_dir))
+            # Record the known answer so a later review can judge the result against
+            # ground truth, the sharpest signal an eval run offers.
+            if ground_truth:
+                session.trace.append("eval_target", {"expected": ground_truth})
             try:
                 agent, _backend = build_agent(
                     session,
@@ -293,6 +305,7 @@ def jutul_agent_solver(simulator: str = "jutuldarcy") -> Solver:
                 needs_display=needs_display,
                 scratch=scratch,
                 store=state.store,
+                ground_truth=state.metadata.get("expected"),
             )
 
         # The bridge tracked the real conversation; the completion graded by

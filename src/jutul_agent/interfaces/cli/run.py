@@ -546,6 +546,9 @@ async def _run_with_backend(
                     warmup_task=warmup_task,
                     agent_factory=build,
                 ).run_async()
+                # Review the whole session once, after the TUI exits (cheaper than
+                # per-turn, and the natural "we finished" point).
+                await _maybe_review(session)
         finally:
             if warmup_task is not None and not warmup_task.done():
                 warmup_task.cancel()
@@ -604,8 +607,26 @@ async def _headless_turn(agent: Any, session: Any, prompt: str) -> int:
         return 3
 
     _print_final_message(result.messages)
+    await _maybe_review(session)
     print(f"\n[session {session.session_id}]", file=sys.stderr)
     return 0
+
+
+async def _maybe_review(session: Any) -> None:
+    """Run the session reviewer when review mode is on (best-effort, dev-only)."""
+    from jutul_agent.review import maybe_review_session, review_enabled
+
+    if not review_enabled():
+        return
+    print("Reviewing the session…", file=sys.stderr)
+    report = await maybe_review_session(session)
+    if report is None:
+        return
+    n = len(report.findings)
+    print(
+        f"Review: {n} finding{'s' if n != 1 else ''}; see `jutul-agent review`.",
+        file=sys.stderr,
+    )
 
 
 def _print_final_message(messages: list[Any]) -> None:

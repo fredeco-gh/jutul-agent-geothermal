@@ -30,4 +30,5 @@ MOCCA = SimulatorAdapter(
         "and `history_matching.jl`. Reference JSON inputs ship beside the "
         'package at `joinpath(pkgdir(Mocca), "..", "models", "json")`.'
     ),
+    review_hints=("Adsorption/separation: mole fractions, purities and recoveries lie in 0..1."),
 )

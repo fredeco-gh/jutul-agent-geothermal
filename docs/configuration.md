@@ -49,6 +49,8 @@ precedence. The global file is what the interactive key prompts write to
 | `JUTUL_AGENT_OLLAMA_NUM_CTX` | Memory cap for local models' context window (default 64K tokens, lower on tight hardware) |
 | `JUTUL_AGENT_NO_XVFB` | Opt out of starting a virtual display on headless Linux (plotting then errors at use) |
 | `JUTUL_AGENT_NO_OPEN` | Never open artifacts in the OS default application (CI, tests) |
+| `JUTUL_AGENT_REVIEW` | Developer tool: set to `1` to auto-review every finished turn (see [session review](review.md)) |
+| `JUTUL_AGENT_REVIEW_MODEL` | Model the reviewer uses (default `openai:gpt-5.4`) |
 | `XDG_DATA_HOME` | Relocates the state home (`<value>/jutul-agent`) |
 
 ## What lives where

@@ -113,7 +113,12 @@ def jutuldarcy_unit_conversion() -> Task:
             "pore volume over the full schedule; producer on a 50 bar bottom-hole "
             "pressure."
         ),
-        metadata={"needs_env": True},
+        metadata={
+            "needs_env": True,
+            # Recorded into the session trace so a later review can judge the answer
+            # against ground truth (the eval cross-check in the reviewer).
+            "expected": "final average reservoir pressure about 203.7 bar",
+        },
     )
     return Task(
         dataset=[sample],
