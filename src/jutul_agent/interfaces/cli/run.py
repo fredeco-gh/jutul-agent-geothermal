@@ -10,12 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from jutul_agent import __version__
-from jutul_agent.agent.builder import DEFAULT_MODEL, MODEL_ENV_VAR
 from jutul_agent.interfaces.cli._helpers import (
     add_workspace_flags,
     known_packages_map,
 )
 from jutul_agent.julia.threads import THREADS_ENV_VAR
+from jutul_agent.models import DEFAULT_MODEL, MODEL_ENV_VAR
 from jutul_agent.paths import workspace_root
 from jutul_agent.session import (
     default_session_id,

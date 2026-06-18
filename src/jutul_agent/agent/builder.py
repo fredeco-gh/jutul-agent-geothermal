@@ -59,8 +59,9 @@ from jutul_agent.trace import TraceRecorder
 
 __all__ = ["PackageSource", "build_agent", "build_backend", "resolve_model"]
 
-DEFAULT_MODEL = "openai:gpt-5.4-mini"
-MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
+# Re-exported from the light models module so importing it for these constants does
+# not pull the agent stack; kept here for the existing import sites.
+from jutul_agent.models import DEFAULT_MODEL, MODEL_ENV_VAR
 
 
 @dataclass(frozen=True)

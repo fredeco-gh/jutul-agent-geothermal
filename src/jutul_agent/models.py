@@ -41,6 +41,13 @@ class ModelInfo:
         return provider_of(self.id)
 
 
+# The agent's default model and the env var that overrides it. They live here, in a
+# light module, so the CLI (help text, version, doctor) can read them without
+# importing the agent builder, which pulls the whole LangChain/deepagents stack.
+DEFAULT_MODEL = "openai:gpt-5.4-mini"
+MODEL_ENV_VAR = "JUTUL_AGENT_MODEL"
+
+
 PROVIDERS: dict[str, ProviderInfo] = {
     "openai": ProviderInfo("openai", "OpenAI", "langchain-openai", "OPENAI_API_KEY"),
     "anthropic": ProviderInfo("anthropic", "Anthropic", "langchain-anthropic", "ANTHROPIC_API_KEY"),
