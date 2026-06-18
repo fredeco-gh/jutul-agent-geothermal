@@ -35,10 +35,10 @@ repeats the suite across operating systems. Hand-written
 scripted Julia session, stand in for the expensive edges, so a complete
 agent turn (prompt in, tool calls, answer out) executes offline and
 deterministically. Snapshot tests turn any change to the assembled system
-prompt into a diff a reviewer sees. Pilot tests drive the real TUI
-headlessly and assert on what actually renders, treating model output as
-untrusted input: text that happens to look like terminal markup must
-render as text, never as formatting. The agent runs all of this in its
+prompt, and to the rendered TUI screen, into a diff a reviewer sees. Pilot
+tests drive the real TUI headlessly and assert on what actually renders,
+treating model output as untrusted input: text that happens to look like
+terminal markup must render as text, never as formatting. The agent runs all of this in its
 loop and fixes failures before a human looks.
 
 ### The repository is the whole interface
@@ -74,6 +74,17 @@ product end to end and inspect what came out, a rendered plot, a
 transcript, a built docs page, and iterate against what it sees. Plotting
 is fully supported rather than stubbed out under test: CI instantiates a
 real simulator environment and renders a real figure.
+
+The same capture closes the loop on the interface itself. A small set of
+scripted scenarios drives the real TUI headlessly and writes each screen
+out as an image an agent can open, and a live mode runs one real prompt,
+real model and real solve, and captures what actually rendered; the agent
+sees a problem in the picture, edits a widget, and re-renders, with no
+person at a terminal. Cold start and a turn's hot path are profiled the
+same headless way, so "what is slow" is a measurement the agent takes and
+acts on rather than a guess: that loop is what found and removed a heavy
+import from the CLI's startup. The machinery lives in one place
+([the lab](lab.md)), reused by both the tests and the agent.
 
 ### Behavior is regression-tested like code
 
