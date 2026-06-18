@@ -81,9 +81,10 @@ def context_window(model_id: str) -> int | None:
     The provider package's bundled profile data answers first (reached by
     building the model, which needs the provider key the session already
     has). Providers whose models the data cannot cover have a live fallback
-    in ``_WINDOW_FALLBACKS``: the Ollama daemon reports loaded models, and
-    the Gemini API covers models newer than the bundled data. ``None`` when
-    no source can answer — callers should degrade to absolute counts.
+    in ``_WINDOW_FALLBACKS``: the Ollama daemon reports the loaded model (capped
+    at the memory budget), and the Gemini API covers models newer than the
+    bundled data. ``None`` when no source can answer — callers should degrade to
+    absolute counts.
     """
     profile: dict | None = None
     try:
@@ -103,7 +104,10 @@ def context_window(model_id: str) -> int | None:
 def _ollama_window(model_id: str) -> int | None:
     from jutul_agent import ollama_client
 
-    return ollama_client.context_window(ollama_client.model_name(model_id))
+    # The *loaded* window (capped at the memory budget), not the daemon's
+    # theoretical maximum: the model is built with this, so the context figure
+    # and the auto-compaction trigger must agree with it.
+    return ollama_client.num_ctx(ollama_client.model_name(model_id))
 
 
 def _google_context_window(name: str) -> int | None:

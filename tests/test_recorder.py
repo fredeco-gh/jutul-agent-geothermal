@@ -39,6 +39,24 @@ async def test_trace_recorder_logs_reasoning_and_assistant(tmp_path) -> None:
     log.close()
 
 
+async def test_trace_recorder_records_compaction_once(tmp_path) -> None:
+    """The stock summarizer's _summarization_event surfaces as one trace event."""
+    log = TraceLog(tmp_path / "trace.sqlite")
+    recorder = TraceRecorder(log)
+
+    summary = HumanMessage(content="a summary", id="sum-1")
+    event = {"cutoff_index": 4, "summary_message": summary, "file_path": "/conv/t.md"}
+    state = {"messages": [AIMessage(content="done")], "_summarization_event": event}
+
+    await recorder.aafter_model(state, runtime=None)
+    await recorder.aafter_model(state, runtime=None)  # same event: must not re-record
+
+    compactions = [e for e in log.iter_events() if e.kind == "context_compaction"]
+    assert len(compactions) == 1
+    assert compactions[0].payload == {"cutoff_index": 4, "offloaded": True}
+    log.close()
+
+
 async def test_trace_recorder_logs_tool_round_trip(tmp_path) -> None:
     log = TraceLog(tmp_path / "trace.sqlite")
     recorder = TraceRecorder(log)

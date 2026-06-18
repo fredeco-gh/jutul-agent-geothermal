@@ -45,6 +45,7 @@ def test_render_context_panel_categories() -> None:
         memory_index_tokens=300,
         memory_notes=3,
         compact_trigger_tokens=320_000,
+        clear_trigger_tokens=240_000,
     )
     assert "7%" in body
     assert "29k of 400k tokens" in body
@@ -56,6 +57,8 @@ def test_render_context_panel_categories() -> None:
     assert "conversation: ~24k (6.0%)" in body  # 29400 - 5300
     # Free space counts up to the compaction trigger; the rest is the buffer.
     assert "free space: 291k" in body  # 320000 - 29400
+    # Clearing fires before summarization, and the panel says so.
+    assert "old tool results start clearing at 240k (before any summary)" in body
     assert "auto-compact buffer: 80k (20.0%) — summarization triggers at 320k" in body
     assert "Last call: input 28k (cache-read 12k) · output 1.3k (reasoning 200)" in body
     assert "Conversation growth: +24k over 7 model calls" in body

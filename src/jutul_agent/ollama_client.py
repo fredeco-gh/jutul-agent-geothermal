@@ -15,6 +15,11 @@ from dataclasses import dataclass
 
 DEFAULT_HOST = "http://localhost:11434"
 
+# Most context (KV cache) to allocate for a local model unless overridden; a
+# memory cap, not a capability claim. The daemon's reported maximum can be far
+# larger than fits in memory.
+DEFAULT_NUM_CTX = 65536
+
 
 def host() -> str:
     """Ollama server URL the client will talk to."""
@@ -120,6 +125,29 @@ def context_window(name: str) -> int | None:
         if lengths:
             return max(lengths)
     return None
+
+
+def ctx_budget() -> int:
+    """The context budget cap, overridable with ``$JUTUL_AGENT_OLLAMA_NUM_CTX``."""
+    try:
+        return int(os.environ["JUTUL_AGENT_OLLAMA_NUM_CTX"])
+    except (KeyError, ValueError):
+        return DEFAULT_NUM_CTX
+
+
+def num_ctx(name: str) -> int:
+    """Context window (tokens) to load ``name`` with: its reported max, capped
+    at the budget; the budget itself when the daemon can't report a maximum.
+
+    This is the *loaded* window — the single figure the rest of the app sizes
+    against. The model is built with it, the auto-compaction trigger is a
+    fraction of it, and ``/context`` measures against it. Keeping all three on
+    this one value is what stops compaction from being scheduled past a window
+    the model was never loaded with.
+    """
+    reported = context_window(name)
+    budget = ctx_budget()
+    return min(reported, budget) if reported else budget
 
 
 def _matches(installed: str, name: str) -> bool:

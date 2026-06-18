@@ -30,6 +30,7 @@ from deepagents.backends import CompositeBackend
 
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
 from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
+from jutul_agent.agent.context_editing import build_context_editing_middleware
 from jutul_agent.agent.julia_plot import (
     make_close_plots_tool,
     make_julia_plot_tool,
@@ -43,7 +44,6 @@ from jutul_agent.agent.memory import (
 from jutul_agent.agent.mounts import mount_dir
 from jutul_agent.agent.prompts import assemble_session_prompt
 from jutul_agent.agent.recovery import InvalidToolCallRecoveryMiddleware
-from jutul_agent.agent.summarization import build_summarization_middleware
 from jutul_agent.agent.tools import (
     make_julia_eval_tool,
     make_record_attempt_tool,
@@ -125,27 +125,6 @@ def register_provider_profiles() -> None:
     _provider_profiles_registered = True
 
 
-def _ollama_ctx_budget(default: int = 65536) -> int:
-    """Most context (KV cache) to allocate for a local model; a memory cap,
-    overridable with ``$JUTUL_AGENT_OLLAMA_NUM_CTX``."""
-    try:
-        return int(os.environ["JUTUL_AGENT_OLLAMA_NUM_CTX"])
-    except (KeyError, ValueError):
-        return default
-
-
-def _ollama_num_ctx(model_id: str) -> int:
-    """Context window to load a local model with: the model's own reported max,
-    capped at the memory budget. Ollama defaults too small for the agent's
-    prompt, and a flat constant ignores each model's real capability.
-    """
-    from jutul_agent import ollama_client
-
-    budget = _ollama_ctx_budget()
-    reported = ollama_client.context_window(ollama_client.model_name(model_id))
-    return min(reported, budget) if reported else budget
-
-
 # Reasoning visibility: models that can reason get it requested explicitly.
 # OpenAI's recent reasoning models default to effort "none" (no reasoning at
 # all) and stream nothing during the thinking phase unless a summary is
@@ -174,14 +153,15 @@ def _model_profile(model_id: str) -> dict[str, Any]:
 def _ollama_settings(model_id: str) -> dict[str, Any]:
     from jutul_agent import ollama_client
 
-    settings: dict[str, Any] = {"num_ctx": _ollama_num_ctx(model_id)}
+    name = ollama_client.model_name(model_id)
+    settings: dict[str, Any] = {"num_ctx": ollama_client.num_ctx(name)}
     # Thinking-capable local models must have think mode requested
     # explicitly: left at the daemon default, the thinking segment is
     # dropped on the client side, so a turn the model spends entirely on
     # thinking surfaces as an empty reply with no tool calls — the agent
     # falls silent. Requested, the thinking is separated, tool calls parse
     # reliably, and the reasoning becomes visible like the cloud providers'.
-    if ollama_client.thinks(ollama_client.model_name(model_id)):
+    if ollama_client.thinks(name):
         settings["reasoning"] = True
     return settings
 
@@ -258,10 +238,35 @@ def _resolve_model_for_agent(model: Any) -> Any:
         if kwargs:
             from langchain.chat_models import init_chat_model
 
-            return init_chat_model(model, **kwargs)
+            instance = init_chat_model(model, **kwargs)
+            _set_profile_window(instance, model)
+            return instance
     except Exception:
         pass  # no key yet, unknown model, offline — run with the plain spec
     return model
+
+
+def _set_profile_window(model: Any, model_id: str) -> None:
+    """Feed the real loaded window into the model's profile.
+
+    deepagents' stock summarizer sizes its trigger from
+    ``model.profile['max_input_tokens']``. Ollama ships no profile, so the
+    trigger would otherwise fall back to a fixed default far larger than the
+    loaded num_ctx — the local-overflow bug. Feed in the window we actually use.
+    Best-effort: a model whose profile can't be set keeps its native window.
+    """
+    from jutul_agent.models import context_window
+
+    window = context_window(model_id)
+    if not window:
+        return
+    try:
+        current = getattr(model, "profile", None)
+        profile = dict(current) if isinstance(current, dict) else {}
+        profile["max_input_tokens"] = window
+        model.profile = profile
+    except Exception:
+        pass
 
 
 def _depot_readonly_roots(
@@ -291,6 +296,7 @@ def build_backend(
     workspace: Path | None = None,
     package_sources: Sequence[PackageSource] | None = None,
     mounted_dirs: Sequence[str | Path] | None = None,
+    artifacts_root: str | Path | None = None,
 ) -> CompositeBackend:
     """The agent's filesystem: one real-path backend over the workspace.
 
@@ -315,6 +321,11 @@ def build_backend(
             readonly_roots=_depot_readonly_roots(package_sources),
         ),
         routes={},
+        # Where the framework writes offloaded artifacts (evicted tool results,
+        # summarized conversation history). On a real-path backend the default
+        # "/" would resolve to the filesystem root, so these writes need a real
+        # writable directory; build_agent points it at the session state dir.
+        artifacts_root=str(artifacts_root) if artifacts_root is not None else "/",
     )
     for raw in mounted_dirs or ():
         mount_dir(backend, raw, workspace=ws)
@@ -365,6 +376,7 @@ def build_agent(
     backend = build_backend(
         package_sources=package_sources,
         mounted_dirs=mounted_dirs,
+        artifacts_root=session.state_dir,
     )
 
     tools = [
@@ -398,16 +410,18 @@ def build_agent(
         skills=skill_sources(session.simulator),
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),
-        # build_summarization_middleware returns None when the model can't be
-        # built yet (no key); drop it so the rest of the agent still assembles.
+        # Auto-compaction is deepagents' stock SummarizationMiddleware (installed
+        # by create_deep_agent); its trigger is sized from the model profile,
+        # which _set_profile_window points at the real loaded window. The
+        # TraceRecorder records each compaction. Tool-result clearing is our one
+        # addition — it sheds old results below the summary trigger so the
+        # expensive summary call is reserved for when clearing isn't enough.
         middleware=[
             m
             for m in (
                 build_memory_middleware(backend, memory_dir),
-                build_summarization_middleware(
-                    resolved_model,
+                build_context_editing_middleware(
                     model_id=model_spec if isinstance(model_spec, str) else None,
-                    trace=session.trace,
                 ),
                 # Before the recorder in the list so its after_model hook runs
                 # after the recorder's (after_model composes in reverse): the

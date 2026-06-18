@@ -20,8 +20,33 @@ class TraceRecorder(AgentMiddleware):
     def __init__(self, trace: TraceLog) -> None:
         super().__init__()
         self._trace = trace
+        self._last_compaction: Any = None
+
+    def _record_compaction(self, state: Any) -> None:
+        """Emit a ``context_compaction`` event when the stock summarizer compacts.
+
+        deepagents' SummarizationMiddleware is non-mutating: on the turns it
+        compacts, it records a ``_summarization_event`` (a fresh summary message,
+        a cutoff index, and the offload path). We surface that into the trace
+        here, keyed on the summary message so each compaction is recorded once.
+        """
+        event = state.get("_summarization_event") if isinstance(state, dict) else None
+        if not isinstance(event, dict):
+            return
+        marker = getattr(event.get("summary_message"), "id", None) or event.get("cutoff_index")
+        if marker == self._last_compaction:
+            return
+        self._last_compaction = marker
+        self._trace.append(
+            "context_compaction",
+            {
+                "cutoff_index": event.get("cutoff_index"),
+                "offloaded": event.get("file_path") is not None,
+            },
+        )
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        self._record_compaction(state)
         messages = (
             state.get("messages") if isinstance(state, dict) else getattr(state, "messages", None)
         )

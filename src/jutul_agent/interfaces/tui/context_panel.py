@@ -84,6 +84,7 @@ def render_context_panel(
     memory_index_tokens: int | None = None,
     memory_notes: int = 0,
     compact_trigger_tokens: int | None = None,
+    clear_trigger_tokens: int | None = None,
 ) -> str:
     """The ``/context`` card body (markdown).
 
@@ -125,6 +126,7 @@ def render_context_panel(
         memory_index_tokens=memory_index_tokens,
         memory_notes=memory_notes,
         compact_trigger_tokens=compact_trigger_tokens,
+        clear_trigger_tokens=clear_trigger_tokens,
     )
 
     input_tokens = int(usage.get("input_tokens") or 0)
@@ -160,6 +162,7 @@ def _category_lines(
     memory_index_tokens: int | None,
     memory_notes: int,
     compact_trigger_tokens: int | None,
+    clear_trigger_tokens: int | None = None,
 ) -> list[str]:
     """Estimated usage by category, Σ = the window when it is known."""
     lines = ["Estimated usage by category:"]
@@ -191,6 +194,12 @@ def _category_lines(
         free = max(0, trigger - held)
         buffer = window - trigger
         lines.append(f"- free space: {format_tokens(free)}{_pct(free, window)}")
+        # Clearing fires before summarization, so note it first when it applies.
+        if clear_trigger_tokens and clear_trigger_tokens < trigger:
+            lines.append(
+                f"- old tool results start clearing at {format_tokens(clear_trigger_tokens)}"
+                " (before any summary)"
+            )
         lines.append(
             f"- auto-compact buffer: {format_tokens(buffer)}{_pct(buffer, window)}"
             f" — summarization triggers at {format_tokens(trigger)}"

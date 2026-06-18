@@ -1421,9 +1421,9 @@ async def test_compact_updates_context_figure_immediately(session: Session, monk
 
     app = TUIApp(agent=_stub_agent(), session=session, model_label="openai:gpt-5.4-mini")
 
-    async def fake_compact(agent, *, thread_id, model, trace=None):
+    async def fake_compact(agent, *, thread_id, model, backend=None, trace=None):
         return summarization.CompactResult(
-            messages_before=40, messages_after=10, freed_tokens=14_000
+            messages_summarized=30, messages_kept=10, freed_tokens=14_000
         )
 
     monkeypatch.setattr(summarization, "compact_thread", fake_compact)
