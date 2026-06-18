@@ -1,0 +1,32 @@
+jutul-agent · FakeSim · openai:gpt-5.4-mini · <session> · default · details available
+jutul-agent
+│43reservoircellvalue=64.500│
+│44reservoircellvalue=66.000│
+│45reservoircellvalue=67.500│
+│46reservoircellvalue=69.000│
+│47reservoircellvalue=70.500│
+│48reservoircellvalue=72.000│
+│49reservoircellvalue=73.500│
+│50reservoircellvalue=75.000│
+│51reservoircellvalue=76.500│
+│52reservoircellvalue=78.000│
+│53reservoircellvalue=79.500│
+│54reservoircellvalue=81.000│
+│55reservoircellvalue=82.500│
+│56reservoircellvalue=84.000│
+│57reservoircellvalue=85.500│
+│58reservoircellvalue=87.000│▁▁
+│59reservoircellvalue=88.500│
+││
+││
+└──────────────────────────────────────────────────────────────────────────────────────────── completed ─┘
+
+┌─ Assistant ────────────────────────────────────────────────────────────────────────────────────────────┐
+│Done.│
+││
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│>Ask a question or describe a task│
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ready · Enter send · Shift+Enter newline · Ctrl+P/↑ history · Shift+Tab cycle mode · Ctrl+O expand tool
