@@ -47,3 +47,7 @@ src/jutul_agent/simulators/*/julia_env/JutulAgent/
 .DS_Store
 Thumbs.db
 site/
+
+# Local scratch / lab output
+.jutul-review/
+lab-out/

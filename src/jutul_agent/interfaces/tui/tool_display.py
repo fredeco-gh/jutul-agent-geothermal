@@ -392,14 +392,14 @@ _TOOL_LANGUAGES: dict[str, str] = {
     "julia_eval": "julia",
     "execute": "sh",
 }
-_PREVIEW_LINES = 3
-_PREVIEW_CHARS = 240
+_PREVIEW_LINES = 6
+_PREVIEW_CHARS = 600
 _TOOL_PREVIEW_LIMITS: dict[str, tuple[int, int]] = {
-    "execute": (6, 1200),
+    "execute": (12, 2000),
     # julia_eval limits are sized so a typical Jutul summary table plus the
     # return value and elapsed marker fit without a click-to-expand.
     "julia_eval": (40, 6000),
-    "read_file": (8, 900),
+    "read_file": (14, 1600),
 }
 
 

@@ -81,3 +81,4 @@ nav:
       - Development: development.md
       - Testing: testing.md
       - Agent-first development: agent-first.md
+      - The lab: lab.md
