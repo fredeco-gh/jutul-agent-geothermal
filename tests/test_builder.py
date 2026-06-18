@@ -7,11 +7,30 @@ import pytest
 from jutul_agent.agent.builder import (
     DEFAULT_MODEL,
     MODEL_ENV_VAR,
-    _ollama_ctx_budget,
-    _ollama_num_ctx,
+    _set_profile_window,
     register_provider_profiles,
     resolve_model,
 )
+
+
+def test_set_profile_window_feeds_loaded_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loaded window goes into the model profile, where the stock summarizer
+    reads its trigger from."""
+    from jutul_agent import models
+
+    class _Model:
+        profile = None
+
+    monkeypatch.setattr(models, "context_window", lambda model_id: 65_536)
+    model = _Model()
+    _set_profile_window(model, "ollama:qwen3.6:27b")
+    assert model.profile["max_input_tokens"] == 65_536
+
+    # No discoverable window → leave the model's native profile untouched.
+    monkeypatch.setattr(models, "context_window", lambda model_id: None)
+    untouched = _Model()
+    _set_profile_window(untouched, "ollama:mystery")
+    assert untouched.profile is None
 
 
 def test_resolve_model_prefers_explicit() -> None:
@@ -40,30 +59,6 @@ def test_resolve_model_workspace_beats_user_and_env(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv(MODEL_ENV_VAR, "openai:env")
     resolved = resolve_model(None, workspace_model="anthropic:ws", user_model="x:user")
     assert resolved == "anthropic:ws"
-
-
-def test_ollama_ctx_budget_default_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)
-    assert _ollama_ctx_budget() == 65536
-    monkeypatch.setenv("JUTUL_AGENT_OLLAMA_NUM_CTX", "16384")
-    assert _ollama_ctx_budget() == 16384
-    monkeypatch.setenv("JUTUL_AGENT_OLLAMA_NUM_CTX", "not-an-int")
-    assert _ollama_ctx_budget() == 65536  # bad value falls back to the default
-
-
-def test_ollama_num_ctx_clamps_model_context_to_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jutul_agent import ollama_client
-
-    monkeypatch.delenv("JUTUL_AGENT_OLLAMA_NUM_CTX", raising=False)  # budget = 65536
-    # A big-context model is capped at the budget...
-    monkeypatch.setattr(ollama_client, "context_window", lambda name: 262144)
-    assert _ollama_num_ctx("ollama:qwen3.6:27b") == 65536
-    # ...a small model keeps its own (smaller) max, not an inflated value...
-    monkeypatch.setattr(ollama_client, "context_window", lambda name: 8192)
-    assert _ollama_num_ctx("ollama:tiny") == 8192
-    # ...and when the daemon can't report, fall back to the budget.
-    monkeypatch.setattr(ollama_client, "context_window", lambda name: None)
-    assert _ollama_num_ctx("ollama:mystery") == 65536
 
 
 def test_resolve_model_for_agent_handles_ollama_and_cloud(monkeypatch: pytest.MonkeyPatch) -> None:

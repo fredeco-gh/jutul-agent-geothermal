@@ -501,6 +501,7 @@ class TUIApp(App[None]):
                 self._agent,
                 thread_id=self._session.session_id,
                 model=self._model_label,
+                backend=self._backend,
                 trace=self._session.trace,
             )
         except asyncio.CancelledError:
@@ -517,15 +518,22 @@ class TUIApp(App[None]):
                 )
             else:
                 self._apply_compaction_estimate(result.freed_tokens)
+                recoverable = (
+                    " The summarized turns were saved and can be reopened if needed."
+                    if result.offloaded
+                    else ""
+                )
                 await self._note(
-                    f"Compacted the conversation: {result.messages_before} messages → "
-                    f"{result.messages_after} (a summary plus the recent turns). "
-                    "The ctx figure now shows an estimate, refined on your next reply."
+                    f"Compacted the conversation: summarized {result.messages_summarized} "
+                    f"older messages into a summary, kept the {result.messages_kept} most "
+                    f"recent.{recoverable} The ctx figure now shows an estimate, refined "
+                    "on your next reply."
                 )
         finally:
             await self._finish_turn()
 
     async def _command_context(self, _arg: str) -> None:
+        from jutul_agent.agent.context_editing import clear_tool_uses_trigger_tokens
         from jutul_agent.agent.memory import list_memory_notes
         from jutul_agent.agent.summarization import auto_compact_trigger_tokens
 
@@ -540,6 +548,7 @@ class TUIApp(App[None]):
             memory_index_tokens=memory_tokens,
             memory_notes=len(list_memory_notes(self._memory_dir())),
             compact_trigger_tokens=auto_compact_trigger_tokens(self._context_window_tokens),
+            clear_trigger_tokens=clear_tool_uses_trigger_tokens(self._context_window_tokens),
         )
         await self._log.mount(MessageBlock("Context", "system", body, markdown=True))
         self._jump_to_latest()
