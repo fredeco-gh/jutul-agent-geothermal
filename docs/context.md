@@ -19,12 +19,13 @@ Every turn, the model receives:
   enter only when read.
 - The conversation so far: messages, tool calls, and tool results.
 
-Tool results are real content, not summaries. The Julia kernel's streamed
-output is rendered through a terminal emulator (so progress bars collapse
-to their final state instead of thousands of carriage-return frames) and
-tail-capped at 256 KB. Result values and error messages are capped at
-64 KiB on the kernel side. Within those caps, what the tool saw is what
-the model sees.
+Tool results enter as real content, not summaries — but they are not kept
+forever at full size: a large single result is offloaded and old ones are
+cleared as the window fills (see [Growth and its limits](#growth-and-its-limits)
+below). The Julia kernel's streamed output is rendered through a terminal
+emulator (so progress bars collapse to their final state instead of thousands of
+carriage-return frames) and tail-capped at 256 KB; result values and error
+messages are capped at 64 KiB on the kernel side.
 
 The TUI's collapsed tool and reasoning cards are display only. `Ctrl+O`
 toggles the full output for you, and the model's context is unaffected
@@ -41,40 +42,60 @@ model.
 
 ## Growth and its limits
 
-A session's context grows with the conversation, so growth is both visible
-and managed:
+A session's context grows with the conversation, so growth is managed in
+layers, cheapest first, each running ahead of the next so the expensive ones
+fire only when the cheaper ones are not enough:
 
-- `/context` in the TUI shows measured usage: the last model call's
-  `usage_metadata` is exactly what the conversation costs to send. The
-  panel estimates usage by category — system prompt, memory index,
-  tools/skills/framework, conversation — plus the free space up to the
-  auto-compaction trigger and the buffer the trigger reserves, and it
-  tracks conversation growth across model calls. The status bar keeps a
-  `ctx` percentage in view (yellow at 70% of the window, red at 90%).
-  The window size comes from the provider package's profile data, from
-  the Ollama daemon for local models, or from the Gemini API for Gemini
-  models newer than the bundled data.
-- When the conversation reaches 80% of the model's window, older turns are
-  automatically replaced by a structured summary (session intent, key
-  decisions, artifacts, next steps) while the newest 20 messages stay
-  verbatim — langchain's `SummarizationMiddleware`, wired in
-  `agent/summarization.py`. For models with no discoverable window the
-  trigger falls back to an absolute token count.
-- `/compact` runs the same pass on demand against the checkpointed thread,
-  keeping a shorter tail. Every compaction (automatic or manual) is
-  recorded as a `context_compaction` trace event, and the full
-  pre-compaction conversation remains in the trace.
-- Keep sessions task-shaped regardless: a summary preserves conclusions,
-  not everything. Durable knowledge belongs in memory, which survives the
-  session boundary by design.
-- Token usage per model turn is recorded in the trace (`model_usage`
-  events), so the cost of a workflow is measurable, and the bench records
-  it per sample.
-- Local models get a context window sized to what the model supports under
-  a memory budget (see [models](models.md)). The large system prompt is
-  the floor that budget must clear.
+- **Eviction of a large single result.** Any tool result over ~20k tokens is
+  written to `large_tool_results/<id>` under the session state dir and replaced
+  inline with a head/tail preview plus a pointer the agent can `read_file`. The
+  full result stays recoverable; the context holds a stub. This is deepagents'
+  `FilesystemMiddleware`.
+- **Clearing of old tool results.** Once the conversation passes ~60% of the
+  model's window, the older tool results (source reads, REPL output) are
+  replaced by a `[cleared]` placeholder while the most recent ones stay
+  verbatim, via langchain's `ContextEditingMiddleware` (wired in
+  `agent/context_editing.py`). It is
+  transparent (the raw log is untouched; only the model's per-call view is
+  clipped) and cleared results are re-derivable: the files are still on disk and
+  REPL commands can be re-run. The attempt log is never cleared, since the agent
+  refers back to it by value.
+- **Summarization.** When clearing is not enough and the conversation reaches
+  ~85% of the window, the older turns are replaced by a structured summary
+  (session intent, key decisions, artifacts, next steps) while the newest turns
+  stay verbatim. The summarized turns are offloaded to
+  `conversation_history/<thread>.md` first, so they remain recoverable, and the
+  summary embeds that path. This is deepagents' stock backend-recoverable
+  `SummarizationMiddleware` — installed by `create_deep_agent`, sized from the
+  model profile (which `builder._set_profile_window` points at the real loaded
+  window), and non-mutating; `TraceRecorder` records each compaction. We lean on
+  the stock middleware so upstream improvements arrive without porting.
 
-Subagents are the structural answer for context-heavy sub-tasks: a
-subagent runs in its own context window and returns a result, so the
-parent's context pays for the conclusion, not the exploration. The seam
-exists per simulator (`subagent_factories`), though none are bundled yet.
+`/context` shows measured usage by category (the last call's `usage_metadata`
+is exactly what the conversation costs to send) plus both the clearing and the
+summarization thresholds, so it is clear what will happen as the window fills.
+The status bar keeps a `ctx` percentage in view (yellow at 70%, red at 90%).
+
+The window the thresholds are measured against is the model's real loaded size:
+the provider package's profile data for cloud models, and for a local model the
+`num_ctx` it was actually loaded with (its reported maximum capped at the memory
+budget) — not the daemon's theoretical maximum, which the model was never loaded
+with. Sizing the trigger to the loaded window is what lets compaction fire
+before a local model overflows.
+
+- `/compact` runs a summarization pass on demand against the checkpointed
+  thread. Every compaction (automatic or manual) is recorded as a
+  `context_compaction` trace event, and the full conversation remains in the
+  trace — compaction is non-mutating, so nothing is lost from the record.
+- Keep sessions task-shaped regardless: clearing and the summary preserve the
+  working set and the conclusions, not every byte. Durable knowledge belongs in
+  memory, which survives the session boundary by design.
+- Token usage per model turn is recorded in the trace (`model_usage` events), so
+  the cost of a workflow is measurable, and the bench records it per sample.
+
+Subagents are the structural answer for context-heavy sub-tasks: a subagent runs
+in its own context window and returns a result, so the parent's context pays for
+the conclusion, not the exploration. The seam exists per simulator
+(`subagent_factories`); a general source-exploration subagent — so that browsing
+installed package source never enters the main context at all — is the planned
+next step.
