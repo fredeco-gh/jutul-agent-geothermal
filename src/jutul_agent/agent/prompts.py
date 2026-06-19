@@ -10,6 +10,7 @@ general-purpose-subagent disable.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
@@ -21,6 +22,8 @@ def assemble_session_prompt(
     open_windows: bool = True,
     resumed: bool = False,
     workspace: Path | None = None,
+    surface: str = "tui",
+    extra_fragments: Sequence[str] = (),
 ) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
@@ -41,12 +44,34 @@ def assemble_session_prompt(
         _ground_rules(),
         _display_note(open_windows),
     ]
+    surface_note = _surface_note(surface)
+    if surface_note is not None:
+        sections.append(surface_note)
     if resumed:
         sections.append(_resume_note())
     hints = adapter.domain_hints.strip()
     if hints:
         sections.append("Simulator hints:\n" + hints)
+    sections += [fragment.strip() for fragment in extra_fragments if fragment.strip()]
     return "\n\n".join(sections) + "\n"
+
+
+def _surface_note(surface: str) -> str | None:
+    """Tell the agent which front end it is driving, when that changes behaviour.
+
+    The terminal is the default and needs no note. On the web the agent talks to
+    an application that can show richer output and expose interface controls, so
+    say so; the specific controls arrive as extension tools.
+    """
+
+    if surface == "web":
+        return (
+            "Interface: you are driving a web application, not a terminal. The user "
+            "sees your replies, plots, and results in that application. Some tools "
+            "may update the application's interface directly; use them when the task "
+            "calls for it."
+        )
+    return None
 
 
 def _resume_note() -> str:

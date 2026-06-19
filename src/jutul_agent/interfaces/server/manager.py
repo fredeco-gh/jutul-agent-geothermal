@@ -12,10 +12,13 @@ step; for now it is a straightforward registry with a lock around mutation.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from jutul_agent.interfaces.server.session_host import SessionHost
+
+if TYPE_CHECKING:
+    from jutul_agent.agent.capabilities import Capability
 
 HostFactory = Callable[..., Awaitable[SessionHost]]
 
@@ -28,6 +31,7 @@ async def _default_host_factory(
     workspace: Any | None,
     resume: bool,
     session_id: str | None,
+    extensions: Sequence[Capability],
 ) -> SessionHost:
     """Build a real session host for a simulator named in the request."""
     from jutul_agent.simulators import registry
@@ -40,6 +44,7 @@ async def _default_host_factory(
         workspace=workspace,
         resume=resume,
         session_id=session_id,
+        extensions=extensions,
     )
 
 
@@ -58,6 +63,7 @@ class SessionManager:
         model: str | None = None,
         approval_mode: str | None = None,
         workspace: Any | None = None,
+        extensions: Sequence[Capability] = (),
     ) -> SessionHost:
         host = await self._host_factory(
             sim=sim,
@@ -66,6 +72,7 @@ class SessionManager:
             workspace=workspace,
             resume=False,
             session_id=None,
+            extensions=extensions,
         )
         async with self._lock:
             self._hosts[host.session_id] = host
@@ -79,6 +86,7 @@ class SessionManager:
         model: str | None = None,
         approval_mode: str | None = None,
         workspace: Any | None = None,
+        extensions: Sequence[Capability] = (),
     ) -> SessionHost:
         host = await self._host_factory(
             sim=sim,
@@ -87,6 +95,7 @@ class SessionManager:
             workspace=workspace,
             resume=True,
             session_id=session_id,
+            extensions=extensions,
         )
         async with self._lock:
             self._hosts[host.session_id] = host

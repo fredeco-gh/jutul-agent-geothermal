@@ -13,6 +13,7 @@ The constructor takes a ready-made session and agent so tests can wrap fakes;
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from jutul_agent.agent.turns import TurnRunner
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from contextlib import AsyncExitStack
     from pathlib import Path
 
+    from jutul_agent.agent.capabilities import Capability
     from jutul_agent.session import Session
     from jutul_agent.simulators.base import SimulatorAdapter
 
@@ -76,12 +78,16 @@ class SessionHost:
         approval_mode: str | None = None,
         workspace: Path | None = None,
         state_root: Path | None = None,
+        surface: str = "web",
+        extensions: Sequence[Capability] = (),
     ) -> SessionHost:
         """Stand up a real session: prepare the env, start the kernel, build the agent.
 
         Mirrors the CLI's session bootstrap. The Julia kernel and the SQLite
         checkpointer are entered on an ``AsyncExitStack`` held by the host, so
-        they stay open until ``aclose``.
+        they stay open until ``aclose``. The agent is composed for the ``web``
+        surface from the capabilities installed packages publish plus any passed
+        in (e.g. a host application's declared tools).
         """
 
         from contextlib import AsyncExitStack
@@ -89,6 +95,7 @@ class SessionHost:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         from jutul_agent.agent.builder import build_agent
+        from jutul_agent.agent.capabilities import discover_extensions
         from jutul_agent.julia.requirements import require_julia
         from jutul_agent.julia.threads import (
             HYPRE_THREADS_ENV_VAR,
@@ -149,6 +156,8 @@ class SessionHost:
                 model=model,
                 checkpointer=checkpointer,
                 approval_mode=approval_mode,
+                surface=surface,
+                extensions=[*discover_extensions(), *extensions],
             )
         except BaseException:
             await stack.aclose()

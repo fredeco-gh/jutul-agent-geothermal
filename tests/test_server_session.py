@@ -31,7 +31,7 @@ def _manager(agent_factory: Callable[[], Any], tmp_path: Path) -> SessionManager
     """A manager whose sessions wrap a fresh fake agent and a real (fake-kernel) Session."""
 
     async def host_factory(
-        *, sim, model, approval_mode, workspace, resume, session_id
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
     ) -> SessionHost:
         adapter = make_fake_adapter(tmp_path)
         sid = session_id or default_session_id()

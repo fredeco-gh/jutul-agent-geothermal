@@ -27,11 +27,21 @@ from jutul_agent.interfaces.server.manager import SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
 
 
+class HttpToolSpecModel(BaseModel):
+    """A host application's operation, declared so the agent gets a tool for it."""
+
+    name: str
+    description: str
+    endpoint: str
+    parameters: dict[str, dict[str, Any]] = {}
+
+
 class CreateSessionRequest(BaseModel):
     sim: str
     model: str | None = None
     approval_mode: str | None = None
     workspace: str | None = None
+    tools: list[HttpToolSpecModel] | None = None
 
 
 class ResumeSessionRequest(BaseModel):
@@ -39,6 +49,24 @@ class ResumeSessionRequest(BaseModel):
     model: str | None = None
     approval_mode: str | None = None
     workspace: str | None = None
+
+
+def _request_extensions(tools: list[HttpToolSpecModel] | None) -> list:
+    """Turn declared HTTP tool specs into a host-app capability, if any were sent."""
+    if not tools:
+        return []
+    from jutul_agent.agent.capabilities import HttpToolSpec, http_tool_capability
+
+    specs = [
+        HttpToolSpec(
+            name=tool.name,
+            description=tool.description,
+            endpoint=tool.endpoint,
+            parameters=tool.parameters,
+        )
+        for tool in tools
+    ]
+    return [http_tool_capability("host-app", specs)]
 
 
 def create_app(manager: SessionManager | None = None) -> FastAPI:
@@ -70,6 +98,7 @@ def create_app(manager: SessionManager | None = None) -> FastAPI:
                 model=req.model,
                 approval_mode=req.approval_mode,
                 workspace=req.workspace,
+                extensions=_request_extensions(req.tools),
             )
         except KeyError as exc:  # unknown simulator
             raise HTTPException(status_code=400, detail=str(exc)) from exc

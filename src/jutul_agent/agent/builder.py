@@ -31,6 +31,14 @@ from deepagents.backends import CompositeBackend
 from jutul_agent.agent.added_dirs import add_dir
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
 from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
+from jutul_agent.agent.capabilities import (
+    Capability,
+    collect_prompt_fragments,
+    collect_skill_dirs,
+    collect_subagents,
+    collect_tools,
+    select_for_surface,
+)
 from jutul_agent.agent.context_editing import build_context_editing_middleware
 from jutul_agent.agent.memory import (
     build_memory_middleware,
@@ -358,6 +366,8 @@ def build_agent(
     approval_mode: ApprovalMode | str | None = None,
     package_sources: Sequence[PackageSource] | None = None,
     added_dirs: Sequence[str | Path] | None = None,
+    surface: str = "tui",
+    extensions: Sequence[Capability] = (),
 ) -> tuple[Any, CompositeBackend]:
     """Build the session agent and return it with its live ``CompositeBackend``.
 
@@ -380,6 +390,10 @@ def build_agent(
         artifacts_root=session.state_dir,
     )
 
+    # Compose the agent from layers: base tools/skills, the simulator, and any
+    # extension capabilities that apply to this surface (see agent.capabilities).
+    active = select_for_surface(list(extensions), surface)
+
     tools = [
         make_run_julia_tool(session),
         make_reset_julia_tool(session),
@@ -389,13 +403,17 @@ def build_agent(
         make_record_attempt_tool(session),
         make_write_report_tool(session),
         make_remember_tool(memory_dir),
+        *collect_tools(active, session),
     ]
     mode = (
         approval_mode
         if isinstance(approval_mode, ApprovalMode)
         else parse_approval_mode(approval_mode)
     )
-    subagents = [factory(session) for factory in session.simulator.subagent_factories]
+    subagents = [
+        factory(session) for factory in session.simulator.subagent_factories
+    ] + collect_subagents(active, session)
+    skills = skill_sources(session.simulator) + collect_skill_dirs(active)
     model_spec = resolve_model(model)
     resolved_model = _resolve_model_for_agent(model_spec)
     agent = create_deep_agent(
@@ -407,8 +425,10 @@ def build_agent(
             open_windows=session.open_windows,
             resumed=session.resumed,
             workspace=workspace_root(),
+            surface=surface,
+            extra_fragments=collect_prompt_fragments(active),
         ),
-        skills=skill_sources(session.simulator),
+        skills=skills,
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),
         # Auto-compaction is deepagents' stock SummarizationMiddleware (installed
