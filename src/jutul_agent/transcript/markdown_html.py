@@ -16,7 +16,13 @@ _YAML_FRONTMATTER = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 
 @lru_cache(maxsize=1)
 def _markdown_renderer() -> MarkdownIt:
-    return MarkdownIt("gfm-like")
+    # html=False escapes any raw HTML in the source rather than passing it
+    # through. The prose we render is untrusted (LLM output, tool results, files
+    # the agent read), so a literal ``<script>`` or ``<img onerror=...>`` must
+    # show as text, never execute. Markdown syntax (headings, tables, code,
+    # links, images) is unaffected. Intentional HTML goes through the report's
+    # explicit ``html`` block instead, which is backed by a strict CSP.
+    return MarkdownIt("gfm-like", {"html": False})
 
 
 def looks_like_markdown(text: str) -> bool:

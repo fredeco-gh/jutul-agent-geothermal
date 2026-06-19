@@ -32,9 +32,10 @@ class ArtifactPayload:
         if isinstance(size_raw, (list, tuple)) and len(size_raw) == 2:
             size_px = (int(size_raw[0]), int(size_raw[1]))
 
+        path = str(payload.get("path") or "")
         return cls(
-            path=str(payload.get("path") or ""),
-            caption=str(payload.get("caption") or "artifact"),
+            path=path,
+            caption=str(payload.get("caption") or _basename(path) or "artifact"),
             mime=str(payload.get("mime") or ""),
             slot=_str_or_none(payload.get("slot")),
             format=_str_or_none(payload.get("format")),
@@ -47,6 +48,11 @@ class ArtifactPayload:
     @property
     def is_image(self) -> bool:
         return self.mime.startswith("image/")
+
+
+def _basename(path: str) -> str:
+    """The final path segment, separator-agnostic (paths may be POSIX or Windows)."""
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
 def _str_or_none(value: Any) -> str | None:

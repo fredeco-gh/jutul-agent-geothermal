@@ -10,8 +10,8 @@ def test_render_full_turn(snapshot) -> None:
     events = [
         make_event(1, "session_start", {"session_id": "abc", "simulator": None}),
         make_event(2, "message_user", {"content": "what is 2+2?"}),
-        make_event(3, "tool_call", {"name": "julia_eval", "args": {"code": "2+2"}}),
-        make_event(4, "tool_result", {"name": "julia_eval", "content": "4"}),
+        make_event(3, "tool_call", {"name": "run_julia", "args": {"code": "2+2"}}),
+        make_event(4, "tool_result", {"name": "run_julia", "content": "4"}),
         make_event(5, "message_assistant", {"content": "The answer is 4."}),
         make_event(6, "session_end", {"session_id": "abc"}),
     ]

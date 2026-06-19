@@ -25,7 +25,7 @@ def test_highlight_markdown_code_fence() -> None:
 
 
 def test_infer_julia_from_tool_name() -> None:
-    assert infer_tool_code_language("x = 1", "julia_eval") == "julia"
+    assert infer_tool_code_language("x = 1", "run_julia") == "julia"
 
 
 def test_infer_plaintext_for_grep() -> None:

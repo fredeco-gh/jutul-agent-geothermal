@@ -2,7 +2,7 @@
 # name: test_render_report_writes_file
   '''
   <!doctype html>
-  <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>BattMo investigation report</title><style>
+  <html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"><meta name="viewport" content="width=device-width, initial-scale=1"><title>BattMo investigation report</title><style>
   :root {
     color-scheme: light dark;
     --bg: #ffffff;
@@ -121,6 +121,43 @@
     color: var(--fg);
   }
   section > h2.section-sub { font-size: 0.95rem; margin-top: 1.5rem; color: var(--mu); }
+  .narrative {
+    background: var(--bg-card);
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+  }
+  .narrative > :first-child { margin-top: 0; }
+  .narrative > :last-child { margin-bottom: 0; }
+  .narrative img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.6rem 0; }
+  .figure-block, .metrics-block, .table-block { margin: 2rem 0; }
+  .figure-block figure { margin: 0; }
+  .figure-block img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--bd);
+    border-radius: 8px;
+  }
+  .figure-block figcaption { color: var(--mu); font-size: 0.85rem; margin-top: 0.4rem; }
+  .kv-grid { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+  .kv {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-card);
+    border: 1px solid var(--bd);
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    min-width: 8rem;
+  }
+  .kv-label { font-size: 0.72rem; color: var(--mu); font-weight: 600; }
+  .kv-value { font-size: 1.4rem; font-weight: 700; color: var(--ac); }
+  .table-block table { width: 100%; border-collapse: collapse; }
+  .table-block th, .table-block td {
+    border: 1px solid var(--bd);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+  }
+  .table-block th { background: var(--bg-soft); }
   .narrative h1, .narrative h2, .narrative h3 { margin-top: 1.2rem; }
   .narrative h1 { font-size: 1.3rem; }
   .narrative h2 { font-size: 1.1rem; }

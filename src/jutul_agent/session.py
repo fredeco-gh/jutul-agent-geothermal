@@ -194,7 +194,7 @@ class Session:
     simulator: SimulatorAdapter
     session_id: str
     ephemeral_memory: bool = False
-    # Whether julia_plot may open a live Makie window for the user (interactive
+    # Whether plot_julia may open a live Makie window for the user (interactive
     # session with a display). Headless and one-shot runs render offscreen to a file.
     open_windows: bool = False
     # Human-readable title derived from the first prompt (see ``adopt_title``).
@@ -203,6 +203,9 @@ class Session:
     # is restored from the checkpointer; the Julia REPL is not.
     resumed: bool = False
     _ephemeral_memory_dir: Path | None = field(default=None, repr=False)
+    # Folders holding a report written this session, whose sidecar transcript is
+    # refreshed at turn end (see ``refresh_report_transcripts``).
+    _report_transcript_dirs: set[Path] = field(default_factory=set, repr=False)
 
     @classmethod
     def create(
@@ -263,7 +266,7 @@ class Session:
         The conversation itself comes back through the per-session
         checkpointer (the thread key is the session id); this restores the
         on-disk identity around it. The Julia kernel is the caller's fresh
-        instance — REPL state does not survive across processes.
+        instance; REPL state does not survive across processes.
         """
         dir_ = session_dir(session_id, state_root=state_root)
         if not (dir_ / "trace.sqlite").exists():
@@ -333,6 +336,32 @@ class Session:
         except OSError:
             return
         self.output_dir = target
+
+    def note_report(self, report_path: Path) -> None:
+        """Remember a report so its sidecar transcript is refreshed at turn end.
+
+        ``write_report`` runs mid-turn, before the model's closing message, so
+        the transcript it writes beside the report is a snapshot. Recording the
+        folder here lets the turn loop rewrite it from the complete trace once
+        the turn settles.
+        """
+        self._report_transcript_dirs.add(Path(report_path).parent)
+
+    def refresh_report_transcripts(self) -> None:
+        """Rewrite the transcript beside each report written this session.
+
+        Called when a turn settles (no pending interrupts), so the linked
+        transcript includes the model's closing message. Best-effort: a write
+        failure must never disturb the turn loop.
+        """
+        if not self._report_transcript_dirs:
+            return
+        from jutul_agent.transcript.report import write_sidecar_transcript
+
+        events = list(self.trace.iter_events())
+        for directory in self._report_transcript_dirs:
+            with contextlib.suppress(OSError):
+                write_sidecar_transcript(directory, events)
 
     def finalize(self) -> None:
         self.trace.append("session_end", {"session_id": self.session_id})

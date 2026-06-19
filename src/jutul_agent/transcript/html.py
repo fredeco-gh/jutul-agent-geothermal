@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import html
 import json
 from collections.abc import Iterable
 from typing import Any
 
+from jutul_agent.tool_labels import tool_label
 from jutul_agent.trace import Event
 from jutul_agent.transcript.events import ArtifactPayload
 from jutul_agent.transcript.highlight import (
@@ -65,11 +68,13 @@ header {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1rem;
+  padding: 0.9rem 1.25rem;
+  margin-bottom: 0.75rem;
 }
-header h1 { margin: 0 0 0.5rem; font-size: 1.35rem; }
-.meta { color: var(--muted); font-size: 0.9rem; margin: 0.25rem 0; }
+header h1 { margin: 0 0 0.3rem; font-size: 1.3rem; }
+.title-sub { margin: 0 0 0.35rem; font-size: 1rem; font-weight: 500; }
+.meta { color: var(--muted); font-size: 0.85rem; margin: 0.15rem 0; }
+.count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .badges { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.75rem; }
 .badge {
   font-size: 0.75rem;
@@ -82,8 +87,8 @@ header h1 { margin: 0 0 0.5rem; font-size: 1.35rem; }
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem 1.25rem;
@@ -257,7 +262,42 @@ dt { font-weight: 600; font-size: 0.85rem; margin-top: 0.35rem; }
 dd { margin: 0.15rem 0 0 0; }
 details { margin-top: 0.35rem; }
 details > summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
-.approval { border-left: 3px solid var(--approval); padding-left: 0.75rem; }
+/* Tool calls are secondary to the conversation: a compact, collapsed row with a
+   one-line peek at the input; expand for the full code and result. */
+.tool-event { padding: 0.3rem 0.75rem; }
+.tool-event > details { margin-top: 0; }
+.tool-summary {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  list-style: none;
+  font-size: 0.85rem;
+}
+.tool-summary::-webkit-details-marker { display: none; }
+.tool-summary::before { content: "\\25B8"; color: var(--muted); flex: 0 0 auto; }
+details[open] > .tool-summary::before { content: "\\25BE"; }
+.tool-peek {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-summary time { flex: 0 0 auto; }
+.tool-body { margin-top: 0.5rem; }
+.event.approval { border-left: 3px solid var(--approval); }
+.approval-actions { margin: 0; padding-left: 1.2rem; }
+.approval-actions li { margin: 0.1rem 0; }
+.approval-desc { color: var(--muted); font-size: 0.9rem; margin-top: 0.15rem; }
+.approval-outcome {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.approval-outcome p { margin: 0; }
 figure { margin: 0.5rem 0 0; }
 figure img {
   max-width: 100%;
@@ -302,6 +342,26 @@ _SCRIPT = """
 })();
 """
 
+
+def _script_hash() -> str:
+    """CSP source hash for the one trusted inline script (its exact bytes)."""
+    digest = hashlib.sha256(_SCRIPT.encode("utf-8")).digest()
+    return "sha256-" + base64.b64encode(digest).decode("ascii")
+
+
+# The transcript is opened from disk and renders untrusted content (LLM messages,
+# tool output, files the agent read). This CSP allows only the page's own inline
+# script (matched by hash, so an injected ``<script>`` is refused) and inline
+# styles; images may be inlined ``data:`` or local files (artifacts shipped beside
+# the transcript) but never remote, and there is no network egress, so a tracking
+# pixel or fetch smuggled into the transcript cannot fire.
+_CSP = (
+    "default-src 'none'; "
+    f"script-src '{_script_hash()}'; "
+    "img-src 'self' data: file:; "
+    "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"
+)
+
 _FILTER_GROUPS: dict[str, str] = {
     "message_user": "user",
     "message_assistant": "assistant",
@@ -326,6 +386,11 @@ _FILTER_LABELS: dict[str, str] = {
 _SESSION_MARKER_KINDS = frozenset(
     {"session_start", "session_end", "session_resume", "session_title", "context_compaction"}
 )
+
+# Internal telemetry the trace keeps for cost/efficiency analysis and eval grading,
+# but which is not part of the conversation: dropped entirely from the human
+# transcript (no card, no filter chip).
+_INTERNAL_KINDS = frozenset({"model_usage", "eval_target"})
 
 _KIND_LABELS: dict[str, str] = {
     **{kind: "Session" for kind in _SESSION_MARKER_KINDS},
@@ -463,41 +528,111 @@ def _fmt_args(args: Any) -> str:
 
 
 def _fmt_hitl_request(payload: dict[str, Any]) -> str:
-    interrupt_id = payload.get("interrupt_id") or "?"
+    """Human-readable approval request: each action's tool and a readable view
+    of its arguments (the command for a shell call, the path for a file edit),
+    plus any description. The internal interrupt id is left out of the prose."""
     value = payload.get("value")
-    if not isinstance(value, dict):
-        return (
-            f"<dl>"
-            f"<dt>interrupt_id</dt><dd><pre>{_esc(repr(interrupt_id))}</pre></dd>"
-            f"<dt>value</dt><dd><pre>{_esc(repr(value))}</pre></dd>"
-            f"</dl>"
-        )
+    actions = value.get("action_requests") if isinstance(value, dict) else None
+    if not isinstance(actions, list) or not actions:
+        return _render_prose("An action is awaiting approval.")
+    items: list[str] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        line = f"<code>{_esc(str(action.get('name', '?')))}</code>"
+        summary = _hitl_action_summary(action.get("args"))
+        if summary:
+            line += f" {summary}"
+        desc = str(action.get("description") or "").strip()
+        if desc:
+            line += f'<div class="approval-desc">{_esc(desc)}</div>'
+        items.append(f"<li>{line}</li>")
+    return f'<ul class="approval-actions">{"".join(items)}</ul>'
 
-    action_requests = value.get("action_requests") or []
-    parts = [f"<dt>interrupt_id</dt><dd><pre>{_esc(repr(interrupt_id))}</pre></dd>"]
-    if isinstance(action_requests, list) and action_requests:
-        parts.append("<dt>actions</dt><dd><ul>")
-        for action in action_requests:
-            if not isinstance(action, dict):
-                parts.append(f"<li><pre>{_esc(repr(action))}</pre></li>")
-                continue
-            name = action.get("name", "?")
-            args = action.get("args")
-            parts.append(f"<li><code>{_esc(name)}</code> <pre>{_esc(repr(args))}</pre></li>")
-        parts.append("</ul></dd>")
-    else:
-        parts.append(f"<dt>value</dt><dd><pre>{_esc(repr(value))}</pre></dd>")
-    return f"<dl>{''.join(parts)}</dl>"
+
+def _hitl_action_summary(args: Any) -> str:
+    """Inline summary of an action's args: the command or path if present, else
+    a compact key=value list."""
+    if not isinstance(args, dict) or not args:
+        return ""
+    for key in ("command", "path", "file_path"):
+        value = args.get(key)
+        if isinstance(value, str) and value:
+            return f"<code>{_esc(value)}</code>"
+    return _esc(", ".join(f"{k}={v}" for k, v in args.items()))
+
+
+_HITL_DECISION_LABELS = {"approve": "Approved", "reject": "Rejected", "respond": "Responded"}
 
 
 def _fmt_hitl_response(payload: dict[str, Any]) -> str:
-    interrupt_id = payload.get("interrupt_id") or "?"
-    response = payload.get("payload")
+    """Human-readable approval outcome: approved / rejected / responded, with
+    any message the reviewer gave."""
+    inner = payload.get("payload")
+    decisions = inner.get("decisions") if isinstance(inner, dict) else None
+    if not isinstance(decisions, list) or not decisions:
+        return _render_prose("The request was resolved.")
+    lines: list[str] = []
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        dtype = str(decision.get("type") or "?")
+        label = _HITL_DECISION_LABELS.get(dtype, dtype.capitalize())
+        out = f"<strong>{_esc(label)}</strong>"
+        message = str(decision.get("message") or "").strip()
+        if message:
+            out += f": {_esc(message)}"
+        lines.append(f"<p>{out}</p>")
+    return "".join(lines)
+
+
+def _first_line(text: str, limit: int = 90) -> str:
+    """The first non-empty line of ``text``, truncated for a one-line summary."""
+    line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    return f"{line[: limit - 1]}…" if len(line) > limit else line
+
+
+def _short_time(ts: str) -> str:
+    """Just the clock time from an ISO timestamp; the date sits in the header."""
+    if "T" not in ts:
+        return ts
+    return ts.split("T", 1)[1].split("+", 1)[0].split(".", 1)[0]
+
+
+def _tool_summary(args: Any) -> str:
+    """A one-line peek at what a tool call did, for the collapsed summary.
+
+    Shows the argument that carries the intent (the command, the code, the path
+    it touched), so a reader can scan the run without expanding every call.
+    """
+    if not isinstance(args, dict) or not args:
+        return ""
+    for key in ("command", "code", "file_path", "path", "pattern", "query"):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return _first_line(value, 80)
+    todos = args.get("todos")
+    if isinstance(todos, list):
+        return f"{len(todos)} item(s)"
+    for key, value in args.items():
+        if isinstance(value, str | int | float | bool):
+            return _first_line(f"{key}={value}", 80)
+    return ""
+
+
+def _tool_event(*, label: str, peek: str, detail: str, ts: str, kind: str) -> str:
+    """A collapsed tool row: the tool, a one-line peek, and the timestamp, with
+    the full args/result tucked inside the disclosure."""
+    peek_html = f'<span class="tool-peek">{_esc(peek)}</span>' if peek else ""
     return (
-        f"<dl>"
-        f"<dt>interrupt_id</dt><dd><pre>{_esc(repr(interrupt_id))}</pre></dd>"
-        f"<dt>payload</dt><dd><pre>{_esc(repr(response))}</pre></dd>"
-        f"</dl>"
+        f'<article class="event tool-event" {_event_attrs(kind)}>'
+        f'<details><summary class="tool-summary">'
+        f'<span class="event-kind tool">{_esc(label)}</span>'
+        f"{peek_html}"
+        f'<time datetime="{_esc_attr(ts)}">{_esc(_short_time(ts))}</time>'
+        f"</summary>"
+        f'<div class="tool-body">{detail}</div>'
+        f"</details></article>"
     )
 
 
@@ -505,7 +640,7 @@ def _event_header(kind: str, label: str, ts: str, css_kind: str) -> str:
     return (
         f'<div class="event-header">'
         f'<span class="event-kind {css_kind}">{_esc(label)}</span>'
-        f'<time datetime="{_esc_attr(ts)}">{_esc(ts)}</time>'
+        f'<time datetime="{_esc_attr(ts)}">{_esc(_short_time(ts))}</time>'
         f"</div>"
     )
 
@@ -545,6 +680,17 @@ def _index_artifacts_by_tool_call(events: list[Event]) -> dict[str, ArtifactPayl
     return indexed
 
 
+def _index_hitl_responses(events: list[Event]) -> dict[str, dict[str, Any]]:
+    """interrupt_id -> response payload, so a request can show its outcome inline."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for ev in events:
+        if ev.kind == "hitl_response":
+            interrupt_id = ev.payload.get("interrupt_id")
+            if interrupt_id is not None:
+                indexed[str(interrupt_id)] = ev.payload
+    return indexed
+
+
 def _inline_artifact_preview(artifact: ArtifactPayload | None) -> str:
     if artifact is None or not artifact.path or not artifact.is_image:
         return ""
@@ -566,7 +712,9 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
     event_list = list(events)
     tool_results = _index_tool_results(event_list)
     artifacts_by_call = _index_artifacts_by_tool_call(event_list)
+    hitl_responses = _index_hitl_responses(event_list)
     consumed_results: set[str] = set()
+    consumed_responses: set[str] = set()
     parts: list[str] = []
     kind_counts: dict[str, int] = {}
 
@@ -574,12 +722,13 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
     session_title: str | None = None
     simulator: str | None = None
     started: str | None = None
-    ended: str | None = None
 
     for ev in event_list:
         payload = ev.payload
         ts = ev.timestamp
         kind = ev.kind
+        if kind in _INTERNAL_KINDS:
+            continue
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
 
         if kind == "session_start":
@@ -589,7 +738,6 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             continue
 
         if kind == "session_end":
-            ended = ts
             parts.append(
                 f'<div class="session-marker">Session ended · <time datetime="{_esc_attr(ts)}">'
                 f"{_esc(ts)}</time></div>"
@@ -634,7 +782,7 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                 f'<article class="event" {_event_attrs(kind)}>'
                 f"{_event_header(kind, 'Reasoning', ts, 'reasoning')}"
                 f"<details>"
-                f"<summary>Reasoning</summary>"
+                f"<summary>{_esc(_first_line(content))}</summary>"
                 f"{_render_prose(content)}"
                 f"</details>"
                 f"</article>"
@@ -662,21 +810,23 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                 if result_payload is not None:
                     consumed_results.add(str(tool_call_id))
 
-            block = (
-                f'<article class="event" {_event_attrs(kind)}>'
-                f"{_event_header(kind, f'Tool · {name}', ts, 'tool')}"
-                f"<h3>{_esc(name)}</h3>"
-                f"{_fmt_args(payload.get('args'))}"
-            )
+            detail = _fmt_args(payload.get("args"))
             if result_payload is not None:
                 content = str(result_payload.get("content", ""))
-                block += f"<h4>Result</h4>{_tool_result_block(content, tool_name=name)}"
-            if tool_call_id is not None and name == "julia_plot":
+                detail += f"<h4>Result</h4>{_tool_result_block(content, tool_name=name)}"
+            if tool_call_id is not None and name == "plot_julia":
                 preview = _inline_artifact_preview(artifacts_by_call.get(str(tool_call_id)))
                 if preview:
-                    block += preview
-            block += "</article>"
-            parts.append(block)
+                    detail += preview
+            parts.append(
+                _tool_event(
+                    label=tool_label(str(name)),
+                    peek=_tool_summary(payload.get("args")),
+                    detail=detail,
+                    ts=ts,
+                    kind=kind,
+                )
+            )
             continue
 
         if kind == "tool_result":
@@ -686,28 +836,40 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             name = payload.get("name", "?")
             content = str(payload.get("content", ""))
             parts.append(
-                f'<article class="event" {_event_attrs(kind)}>'
-                f"{_event_header(kind, f'Tool result · {name}', ts, 'tool')}"
-                f"<h3>{_esc(name)}</h3>"
-                f"{_tool_result_block(content, tool_name=name)}"
-                f"</article>"
+                _tool_event(
+                    label=f"{tool_label(str(name))} result",
+                    peek=_first_line(content, 80),
+                    detail=_tool_result_block(content, tool_name=name),
+                    ts=ts,
+                    kind=kind,
+                )
             )
             continue
 
         if kind == "hitl_request":
+            interrupt_id = str(payload.get("interrupt_id") or "")
+            outcome = ""
+            response = hitl_responses.get(interrupt_id)
+            if response is not None:
+                consumed_responses.add(interrupt_id)
+                outcome = f'<div class="approval-outcome">{_fmt_hitl_response(response)}</div>'
             parts.append(
                 f'<article class="event approval" {_event_attrs(kind)}>'
-                f"{_event_header(kind, 'Approval request', ts, 'approval')}"
-                f'<div class="approval">{_fmt_hitl_request(payload)}</div>'
+                f"{_event_header(kind, 'Approval', ts, 'approval')}"
+                f"{_fmt_hitl_request(payload)}{outcome}"
                 f"</article>"
             )
             continue
 
         if kind == "hitl_response":
+            # Already shown inline under its request; only a response with no
+            # matching request (shouldn't happen) falls through to its own card.
+            if str(payload.get("interrupt_id") or "") in consumed_responses:
+                continue
             parts.append(
                 f'<article class="event approval" {_event_attrs(kind)}>'
                 f"{_event_header(kind, 'Approval response', ts, 'approval')}"
-                f'<div class="approval">{_fmt_hitl_response(payload)}</div>'
+                f"{_fmt_hitl_response(payload)}"
                 f"</article>"
             )
             continue
@@ -748,31 +910,35 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
             f"</article>"
         )
 
+    # One compact meta line; the date rides on `started` and the session-end
+    # marker at the foot carries the end time, so neither needs its own row.
     header_meta = ""
     if session_title:
-        header_meta += f'<p class="meta">{_esc(session_title)}</p>'
+        header_meta += f'<p class="title-sub">{_esc(session_title)}</p>'
+    meta_bits: list[str] = []
     if session_id:
-        header_meta += f'<p class="meta">Session <code>{_esc(session_id)}</code></p>'
+        meta_bits.append(f"Session <code>{_esc(session_id)}</code>")
     if simulator:
-        header_meta += f'<p class="meta">Simulator: {_esc(simulator)}</p>'
+        meta_bits.append(_esc(simulator))
     if started:
-        header_meta += (
-            f'<p class="meta">Started: '
-            f'<time datetime="{_esc_attr(started)}">{_esc(started)}</time></p>'
-        )
-    if ended:
-        header_meta += (
-            f'<p class="meta">Ended: <time datetime="{_esc_attr(ended)}">{_esc(ended)}</time></p>'
-        )
+        meta_bits.append(f'<time datetime="{_esc_attr(started)}">{_esc(started)}</time>')
+    if meta_bits:
+        header_meta += f'<p class="meta">{" · ".join(meta_bits)}</p>'
 
+    # Filter chips carry their own count, so there's no separate badges row
+    # repeating the same kinds. The count is per rendered card: a tool result
+    # folded into its call, or an approval response folded into its request,
+    # shows no card of its own, so it must not inflate the tally.
+    rendered_counts = dict(kind_counts)
+    rendered_counts["tool_result"] = rendered_counts.get("tool_result", 0) - len(consumed_results)
+    rendered_counts["hitl_response"] = rendered_counts.get("hitl_response", 0) - len(
+        consumed_responses
+    )
     group_counts: dict[str, int] = {}
-    for kind, count in kind_counts.items():
+    for kind, count in rendered_counts.items():
         if kind in _SESSION_MARKER_KINDS:
-            label = _KIND_LABELS.get(kind, kind)
-            group_counts[label] = group_counts.get(label, 0) + count
             continue
-        group = _FILTER_GROUPS.get(kind, kind)
-        label = _FILTER_LABELS.get(group, group)
+        label = _FILTER_LABELS.get(_FILTER_GROUPS.get(kind, kind), _FILTER_GROUPS.get(kind, kind))
         group_counts[label] = group_counts.get(label, 0) + count
 
     filter_groups = sorted(
@@ -781,19 +947,15 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
     filter_controls = "".join(
         f'<label><input type="checkbox" class="kind-filter" '
         f'data-filter="{_esc_attr(group)}" checked> '
-        f"{_esc(_FILTER_LABELS.get(group, group))}</label>"
+        f'{_esc(label)} <span class="count">{group_counts.get(label, 0)}</span></label>'
         for group in filter_groups
-    )
-    badges = "".join(
-        f'<span class="badge">{_esc(label)}: {count}</span>'
-        for label, count in sorted(group_counts.items())
+        for label in (_FILTER_LABELS.get(group, group),)
     )
 
     header = (
         f"<header>"
         f"<h1>jutul-agent transcript</h1>"
         f"{header_meta}"
-        f'<div class="badges">{badges}</div>'
         f"</header>"
         f'<div class="controls">'
         f"<fieldset><legend>Filter</legend>{filter_controls}</fieldset>"
@@ -819,6 +981,7 @@ def render_html(events: Iterable[Event]) -> str:
         '<html lang="en">\n'
         "<head>\n"
         '<meta charset="utf-8">\n'
+        f'<meta http-equiv="Content-Security-Policy" content="{_CSP}">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>jutul-agent transcript</title>\n"
         f"<style>{_STYLES}\n{pygments_css()}</style>\n"

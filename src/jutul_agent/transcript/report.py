@@ -2,29 +2,43 @@
 
 Page structure (rendered when the agent calls ``write_report``):
 
-* ``<header>`` — hero stat for the best primary metric vs baseline plus a
-  tally panel on the right (attempts, branches, leaves, session id)
-* narrative section — the markdown the agent wrote
-* exploration map — sparkline of the primary metric over attempts and
+* ``<header>``: the hero stat for the best primary metric against baseline, with
+  a tally panel on the right (attempts, branches, leaves, session id)
+* narrative section: the markdown the agent wrote
+* exploration map: a sparkline of the primary metric over attempts and a
   colour-coded SVG tree of the parent/child structure with a legend
-* attempt details — collapsible cards with rationale, parameter changes,
+* attempt details: collapsible cards with rationale, parameter changes,
   metrics, and any plots referenced by ``record_attempt``
-* footer — links to the full session transcript, which ``render_report``
+* footer: a link to the full session transcript, which ``render_report``
   writes alongside the report so the link always resolves
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import html
 import json
 import mimetypes
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import Any
 
 from jutul_agent.trace import Event
 from jutul_agent.transcript.attempts import Attempt, build_attempt_tree
 from jutul_agent.transcript.markdown_html import render_markdown_html
+
+# The report is opened from disk in the user's browser and embeds agent-authored
+# content (narrative, raw ``html`` blocks, ``custom_css``) that may be steered by
+# untrusted input the agent read. This Content-Security-Policy makes the page
+# inert and offline: no scripts (the report has none) and no network. Images and
+# fonts are inlined as ``data:`` URIs, and styles are inline only. So a custom
+# block can restyle and lay out, but cannot run JS, phone home, or load a pixel.
+_CSP = (
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+    "font-src data:; base-uri 'none'; form-action 'none'"
+)
 
 _STYLES = """
 :root {
@@ -145,6 +159,43 @@ section > h2 {
   color: var(--fg);
 }
 section > h2.section-sub { font-size: 0.95rem; margin-top: 1.5rem; color: var(--mu); }
+.narrative {
+  background: var(--bg-card);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  padding: 1.1rem 1.3rem;
+}
+.narrative > :first-child { margin-top: 0; }
+.narrative > :last-child { margin-bottom: 0; }
+.narrative img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.6rem 0; }
+.figure-block, .metrics-block, .table-block { margin: 2rem 0; }
+.figure-block figure { margin: 0; }
+.figure-block img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+}
+.figure-block figcaption { color: var(--mu); font-size: 0.85rem; margin-top: 0.4rem; }
+.kv-grid { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.kv {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  min-width: 8rem;
+}
+.kv-label { font-size: 0.72rem; color: var(--mu); font-weight: 600; }
+.kv-value { font-size: 1.4rem; font-weight: 700; color: var(--ac); }
+.table-block table { width: 100%; border-collapse: collapse; }
+.table-block th, .table-block td {
+  border: 1px solid var(--bd);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.table-block th { background: var(--bg-soft); }
 .narrative h1, .narrative h2, .narrative h3 { margin-top: 1.2rem; }
 .narrative h1 { font-size: 1.3rem; }
 .narrative h2 { font-size: 1.1rem; }
@@ -332,30 +383,45 @@ def render_report(
     session_id: str | None = None,
     simulator: str | None = None,
     artifact_dirs: Sequence[Path] | None = None,
+    blocks: Sequence[dict[str, Any]] | None = None,
+    custom_css: str = "",
 ) -> str:
-    """Write the report HTML and return the document string."""
+    """Write the report HTML and return the document string.
+
+    ``blocks`` lets the agent compose the report from typed building blocks
+    (``prose``, ``figure``, ``metrics``, ``table``, ``exploration``) in any
+    order, with its own titles, and nothing is forced. When ``blocks`` is omitted,
+    the report falls back to the calibration template: the narrative followed by
+    the metric/exploration/attempt blocks built from any logged attempts (each
+    hides itself when there is nothing to show).
+    """
 
     event_list = list(events)
     flat = _flatten(build_attempt_tree(event_list))
     sid = session_id or _event_field(event_list, "session_start", "session_id")
     sim = simulator or _event_field(event_list, "session_start", "simulator", default="unknown")
     heading = title or f"{sim} investigation report"
+    dirs = artifact_dirs or ()
 
-    sections = [
-        _render_header(heading, sim, sid, flat),
-        _render_narrative(narrative_markdown),
-        _render_results(flat),
-        _render_exploration(flat),
-        _render_attempt_details(flat, artifact_dirs or ()),
-        _render_footer(sid),
-    ]
+    if blocks is not None:
+        body = [_render_block(block, flat=flat, artifact_dirs=dirs) for block in blocks]
+    else:
+        body = [
+            _render_narrative(narrative_markdown, dirs),
+            _render_results(flat),
+            _render_exploration(flat),
+            _render_attempt_details(flat, dirs),
+        ]
+
+    sections = [_render_header(heading, sim, sid, flat), *body, _render_footer(sid)]
 
     doc = (
         '<!doctype html>\n<html lang="en"><head>'
         '<meta charset="utf-8">'
+        f'<meta http-equiv="Content-Security-Policy" content="{_CSP}">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{html.escape(heading)}</title>"
-        f"<style>{_STYLES}</style>"
+        f"<style>{_STYLES}{custom_css}</style>"
         "</head><body>" + "".join(part for part in sections if part) + "</body></html>"
     )
 
@@ -363,15 +429,13 @@ def render_report(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(doc, encoding="utf-8")
 
-    # Generate the transcript the footer links to, right next to the report, so
-    # the link always resolves without the user having to run `/transcript`.
-    try:
-        from jutul_agent.transcript.html import render_html
-
-        (out.parent / _TRANSCRIPT_FILENAME).write_text(render_html(event_list), encoding="utf-8")
-    except Exception:
-        # A transcript hiccup must never fail the report write.
-        pass
+    # Write the transcript the footer links to right next to the report, so the
+    # link resolves immediately. write_report runs mid-turn, before the model's
+    # closing message, so this is a snapshot; the session refreshes it once the
+    # turn settles (see Session.refresh_report_transcripts). A transcript hiccup
+    # must never fail the report write.
+    with contextlib.suppress(Exception):
+        write_sidecar_transcript(out.parent, event_list)
 
     return doc
 
@@ -515,10 +579,125 @@ def _render_summary_side(simulator: str, session_id: str, flat: list[Attempt]) -
 # Narrative
 
 
-def _render_narrative(markdown: str) -> str:
+def _render_narrative(markdown: str, artifact_dirs: Sequence[Path] = ()) -> str:
     if not markdown.strip():
         return ""
-    return f'<section class="narrative">{render_markdown_html(markdown)}</section>'
+    body = _embed_narrative_images(render_markdown_html(markdown), artifact_dirs)
+    return f'<section class="narrative">{body}</section>'
+
+
+def _embed_narrative_images(html_body: str, artifact_dirs: Sequence[Path]) -> str:
+    """Inline images the narrative references so the report stays one file.
+
+    The agent can drop ``![caption](artifacts/plot.png)`` into its write-up to
+    put a figure at the top; the path resolves against the run's artifact dirs
+    and the bytes embed as a data URI, the same way the attempt plots do. A
+    reference that doesn't resolve is left as-is rather than dropped.
+    """
+
+    def _inline(match: re.Match[str]) -> str:
+        src = match.group(1)
+        if src.startswith("data:"):
+            return match.group(0)
+        resolved = _resolve_plot(src, artifact_dirs)
+        if resolved is None:
+            return match.group(0)
+        mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+        data = base64.standard_b64encode(resolved.read_bytes()).decode("ascii")
+        return f'src="data:{mime};base64,{data}"'
+
+    return re.sub(r'src="([^"]+)"', _inline, html_body)
+
+
+# ---------------------------------------------------------------------------
+# Composable building blocks (the agent picks and orders these)
+
+
+def _render_block(
+    block: dict[str, Any], *, flat: list[Attempt], artifact_dirs: Sequence[Path]
+) -> str:
+    """Render one agent-composed report block; unknown types are skipped."""
+    if not isinstance(block, dict):
+        return ""
+    btype = str(block.get("type") or "")
+    if btype == "prose":
+        return _render_narrative(str(block.get("markdown") or block.get("md") or ""), artifact_dirs)
+    if btype == "figure":
+        return _render_figure_block(block, artifact_dirs)
+    if btype == "metrics":
+        return _render_metrics_block(block)
+    if btype == "table":
+        return _render_table_block(block)
+    if btype == "exploration":
+        return (
+            _render_results(flat)
+            + _render_exploration(flat)
+            + _render_attempt_details(flat, artifact_dirs)
+        )
+    if btype == "html":
+        # Escape hatch: the agent supplies raw HTML for a fully custom block,
+        # paired with `custom_css` on the report when it needs its own styling.
+        return f'<section class="html-block">{block.get("html") or ""}</section>'
+    return ""
+
+
+def _render_figure_block(block: dict[str, Any], artifact_dirs: Sequence[Path]) -> str:
+    path = str(block.get("path") or "")
+    if not path:
+        return ""
+    title = str(block.get("title") or "")
+    caption = str(block.get("caption") or "")
+    head = f"<h2>{html.escape(title)}</h2>" if title else ""
+    cap = f"<figcaption>{html.escape(caption)}</figcaption>" if caption else ""
+    return (
+        f'<section class="figure-block">{head}'
+        f"<figure>{_embed_plot(path, artifact_dirs)}{cap}</figure></section>"
+    )
+
+
+def _render_metrics_block(block: dict[str, Any]) -> str:
+    """A titled set of label/value pairs, the flexible-name generalisation of the
+    calibration hero stat."""
+    rows = block.get("rows")
+    if not isinstance(rows, dict) or not rows:
+        return ""
+    title = str(block.get("title") or "")
+    head = f"<h2>{html.escape(title)}</h2>" if title else ""
+    cells = "".join(
+        f'<div class="kv"><span class="kv-label">{html.escape(str(key))}</span>'
+        f'<span class="kv-value">{html.escape(_fmt_cell(value))}</span></div>'
+        for key, value in rows.items()
+    )
+    return f'<section class="metrics-block">{head}<div class="kv-grid">{cells}</div></section>'
+
+
+def _render_table_block(block: dict[str, Any]) -> str:
+    rows = block.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return ""
+    title = str(block.get("title") or "")
+    headers = block.get("headers") if isinstance(block.get("headers"), list) else []
+    head = f"<h2>{html.escape(title)}</h2>" if title else ""
+    thead = (
+        "<thead><tr>"
+        + "".join(f"<th>{html.escape(str(h))}</th>" for h in headers)
+        + "</tr></thead>"
+        if headers
+        else ""
+    )
+    body_rows = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(_fmt_cell(cell))}</td>" for cell in row) + "</tr>"
+        for row in rows
+        if isinstance(row, list)
+    )
+    return (
+        f'<section class="table-block">{head}'
+        f"<table>{thead}<tbody>{body_rows}</tbody></table></section>"
+    )
+
+
+def _fmt_cell(value: Any) -> str:
+    return _fmt(value) if isinstance(value, float) else str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -885,9 +1064,16 @@ def _resolve_plot(path: str, artifact_dirs: Sequence[Path]) -> Path | None:
 _TRANSCRIPT_FILENAME = "transcript.html"
 
 
+def write_sidecar_transcript(report_dir: Path, events: Sequence[Event]) -> None:
+    """Write the transcript a report links to, beside the report (same folder)."""
+    from jutul_agent.transcript.html import render_html
+
+    (report_dir / _TRANSCRIPT_FILENAME).write_text(render_html(list(events)), encoding="utf-8")
+
+
 def _render_footer(session_id: str) -> str:
     # ``render_report`` writes the transcript next to the report, so this link
-    # resolves on its own (same directory) — no manual `/transcript` needed.
+    # resolves on its own from the same directory, with no manual `/transcript` needed.
     return (
         f'<footer>Also see the <a href="{_TRANSCRIPT_FILENAME}">'
         "full session transcript</a>.</footer>"

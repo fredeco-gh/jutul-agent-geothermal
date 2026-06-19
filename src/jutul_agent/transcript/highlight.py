@@ -26,7 +26,7 @@ _MD_CODE_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 PLAIN_OUTPUT_TOOLS = frozenset({"grep", "glob", "ls"})
-SIMULATOR_TOOLS = frozenset({"julia_eval", "julia_plot"})
+SIMULATOR_TOOLS = frozenset({"run_julia", "plot_julia"})
 
 
 def is_julia_source(text: str) -> bool:

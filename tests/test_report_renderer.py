@@ -61,6 +61,31 @@ def test_render_report_minimal_shell() -> None:
         assert "cytoscape" not in doc
 
 
+def test_report_sidecar_transcript_refreshed_after_turn(session, tmp_path) -> None:
+    """write_report runs mid-turn, so its sidecar transcript misses the model's
+    closing message; the session refreshes it once the turn settles."""
+    session.trace.append("message_user", {"content": "summarize the run"})
+    session.trace.append("tool_call", {"id": "c1", "name": "write_report", "args": {}})
+
+    out = tmp_path / "report.html"
+    render_report(
+        session.trace.iter_events(),
+        out,
+        narrative_markdown="## Summary",
+        session_id=session.session_id,
+        simulator="BattMo",
+    )
+    session.note_report(out)
+    snapshot = (out.parent / "transcript.html").read_text()
+    assert "the report is ready" not in snapshot  # closing message not written yet
+
+    # The model's closing message arrives after the tool returns.
+    session.trace.append("message_assistant", {"content": "the report is ready"})
+    session.refresh_report_transcripts()
+    refreshed = (out.parent / "transcript.html").read_text()
+    assert "the report is ready" in refreshed
+
+
 def test_render_report_writes_transcript_beside_report(tmp_path) -> None:
     events = [
         make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
@@ -198,6 +223,87 @@ def test_render_report_embeds_plot_from_artifact_dir(tmp_path) -> None:
     assert "data:image/png;base64," in doc
 
 
+def test_render_report_composes_typed_blocks(tmp_path) -> None:
+    """The agent can compose the report body from ordered, titled blocks instead
+    of the forced calibration layout; nothing is auto-added with ``blocks``."""
+    plot_dir = tmp_path / "artifacts"
+    plot_dir.mkdir()
+    (plot_dir / "fit.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
+
+    out = tmp_path / "report.html"
+    doc = render_report(
+        [make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"})],
+        out,
+        title="Custom",
+        artifact_dirs=[plot_dir],
+        blocks=[
+            {"type": "prose", "markdown": "## My heading\n\nProse here."},
+            {"type": "figure", "path": "fit.png", "caption": "The fit"},
+            {"type": "metrics", "title": "Headline", "rows": {"RMSE (mV)": 15.9, "Runs": 3}},
+            {"type": "table", "headers": ["a", "b"], "rows": [["x", 1.5]]},
+        ],
+    )
+    assert "My heading" in doc and "Prose here." in doc
+    assert "data:image/png;base64," in doc and "The fit" in doc
+    assert "RMSE (mV)" in doc and "15.9" in doc  # flexible metric labels
+    assert "<table>" in doc and "<th>a</th>" in doc
+    # With blocks supplied, the calibration sections are not auto-appended.
+    assert "Exploration map" not in doc
+
+
+def test_render_report_html_block_and_custom_css(tmp_path) -> None:
+    """A raw html block plus custom_css are the escape hatch for a report that
+    doesn't fit the built-in blocks."""
+    out = tmp_path / "report.html"
+    doc = render_report(
+        [make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"})],
+        out,
+        blocks=[{"type": "html", "html": "<div class='mine'>Custom</div>"}],
+        custom_css=".mine { color: hotpink; }",
+    )
+    assert "<div class='mine'>Custom</div>" in doc
+    assert ".mine { color: hotpink; }" in doc
+
+
+def test_render_report_has_locked_down_csp(tmp_path) -> None:
+    """The raw-html/custom-css escape hatch is backed by a Content-Security-Policy
+    that makes the page inert: no scripts, no network (data:-only images/fonts)."""
+    out = tmp_path / "report.html"
+    doc = render_report(
+        [make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"})],
+        out,
+        blocks=[{"type": "html", "html": "<script>alert(1)</script>"}],
+    )
+    head = doc.split("</head>")[0]
+    assert '<meta http-equiv="Content-Security-Policy"' in head
+    assert "default-src 'none'" in head
+    assert "img-src data:" in head
+    # No script source is granted (default-src 'none' blocks all scripts), and
+    # no remote origin is allowlisted anywhere in the policy.
+    assert "script-src" not in head
+    assert "https:" not in head and "http:" not in head
+
+
+def test_render_report_embeds_narrative_figure(tmp_path) -> None:
+    """A figure the agent references from its write-up is inlined, so the agent
+    can put plots at the top of the report and it stays one self-contained file."""
+    plot_dir = tmp_path / "artifacts"
+    plot_dir.mkdir()
+    (plot_dir / "fit.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
+
+    out = tmp_path / "report.html"
+    doc = render_report(
+        [make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"})],
+        out,
+        narrative_markdown="## Findings\n\n![fit](fit.png)\n",
+        session_id="abc",
+        simulator="BattMo",
+        artifact_dirs=[plot_dir],
+    )
+    assert "data:image/png;base64," in doc
+    assert 'src="fit.png"' not in doc  # the dangling path was inlined, not left
+
+
 def test_render_report_single_attempt_omits_best_suffix_and_exploration(tmp_path) -> None:
     events = [
         make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
@@ -220,7 +326,7 @@ def test_render_report_single_attempt_omits_best_suffix_and_exploration(tmp_path
     out = tmp_path / "report.html"
     doc = render_report(events, out, session_id="abc", simulator="BattMo")
 
-    # No comparison possible with a single attempt — no Results section.
+    # No comparison possible with a single attempt, so no Results section.
     assert "(best)" not in doc
     assert '<section class="results">' not in doc
     assert '<section class="exploration">' not in doc
