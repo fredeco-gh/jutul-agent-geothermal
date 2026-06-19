@@ -64,6 +64,7 @@ nav:
       - Approval and safety: approval.md
   - How it works:
       - Architecture: architecture.md
+      - The server interface: server-interface.md
       - Turns: turns.md
       - The Julia kernel: julia-kernel.md
       - Filesystem: filesystem.md

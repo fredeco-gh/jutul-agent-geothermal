@@ -1,0 +1,174 @@
+# The server interface
+
+jutul-agent runs the same agent behind a command line and a terminal UI. The
+server interface adds a third way to reach it: a network service that lets a
+webapp, or any other graphical application, drive a session over HTTP and
+WebSocket. It is how a non-expert works with the agent through a graphical app,
+and how an existing application such as a simulator viewer or a dashboard gains a
+conversational, tool-using assistant.
+
+The server does not contain a second copy of the agent. It reuses the same
+session core that the command line and the terminal UI run on (see
+[architecture](architecture.md)), so the agent behaves the same way whichever
+front end is attached. A front end only has to speak the HTTP and WebSocket
+contract described here, so it can be written in any language with any framework.
+
+```mermaid
+flowchart LR
+    FE["Front end (webapp or GUI)"]
+    subgraph server [jutul-agent server]
+        direction TB
+        REST["REST: sessions, models, artifacts"]
+        WS["WebSocket: live turn stream and UI control"]
+        SESS["Agent session, the same core as the CLI and TUI"]
+    end
+    KERNEL["Julia kernel"]
+    FE -->|create, resume, fetch| REST
+    FE <-->|prompt, events, approvals| WS
+    REST --> SESS
+    WS --> SESS
+    SESS --> KERNEL
+```
+
+## Running a session
+
+A front end starts by creating a session over REST. Creating a session chooses
+the simulator, the model, and the approval policy (see
+[approval and safety](approval.md)), and returns a session id. An earlier
+session can be reopened by id, because conversation state is kept per session.
+
+Once a session exists, the front end opens a WebSocket to it. That socket carries
+the live, two-way exchange of a turn. The front end sends the user's prompt, and
+the server streams the reply back as it is produced: assistant text, reasoning,
+and each tool call as it starts and finishes. When the agent needs approval to
+run a tool that has side effects, the server sends an approval request and waits
+for the front end to send a decision. The front end can also cancel a running
+turn.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/sessions` | Create a session and return its id |
+| `GET` | `/sessions` | List sessions |
+| `POST` | `/sessions/{id}/resume` | Reopen an earlier session |
+| `DELETE` | `/sessions/{id}` | Close a session |
+| `GET` | `/sessions/{id}/artifacts/{path}` | Fetch a file the session produced |
+| `GET` | `/models` | List the models that can be selected |
+
+## The wire protocol
+
+The WebSocket carries a small set of JSON messages. This is the contract a front
+end is written against. It is a direct serialization of the events the agent
+already produces, so the live stream never drifts from what the agent does.
+
+Messages from the server to the front end:
+
+| Message | Carries |
+| --- | --- |
+| `text` | A piece of the assistant's reply |
+| `reasoning` | A piece of the assistant's reasoning |
+| `tool` | A step in a tool call: requested, started, finished, or failed |
+| `interrupt` | A request for approval, with the actions and the decisions allowed |
+| `artifact` | A file the session produced, given as a URL |
+| `viz` | An interactive visualization to embed, given as a URL |
+| `usage` | The token usage for the turn |
+| `turn_end` | The turn has finished |
+| `ui` | A command for the front end to apply to its interface |
+
+Messages from the front end to the server are a prompt to start a turn, a
+decision to answer an approval request, a cancel to stop a running turn, and a
+user-interface event, described next.
+
+### Driving the user interface
+
+A graphical application is more than a transcript. The agent often needs to act
+on the interface itself: set a parameter, toggle a control, highlight part of a
+diagram, or move a map. The user acts on the same interface, and the agent should
+be able to take that into account.
+
+This two-way link is the `ui` message and the user-interface event. A tool can
+emit a `ui` message, which names an action and carries a payload, and the front
+end applies it. When the user changes something in the interface, the front end
+sends an event back, which the agent sees on its next turn. The server fixes only
+the shape of these messages. Which actions exist, and what they mean, belong to
+the application, because they describe that application's own interface.
+
+## Capabilities
+
+How a simulator is used depends on the front end, not only on the simulator. In a
+webapp the agent might operate a battery model's configuration controls, drive a
+diagram of a model it has built, or load map and dataset layers. None of that
+applies in a terminal. The unit that needs customizing is the pair of a simulator
+and a front end, together with whatever an application brings of its own.
+
+The agent for a session is composed from layers. Each layer can contribute tools,
+skills, subagents, and additions to the system prompt.
+
+```mermaid
+flowchart LR
+    BASE["Base tools and skills"]
+    SIM["Simulator"]
+    SURF["Surface: terminal or web"]
+    APP["Host-app extensions"]
+    AGENT["The session's agent"]
+    BASE --> AGENT
+    SIM --> AGENT
+    SURF --> AGENT
+    APP --> AGENT
+```
+
+The base layer provides the tools and skills every session has. The simulator
+layer adds what is specific to the active simulator. The surface layer adds what
+is specific to the front end, such as the controls a webapp exposes. Host-app
+extensions add what a particular application needs.
+
+An application supplies an extension in one of two ways. A Python package can
+register one and have it discovered automatically, the same way simulators are. An
+application whose backend is in another language can instead describe its
+operations when it creates a session: for each operation it sends a name, a
+description, the inputs it expects, and the endpoint to call, and the server turns
+each one into a tool the agent can use. That is how an application written in
+Julia or JavaScript gives the agent access to its own validated routines without a
+Python plug-in.
+
+This is the single place to add the tools, skills, subagents, and prompts that a
+given application and simulator need. Neither the core nor the simulator registry
+has to change.
+
+## Visualization
+
+The terminal shows plots as images. A webapp can do better. The main path renders
+the agent's own figures into the browser with WebGL, so the user can rotate, zoom,
+and scrub them live. The agent writes the same plotting code it always writes; the
+server serves the interactive figure and tells the front end where to embed it.
+
+The image form is kept as well. It is the record written to the session's history
+and report, the fallback when an interactive view is not available, and what
+headless and evaluation runs use. An application that owns its own visualization,
+such as a map, instead receives the underlying results through the extension
+mechanism and draws them in its own stack.
+
+## Running it, and hosting it later
+
+The service runs locally first: one trusted user, or one trusted deployment,
+alongside the application. That is enough for local use and for demonstrations. In
+that setting the agent's access to the workspace, the shell, and Julia is
+appropriate, because the user is trusted.
+
+Serving it to several external users is a later and deliberate step, and the
+design keeps room for it. A session can be scoped to its own workspace directory,
+the service can require authentication, and a session can be run in its own
+isolated process. Until that isolation is in place the service should not be
+exposed to untrusted users, because the agent has real access to the machine it
+runs on.
+
+## The example app
+
+The repository includes a small, runnable example under `examples/` that
+exercises the whole interface and serves as a starting point to copy. It runs on a
+tiny test library rather than a full simulator, so it stays fast and keeps the
+focus on the wiring. Its simulator and its web capability are added through the
+extension mechanism rather than the built-in registry, which also shows how to
+bring a new simulator and front end of your own. The example covers creating a
+session, streaming a reply, a tool call, an embedded interactive plot next to the
+saved image, the user-interface round trip, and an approval round trip. Its
+`README.md` has the command to run it and notes on extending it.
