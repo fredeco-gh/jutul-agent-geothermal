@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         dest="add_dir",
         help=(
-            "Mount an extra folder so the agent can read and edit it, alongside "
+            "Add an extra folder so the agent can read and edit it, alongside "
             "the workspace. Repeatable. Also available at runtime via /add-dir."
         ),
     )
@@ -362,7 +362,7 @@ def _warn_if_plotting_unavailable() -> None:
     """One-line heads-up at launch when GLMakie has no display here.
 
     On headless Linux without ``xvfb-run`` (or with it opted out), the native
-    plotters can't render and ``julia_plot`` errors at use-time; but simulation,
+    plotters can't render and ``plot_julia`` errors at use-time; but simulation,
     eval, and the file tools all still work, so this is a warning, not a failure.
     Surfacing it at launch means the user learns before their first plot, not
     mid-session when a ``plot_reservoir`` call fails.
@@ -381,7 +381,7 @@ def _warn_if_plotting_unavailable() -> None:
         else "install xvfb (e.g. `sudo apt-get install -y xvfb`)"
     )
     print(
-        "warning: no display and xvfb not available — plotting (GLMakie) is "
+        "warning: no display and xvfb not available, so plotting (GLMakie) is "
         f"unavailable; simulation still works. To enable plots, {hint}. "
         "Run `jutul-agent doctor` for details.",
         file=sys.stderr,
@@ -416,13 +416,13 @@ def _resolve_add_dirs(raw_dirs: Any, ws: Path) -> list[Path]:
     reported and dropped; the agent launches with whatever resolved cleanly.
     """
 
-    from jutul_agent.agent.mounts import MountError, resolve_dir
+    from jutul_agent.agent.added_dirs import AddDirError, resolve_dir
 
     resolved: list[Path] = []
     for raw in raw_dirs or ():
         try:
             path = resolve_dir(raw, workspace=ws)
-        except MountError as exc:
+        except AddDirError as exc:
             print(f"warning: --add-dir {raw}: {exc}", file=sys.stderr)
             continue
         if path not in resolved:
@@ -442,9 +442,9 @@ async def _run_with_backend(
 ) -> int:
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+    from jutul_agent.agent.added_dirs import added_dirs
     from jutul_agent.agent.approval import parse_approval_mode
     from jutul_agent.agent.builder import build_agent, resolve_model
-    from jutul_agent.agent.mounts import mounted_dirs
     from jutul_agent.display import can_open_windows
     from jutul_agent.juliakernel import JuliaKernel
     from jutul_agent.session import Session
@@ -489,14 +489,14 @@ async def _run_with_backend(
                 def build(model_id: str, dirs: Any) -> Any:
                     # Rebuilds with the same checkpointer/session so the TUI can
                     # switch models without losing the conversation; ``dirs`` keeps
-                    # any /add-dir mounts across the rebuild.
+                    # any /add-dir folders across the rebuild.
                     return build_agent(
                         session,
                         model=model_id,
                         checkpointer=checkpointer,
                         approval_mode=approval_mode,
                         package_sources=package_sources,
-                        mounted_dirs=dirs,
+                        added_dirs=dirs,
                     )
 
                 from jutul_agent.credentials import missing_credential
@@ -523,8 +523,8 @@ async def _run_with_backend(
                         if writable:
                             summary += f"; writable dev checkout(s): {', '.join(writable)}"
                         print(summary, file=sys.stderr)
-                    for mount in mounted_dirs(backend):
-                        print(f"Added folder:  {mount.path}", file=sys.stderr)
+                    for entry in added_dirs(backend):
+                        print(f"Added folder:  {entry.path}", file=sys.stderr)
                 if args.prompt:
                     if agent is None:
                         print(

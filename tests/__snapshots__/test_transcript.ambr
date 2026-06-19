@@ -31,11 +31,11 @@
   
   what is 2+2?
   
-  ### Tool call · `julia_eval` · `2026-05-19T10:00:03+00:00`
+  ### Tool call · `run_julia` · `2026-05-19T10:00:03+00:00`
   
   - `code` = '2+2'
   
-  ### Tool result · `julia_eval` · `2026-05-19T10:00:04+00:00`
+  ### Tool result · `run_julia` · `2026-05-19T10:00:04+00:00`
   
   ```
   4

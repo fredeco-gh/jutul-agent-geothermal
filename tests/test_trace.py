@@ -12,8 +12,8 @@ def test_append_and_iter(tmp_path: Path) -> None:
     try:
         log.append("session_start", {"session_id": "abc"})
         log.append("message_user", {"content": "hi"})
-        log.append("tool_call", {"name": "julia_eval", "args": {"code": "1+1"}})
-        log.append("tool_result", {"name": "julia_eval", "content": "2"})
+        log.append("tool_call", {"name": "run_julia", "args": {"code": "1+1"}})
+        log.append("tool_result", {"name": "run_julia", "content": "2"})
         log.append("session_end", {"session_id": "abc"})
         events = log.iter_events()
     finally:

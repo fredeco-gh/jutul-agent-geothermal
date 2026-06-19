@@ -26,14 +26,14 @@ from jutul_agent.session import Session
 
 
 async def test_large_tool_result_offloaded_to_backend(tmp_path: Path) -> None:
-    # julia_eval returns a result far above the ~80k-char eviction threshold.
+    # run_julia returns a result far above the ~80k-char eviction threshold.
     big = "x" * 120_000
     julia = FakeJulia(eval_handler=lambda code: EvalResult(output=big))
     adapter = make_fake_adapter(tmp_path)
     session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
     model = make_scripted_model(
         [
-            scripted_tool_call(tool_name="julia_eval", args={"code": "big()"}, tool_call_id="t1"),
+            scripted_tool_call(tool_name="run_julia", args={"code": "big()"}, tool_call_id="t1"),
             scripted_final("done"),
         ]
     )
@@ -45,7 +45,7 @@ async def test_large_tool_result_offloaded_to_backend(tmp_path: Path) -> None:
         state = await agent.aget_state(cfg)
 
     results = [
-        m for m in state.values["messages"] if isinstance(m, ToolMessage) and m.name == "julia_eval"
+        m for m in state.values["messages"] if isinstance(m, ToolMessage) and m.name == "run_julia"
     ]
     assert results
     inline = str(results[-1].content)

@@ -44,7 +44,7 @@ def search_source() -> Task:
                 input=(
                     f"The {package} package is installed in this environment. Find "
                     "its source on disk (its path is what `pkgdir` returns in "
-                    "`julia_eval`), then use the file-search tools to locate its main "
+                    "`run_julia`), then use the file-search tools to locate its main "
                     f"module file, the one named `{package}.jl` under `src/`, and "
                     "reply with the path to it."
                 ),

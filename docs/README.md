@@ -23,8 +23,8 @@ fixing mistakes and refining the next run.</p>
 <span class="ja-t-prompt">&gt;</span> Set up a constant-current discharge for the
   chen_2020 cell and plot the voltage curve.
 
-<span class="ja-t-tool">julia_eval</span>  output = solve(cell_setup)
-<span class="ja-t-tool">julia_plot</span>  voltage vs time
+<span class="ja-t-tool">run_julia</span>  output = solve(cell_setup)
+<span class="ja-t-tool">plot_julia</span>  voltage vs time
 <span class="ja-t-ok">saved</span> artifacts/voltage_curve.png</code></pre>
 </div>
 </div>

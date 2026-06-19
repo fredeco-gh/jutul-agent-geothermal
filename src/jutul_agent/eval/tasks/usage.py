@@ -71,7 +71,7 @@ def usage_battmo() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_answer(0.1, 50.0, count=1),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
             no_repeated_identical_calls(),
         ],
@@ -126,7 +126,7 @@ def usage_workspace() -> Task:
         scorer=[
             numeric_close(round(_MEAN_Y, 4), 0.001),
             numeric_close(40, 0.5),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=900,

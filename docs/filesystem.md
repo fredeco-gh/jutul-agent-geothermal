@@ -6,7 +6,7 @@ real filesystem. The workspace backend
 (`agent/backend.py:WorkspaceShellBackend`, assembled in
 `agent/builder.py:build_backend`) runs in real-path mode: a relative path
 resolves against the workspace (the launch directory) and an absolute path is
-used as-is. `julia_eval` and `execute` resolve paths the same way, since their
+used as-is. `run_julia` and `execute` resolve paths the same way, since their
 working directory is the workspace too, so one string names one file in every
 tool and the user can click any path the agent reports to open it.
 
@@ -23,10 +23,10 @@ Everything is a real path; the only special rule is that the file tools refuse
 to **write** into the shared Julia depot (below). A bare leading slash
 (`/model.jl`) is the machine root, not the workspace, in every tool. One path
 model across the file tools, the shell, and the REPL means a path the agent
-reads or writes is the same path it can hand to `julia_eval`. The `filesystem`
+reads or writes is the same path it can hand to `run_julia`. The `filesystem`
 eval suite checks this.
 
-`include("file.jl")` inside `julia_eval` resolves from the workspace because the
+`include("file.jl")` inside `run_julia` resolves from the workspace because the
 kernel rewrites top-level relative includes against its working directory (see
 [the Julia kernel](julia-kernel.md)).
 

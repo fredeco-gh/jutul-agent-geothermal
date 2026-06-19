@@ -95,7 +95,7 @@ def ensembles_jutuldarcy() -> Task:
             # makes an exact golden a recapture burden without adding signal.
             numeric_answer(0.0, 1.0, count=4, order="decreasing"),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,
@@ -125,7 +125,7 @@ def ensembles_battmo() -> Task:
         scorer=[
             numeric_answer(0.0, 10.0, count=3, order="decreasing"),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=3000,
@@ -160,7 +160,7 @@ def ensembles_fimbul() -> Task:
         scorer=[
             numeric_answer(1.0, 250.0, count=4),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=3000,
@@ -192,7 +192,7 @@ def ensembles_mocca() -> Task:
         scorer=[
             numeric_answer(0.0, 1.0, count=3),
             julia_code_matches(r"(run_ensemble|pmap)\s*\("),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=3000,

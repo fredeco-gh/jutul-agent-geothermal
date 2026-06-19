@@ -86,7 +86,7 @@
   \node[data, anchor=west, text width=33mm] (pack) at ([xshift=21mm]prompt.east) {%
     \textbf{simulator packs}\\[-2pt]
     {\scriptsize (one per simulator)}\\[3pt]
-    {\scriptsize skills $\rightarrow$ /skills/ mounts}\\
+    {\scriptsize skills (read on demand)}\\
     {\scriptsize env template $\rightarrow$ Julia env}};
 
   % ===== left column: session state =====
@@ -104,7 +104,7 @@
   \node[julia, anchor=north] (env) at ([yshift=-16mm]serv.south) {Julia env};
   \node[storage, minimum width=30mm] (files) at (ft |- env) {user files · memory/};
   \node[storage, right=11mm of files, minimum width=34mm] (mounts) {%
-    /skills/ · /packages/\\[-1pt]
+    installed pkg source\\[-1pt]
     {\scriptsize (read-only)}};
 
   % ===== group boxes =====

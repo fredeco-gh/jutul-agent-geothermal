@@ -30,7 +30,7 @@ of this workspace's data, a hard-won fix. If the agent keeps re-learning
 something, ask it to remember the fact, then check what it wrote. Memory
 is plain markdown, and editing it by hand is fine: `/memory` in the TUI
 shows the index and the notes, `/memory <note>` prints one, and
-`/memory edit [note]` opens it in your editor — `$VISUAL`/`$EDITOR` if
+`/memory edit [note]` opens it in your editor: `$VISUAL`/`$EDITOR` if
 set, else a platform default (nano/vim/vi on Unix, Notepad on Windows).
 The agent sees the edit from its next turn.
 

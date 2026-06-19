@@ -57,7 +57,7 @@ def build_parser(prog: str = "jutul-agent init") -> argparse.ArgumentParser:
         dest="precompile",
         help=(
             "Run Pkg.instantiate after bootstrap and warm up GLMakie for "
-            "julia_plot (slow on first run). --instantiate is a synonym."
+            "plot_julia (slow on first run). --instantiate is a synonym."
         ),
     )
     add_workspace_flags(parser)
@@ -196,7 +196,7 @@ def _maybe_prompt_for_provider_key(config: WorkspaceConfig) -> None:
         print()
         return
     if not value:
-        print("Skipped — set it later via the model selector, a .env, or your shell.")
+        print("Skipped. Set it later via the model selector, a .env, or your shell.")
         return
     path = store_credential(env_var, value)
     print(f"Saved {env_var} to {path}.")

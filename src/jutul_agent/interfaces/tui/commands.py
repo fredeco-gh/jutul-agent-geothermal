@@ -1,15 +1,11 @@
-"""Slash-command catalog, input history, and Suggester for the TUI prompt.
+"""Slash-command catalog and input history for the TUI prompt.
 
-The state machines are plain dataclasses with no Textual dependency aside
-from the ``Suggester`` adapter at the bottom.
+The state machines are plain dataclasses with no Textual dependency.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-
-from textual.suggester import Suggester
 
 
 @dataclass(frozen=True)
@@ -21,12 +17,6 @@ class SlashCommandSpec:
     argument_hint: str = ""
 
     @property
-    def decision(self) -> str:
-        """Strip the leading slash; matches deepagents' decision names for approval commands."""
-
-        return self.name.removeprefix("/")
-
-    @property
     def handler_attr(self) -> str:
         """Name of the TUIApp coroutine that executes this command.
 
@@ -36,7 +26,7 @@ class SlashCommandSpec:
         construction (a test asserts every spec resolves to a handler).
         """
 
-        return "_command_" + self.decision.replace("-", "_")
+        return "_command_" + self.name.removeprefix("/").replace("-", "_")
 
 
 BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
@@ -48,7 +38,7 @@ BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/clear", "clear the visible log"),
     SlashCommandSpec(
         "/add-dir",
-        "mount an extra folder so the agent can read and edit it",
+        "add an extra folder so the agent can read and edit it",
         "<path>",
     ),
     SlashCommandSpec(
@@ -69,34 +59,15 @@ BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
     SlashCommandSpec("/quit", "exit the TUI"),
 )
 
-APPROVAL_COMMANDS: tuple[SlashCommandSpec, ...] = (
-    SlashCommandSpec("/approve", "approve the pending tool actions"),
-    SlashCommandSpec("/reject", "reject the pending tool actions", "[reason]"),
-    SlashCommandSpec("/respond", "reply to the pending tool actions", "<message>"),
-)
-
-ALL_COMMANDS: tuple[SlashCommandSpec, ...] = BASE_COMMANDS + APPROVAL_COMMANDS
+# A pending approval is resolved from the menu (arrow keys / Enter / Esc) or by
+# typing a reply; there are no approval slash commands.
+ALL_COMMANDS: tuple[SlashCommandSpec, ...] = BASE_COMMANDS
 
 
 def find_command(name: str) -> SlashCommandSpec | None:
-    """The spec for ``name``, searched across every command.
-
-    Dispatch matches against all commands (not just the active ones) so an
-    approval command typed with nothing pending reaches its handler and gets
-    the precise "no approval is pending" answer instead of "unknown command".
-    """
+    """The spec for ``name``, or ``None`` if it isn't a known command."""
 
     return next((spec for spec in ALL_COMMANDS if spec.name == name), None)
-
-
-def active_commands(allowed_decisions: frozenset[str]) -> list[SlashCommandSpec]:
-    """Base commands plus the approval commands the current interrupt permits."""
-
-    specs = list(BASE_COMMANDS)
-    for spec in APPROVAL_COMMANDS:
-        if spec.decision in allowed_decisions:
-            specs.append(spec)
-    return specs
 
 
 def matching_specs(prefix: str, specs: list[SlashCommandSpec]) -> list[SlashCommandSpec]:
@@ -165,26 +136,3 @@ class InputHistory:
         self._index = None
         self._draft = ""
         return draft
-
-
-class SlashCommandSuggester(Suggester):
-    """Textual ``Suggester`` that ghosts the unique matching slash command.
-
-    The command list is queried via ``commands_provider`` on every keystroke
-    so that approval commands appear and disappear with the interrupt state.
-    """
-
-    def __init__(self, commands_provider: Callable[[], list[SlashCommandSpec]]) -> None:
-        super().__init__(use_cache=False, case_sensitive=True)
-        self._commands_provider = commands_provider
-
-    async def get_suggestion(self, value: str) -> str | None:
-        if not value.startswith("/") or " " in value:
-            return None
-        matches = matching_specs(value, self._commands_provider())
-        if len(matches) != 1:
-            return None
-        spec = matches[0]
-        if spec.argument_hint:
-            return spec.name + " "
-        return spec.name

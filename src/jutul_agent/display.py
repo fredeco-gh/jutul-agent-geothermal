@@ -38,7 +38,7 @@ def has_display() -> bool:
 
 
 def can_open_windows(*, interactive_session: bool, display: bool | None = None) -> bool:
-    """True when julia_plot may open a live window for the user.
+    """True when plot_julia may open a live window for the user.
 
     Requires both an interactive (TUI) session and a display. A one-shot
     ``--prompt`` run has nobody watching, and a headless box has nowhere to draw,
@@ -160,7 +160,7 @@ def should_wrap_xvfb() -> bool:
     the process and any ``addprocs`` workers inherit through ``DISPLAY``; one-shot
     ``Pkg`` precompiles via ``xvfb-run``). The same approach JutulDarcy uses in its
     own CI. Set ``JUTUL_AGENT_NO_XVFB=1`` to opt out; plotting then has no display
-    and julia_plot reports a clear error.
+    and plot_julia reports a clear error.
 
     The single source of truth for the headless-display decision: startup wiring
     uses it to launch the Xvfb display, and ``doctor`` / startup use the related
@@ -182,7 +182,7 @@ def plotting_display_available() -> bool:
 
     A real X/Wayland display (or any desktop macOS/Windows session) works
     directly; headless Linux relies on the xvfb-wrapped worker. When this is
-    False, ``julia_plot`` cannot render and reports a clear error, but the rest
+    False, ``plot_julia`` cannot render and reports a clear error, but the rest
     of the agent (simulate, eval, file tools) still works.
     """
     return has_display() or should_wrap_xvfb()

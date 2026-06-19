@@ -41,7 +41,7 @@ scripts and the bench run with `auto`.
 Approval is a review checkpoint for visible side effects, not a security
 boundary. Two honest limits:
 
-- `julia_eval` and `julia_plot` are not gated. Running arbitrary Julia is
+- `run_julia` and `plot_julia` are not gated. Running arbitrary Julia is
   the agent's core job (a simulation can read and write files and use the
   network like any program), so gating it would mean approving every
   working step. The design trusts Julia evaluation the way it trusts the

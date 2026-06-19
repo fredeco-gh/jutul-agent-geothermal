@@ -49,7 +49,7 @@ def test_workspace_backend_nests_relative_subdirs(tmp_path: Path) -> None:
 def test_workspace_backend_absolute_path_writes_the_real_file(tmp_path: Path) -> None:
     # In real-path mode an absolute path is honored as itself (no workspace-only
     # restriction, no phantom): the file tools behave like the real filesystem,
-    # matching execute and julia_eval.
+    # matching execute and run_julia.
     ws = tmp_path.resolve()
     backend = WorkspaceShellBackend(root_dir=ws, virtual_mode=False, inherit_env=True)
 
@@ -142,7 +142,7 @@ def test_execute_refuses_shell_julia_only(tmp_path) -> None:
     ):
         result = backend.execute(command)
         assert result.exit_code == 2, command
-        assert "julia_eval" in result.output
+        assert "run_julia" in result.output
 
     # Only the head token of a shell segment counts as an invocation.
     for command in ("python3 -c 'print(1)'", "grep -r julia . || true"):

@@ -25,7 +25,7 @@ def canary() -> Task:
         id="x0-sum-from-file",
         input=(
             "Read the workspace file `/data.jl` with read_file, then use "
-            "julia_eval to evaluate its contents as Julia code. Reply with "
+            "run_julia to evaluate its contents as Julia code. Reply with "
             "the numeric result."
         ),
         target="105",
@@ -34,7 +34,7 @@ def canary() -> Task:
     return Task(
         dataset=[sample],
         solver=jutul_agent_solver(),
-        scorer=[includes(), used_tools(["read_file", "julia_eval"])],
+        scorer=[includes(), used_tools(["read_file", "run_julia"])],
         time_limit=600,
         token_limit=200_000,
         message_limit=50,

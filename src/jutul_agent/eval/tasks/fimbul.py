@@ -42,7 +42,7 @@ def fimbul() -> Task:
         solver=jutul_agent_solver(simulator="fimbul"),
         scorer=[
             numeric_answer(1.0, 250.0, count=2, order="decreasing"),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,

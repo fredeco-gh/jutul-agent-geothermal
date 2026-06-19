@@ -47,9 +47,9 @@ def test_read_file_renders_compact_by_default() -> None:
     assert "content=" not in body
 
 
-def test_julia_eval_running_body_shows_code_section() -> None:
+def test_run_julia_running_body_shows_code_section() -> None:
     body = _render_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": "1 + 1"},
         output="",
         expanded=False,
@@ -59,11 +59,11 @@ def test_julia_eval_running_body_shows_code_section() -> None:
     assert "**Code**" in body
     assert "1 + 1" in body
     assert "running" in body.lower()
-    assert 'julia_eval("' not in body
+    assert 'run_julia("' not in body
 
 
 async def test_tool_block_append_output_then_set_result() -> None:
-    block = ToolBlock("julia_eval", {"code": "run()"}, tool_call_id="call-1")
+    block = ToolBlock("run_julia", {"code": "run()"}, tool_call_id="call-1")
 
     class _FakeMarkdown:
         def __init__(self) -> None:
@@ -83,7 +83,7 @@ async def test_tool_block_append_output_then_set_result() -> None:
     await block.set_result("progress\n→ 42\n", is_error=False)
     assert block._streamed == ""
     expected = display_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": "run()"},
         output="progress\n→ 42\n",
         expanded=False,
@@ -97,7 +97,7 @@ async def test_tool_block_collapses_carriage_return_progress() -> None:
     overwrites itself with carriage returns collapses to a single line instead
     of stacking, matching the kernel's final rendered output."""
 
-    block = ToolBlock("julia_eval", {"code": "run()"}, tool_call_id="call-2")
+    block = ToolBlock("run_julia", {"code": "run()"}, tool_call_id="call-2")
 
     class _FakeMarkdown:
         def __init__(self) -> None:
@@ -133,7 +133,7 @@ async def test_tool_block_coalesces_streamed_renders() -> None:
     app = _Host()
     async with app.run_test() as pilot:
         log = app.query_one("#log", VerticalScroll)
-        block = ToolBlock("julia_eval", {"code": "run()"}, tool_call_id="call-3")
+        block = ToolBlock("run_julia", {"code": "run()"}, tool_call_id="call-3")
         await log.mount(block)
         await pilot.pause()
 

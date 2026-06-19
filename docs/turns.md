@@ -31,7 +31,7 @@ The runner consumes deepagents' typed projection streams:
   rendering them would paste raw tool output into the chat as if the
   assistant had typed it.
 - `run.tool_calls` yields tool lifecycle events (started, output delta,
-  finished). This is how `julia_eval`'s live output streams into the TUI
+  finished). This is how `run_julia`'s live output streams into the TUI
   while a solve runs: the kernel's output chunks are forwarded as
   tool-output deltas.
 - Interrupts are collected at the end: if a gated tool paused the graph,

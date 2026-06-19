@@ -84,7 +84,7 @@ def get(name: str) -> Scenario:
 def _tool_agent(output: str, final: str = "Done.") -> ScriptedV3Agent:
     return ScriptedV3Agent(
         tool_call_events(
-            tool_name="julia_eval",
+            tool_name="run_julia",
             tool_call_id="call_demo",
             args={"code": "[1, 2, 3] .+ 1"},
             output=output,
@@ -97,7 +97,7 @@ def _tool_error_agent() -> ScriptedV3Agent:
     human = HumanMessage(content="run a broken cell")
     ai = AIMessage(
         content="",
-        tool_calls=[{"id": "call_err", "name": "julia_eval", "args": {"code": "sqrt(-1)"}}],
+        tool_calls=[{"id": "call_err", "name": "run_julia", "args": {"code": "sqrt(-1)"}}],
     )
     final = AIMessage(content="That errored. `sqrt` of a negative needs a complex input.")
     return ScriptedV3Agent(
@@ -108,7 +108,7 @@ def _tool_error_agent() -> ScriptedV3Agent:
                 {
                     "event": "tool-started",
                     "tool_call_id": "call_err",
-                    "tool_name": "julia_eval",
+                    "tool_name": "run_julia",
                     "input": {"code": "sqrt(-1)"},
                 }
             ),
@@ -143,8 +143,8 @@ def _empty_answer_agent() -> ScriptedV3Agent:
 
 
 async def _approve(pilot) -> None:
-    """Approve the pending request from the menu."""
-    await pilot.press("y")
+    """Approve the pending request: Enter confirms the default-selected "Yes"."""
+    await pilot.press("enter")
 
 
 _LONG_OUTPUT = "\n".join(f" {i:>3}  reservoir cell value = {i * 1.5:.3f}" for i in range(60))
@@ -170,7 +170,7 @@ scenario(
 )
 scenario(
     "tool_call",
-    "A julia_eval tool card with code and a short result.",
+    "A run_julia tool card with code and a short result.",
     build_agent=lambda: _tool_agent("3-element Vector{Int64}:\n 2\n 3\n 4"),
     steps=("add one to [1, 2, 3]",),
     tags=("ui",),

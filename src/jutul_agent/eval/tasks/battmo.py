@@ -47,7 +47,7 @@ def battmo() -> Task:
             numeric_close(4.154, 0.05),
             numeric_close(2.417, 0.05),
             numeric_answer(1.5, 5.0, count=2, order="decreasing"),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,
@@ -75,7 +75,7 @@ def battmo_sweep() -> Task:
         solver=jutul_agent_solver(simulator="battmo"),
         scorer=[
             numeric_answer(0.0, 10.0, count=3, order="decreasing"),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
             no_repeated_identical_calls(),
         ],

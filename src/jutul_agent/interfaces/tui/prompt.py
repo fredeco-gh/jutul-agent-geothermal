@@ -171,7 +171,7 @@ class PromptTextArea(TextArea):
 
     async def _on_key(self, event: events.Key) -> None:
         if self._approval_nav_handler is not None and not self.text:
-            nav_keys = {"up", "down", "enter", "escape", "y", "n"}
+            nav_keys = {"up", "down", "enter", "escape"}
             if event.key in nav_keys:
                 result = self._approval_nav_handler(event.key)
                 if inspect.isawaitable(result):

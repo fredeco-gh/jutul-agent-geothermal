@@ -36,7 +36,7 @@ def test_assemble_session_prompt_includes_runtime_context(tmp_path: Path) -> Non
     assert "TestSim" in prompt
     assert "Jutul, TestSim" in prompt
     assert "inspect installed packages" in prompt
-    assert "julia_eval" in prompt
+    assert "run_julia" in prompt
     assert "write_file" in prompt
     assert "workspace" in prompt
     # Package source is referenced by its pkgdir path.

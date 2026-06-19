@@ -23,7 +23,7 @@ load_eval_credentials()
 def guardrails() -> Task:
     samples = [
         # The prompt names the shell on purpose: the correct move is to use
-        # the session kernel (julia_eval) anyway, not to spawn a cold julia.
+        # the session kernel (run_julia) anyway, not to spawn a cold julia.
         # The sum is not mentally computable, so answering without computing
         # is fabrication and fails the answer check. Golden from Julia:
         # round(sum(sin, 1:1000), digits=4) == 0.814.
@@ -40,7 +40,7 @@ def guardrails() -> Task:
     return Task(
         dataset=samples,
         solver=jutul_agent_solver(),
-        scorer=[includes(), used_tools(["julia_eval"]), no_interpreters_via_execute()],
+        scorer=[includes(), used_tools(["run_julia"]), no_interpreters_via_execute()],
         time_limit=600,
         token_limit=200_000,
         message_limit=50,

@@ -1,11 +1,11 @@
-"""Tests for the reset_julia tool and the stale-load hint on julia_eval."""
+"""Tests for the reset_julia tool and the stale-load hint on run_julia."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from fakes import FakeJulia, make_fake_adapter
-from jutul_agent.agent.tools import make_julia_eval_tool, make_reset_julia_tool
+from jutul_agent.agent.tools import make_reset_julia_tool, make_run_julia_tool
 from jutul_agent.julia.session import EvalResult
 from jutul_agent.session import Session
 
@@ -48,54 +48,54 @@ async def test_reset_julia_falls_back_to_restart_when_session_dead(tmp_path: Pat
     assert "restarted" in out.lower()
 
 
-async def test_julia_eval_reports_recoverable_error_on_dead_session(tmp_path: Path) -> None:
+async def test_run_julia_reports_recoverable_error_on_dead_session(tmp_path: Path) -> None:
     def _boom(code: str) -> EvalResult:
         raise RuntimeError("Connection closed")
 
     julia = FakeJulia(eval_handler=_boom)
-    tool = make_julia_eval_tool(_session(julia, tmp_path))
-    out = await _call(tool, "julia_eval", code="1 + 1")
+    tool = make_run_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "run_julia", code="1 + 1")
     assert "reset_julia" in out
     assert "unavailable" in out.lower()
 
 
-async def test_julia_eval_appends_reset_hint_on_stale_load(tmp_path: Path) -> None:
+async def test_run_julia_appends_reset_hint_on_stale_load(tmp_path: Path) -> None:
     warning = (
         "  1 dependency precompiled but a different version is currently loaded. "
         "Restart julia to access the new version."
     )
     julia = FakeJulia(eval_handler=lambda code: EvalResult(output=warning))
-    tool = make_julia_eval_tool(_session(julia, tmp_path))
-    out = await _call(tool, "julia_eval", code='Pkg.add("X")')
+    tool = make_run_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "run_julia", code='Pkg.add("X")')
     assert "reset_julia" in out
     assert warning in out  # original output preserved
 
 
-async def test_julia_eval_no_hint_when_no_stale_load(tmp_path: Path) -> None:
+async def test_run_julia_no_hint_when_no_stale_load(tmp_path: Path) -> None:
     julia = FakeJulia(eval_handler=lambda code: EvalResult(output="42"))
-    tool = make_julia_eval_tool(_session(julia, tmp_path))
-    out = await _call(tool, "julia_eval", code="6 * 7")
+    tool = make_run_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "run_julia", code="6 * 7")
     assert "reset_julia" not in out
     assert "Pkg.update" not in out
     assert out.strip() == "42"
 
 
-async def test_julia_eval_appends_pkg_update_hint_on_precompile_failure(tmp_path: Path) -> None:
+async def test_run_julia_appends_pkg_update_hint_on_precompile_failure(tmp_path: Path) -> None:
     err = "LoadError: Failed to precompile GeoStats [dcc97b0b] to ..."
     julia = FakeJulia(eval_handler=lambda code: EvalResult(output="", error=err))
-    tool = make_julia_eval_tool(_session(julia, tmp_path))
-    out = await _call(tool, "julia_eval", code='Pkg.add("GeoStats")')
+    tool = make_run_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "run_julia", code='Pkg.add("GeoStats")')
     assert "Pkg.update()" in out
     assert err in out  # original error preserved
 
 
-async def test_julia_eval_appends_reset_hint_on_worker_module_desync(tmp_path: Path) -> None:
+async def test_run_julia_appends_reset_hint_on_worker_module_desync(tmp_path: Path) -> None:
     err = (
         "On worker 1:\n"
         'KeyError: key Base.PkgId(Base.UUID("92933f4c-..."), "ProgressMeter") not found'
     )
     julia = FakeJulia(eval_handler=lambda code: EvalResult(output="", error=err))
-    tool = make_julia_eval_tool(_session(julia, tmp_path))
-    out = await _call(tool, "julia_eval", code="using GeoStats")
+    tool = make_run_julia_tool(_session(julia, tmp_path))
+    out = await _call(tool, "run_julia", code="using GeoStats")
     assert "reset_julia" in out
     assert err in out  # original error preserved

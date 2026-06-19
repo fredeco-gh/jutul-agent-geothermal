@@ -57,7 +57,7 @@ you intended; the printed hints name the likely fix (e.g.
 
 Example layout and APIs change between versions, so find them on disk rather
 than guessing. Get the installed source path with `pkgdir(JutulDarcy)` in
-`julia_eval` (it is read-only depot source), then browse it with the file tools
+`run_julia` (it is read-only depot source), then browse it with the file tools
 (see the `workspace-and-source` skill):
 
 ```text
@@ -67,7 +67,7 @@ grep("setup_well", path="/.../JutulDarcy/src")           # find an API
 read_file("/.../JutulDarcy/examples/introduction/wells_intro.jl")
 ```
 
-For docstrings, stay in the REPL: `julia_eval("@doc setup_reservoir_model")`.
+For docstrings, stay in the REPL: `run_julia("@doc setup_reservoir_model")`.
 
 For idiomatic "how do I do X" patterns, the examples directory is the
 authoritative reference. `setup_well` and `setup_vertical_well` are the
@@ -106,7 +106,7 @@ Three shape facts that are easy to guess wrong (each wrong guess is a KeyError):
 
 ## Plotting
 
-Use the **native plotters** through `julia_plot` — they run on GLMakie (the
+Use the **native plotters** through `plot_julia` — they run on GLMakie (the
 default backend) and are captured to an image automatically, headless or not:
 
 - `plot_reservoir(model)` — 3D reservoir mesh + well trajectories
@@ -128,7 +128,7 @@ suppress); pass `view=true` to inspect a plot yourself.
 
 **Plot from the live REPL bindings.** Your run already left `model`, `states`,
 `wd` in the REPL — call the plotter straight on them. Do **not** rebuild the case
-and re-run `simulate_reservoir` inside `julia_plot`; that re-simulates on every
+and re-run `simulate_reservoir` inside `plot_julia`; that re-simulates on every
 plot. Re-run only if you changed the setup.
 
 For a **chrome-free static artifact** (3D field + wells without `plot_reservoir`'s

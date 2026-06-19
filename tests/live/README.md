@@ -27,10 +27,10 @@ Tests skip cleanly when requirements are missing.
 
 ## What is exercised
 
-`test_live_workspace_read_and_julia_eval` demonstrates jutul-agent's core value:
+`test_live_workspace_read_and_run_julia` demonstrates jutul-agent's core value:
 
 1. The LLM reads a file from the **workspace** via `read_file` (deep-agents stock tool).
-2. The LLM evaluates the file contents in the **persistent Julia REPL** via `julia_eval`.
+2. The LLM evaluates the file contents in the **persistent Julia REPL** via `run_julia`.
 3. The turn runs through the production **`TurnRunner`** path and records a trace.
 
 The workspace file contains `sum([7, 14, 21, 28, 35])` — the answer `105` cannot be

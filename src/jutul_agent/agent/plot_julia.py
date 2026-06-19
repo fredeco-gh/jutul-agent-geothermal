@@ -152,7 +152,7 @@ def _finalize(
 ) -> str | list[dict[str, Any]]:
     """Record the artifact and build the reply (text, or text plus image when view).
 
-    Shared by julia_plot and recapture_plot. The PNG artifact is always recorded
+    Shared by plot_julia and recapture_plot. The PNG artifact is always recorded
     for the transcript and report; the live Makie window or the TUI's open-artifact
     action is how the user actually sees it.
     """
@@ -189,7 +189,7 @@ def _finalize(
     return summary
 
 
-def make_julia_plot_tool(session: Session):
+def make_plot_julia_tool(session: Session):
     artifacts_dir = session.output_dir / "artifacts"
     adapter = session.simulator
     ready: list[bool] = []  # one-shot memo: the backend loads once per session
@@ -204,7 +204,7 @@ def make_julia_plot_tool(session: Session):
         return err
 
     @tool
-    async def julia_plot(
+    async def plot_julia(
         code: str,
         tool_call_id: Annotated[str, InjectedToolCallId],
         caption: str = "",
@@ -216,10 +216,10 @@ def make_julia_plot_tool(session: Session):
     ) -> str | list[dict[str, Any]]:
         """Run Julia plotting code and turn the figure into something the user can see.
 
-        `julia_plot` is the bridge between a figure drawn in the REPL and a shareable
+        `plot_julia` is the bridge between a figure drawn in the REPL and a shareable
         result: it saves the figure as a PNG artifact (recorded in the transcript and
         report) and, in an interactive session, opens a live Makie window. Build
-        figures only here, never in `julia_eval` (that draws a figure nobody can see).
+        figures only here, never in `run_julia` (that draws a figure nobody can see).
 
         Prefer your simulator's documented native plotters (the `plotting-basics` and
         per-simulator skills name them); otherwise build a `Figure` inline. Just run
@@ -301,7 +301,7 @@ def make_julia_plot_tool(session: Session):
             extra_parts=extra,
         )
 
-    return julia_plot
+    return plot_julia
 
 
 def make_recapture_tool(session: Session):
@@ -323,7 +323,7 @@ def make_recapture_tool(session: Session):
         describe the new view.
 
         `slot` selects **which** window: the slot you gave that plot in
-        `julia_plot`. Omit it for the most recently opened/refreshed window. You
+        `plot_julia`. Omit it for the most recently opened/refreshed window. You
         can't drive the window (advance its timestep yourself); you only snapshot
         what the user currently has. Errors if there's no such open window.
 

@@ -36,7 +36,7 @@ geothermal physics through the same Fimbul/JutulDarcy API surface.
 ## Finding what you need
 
 Fimbul's source is read-only depot source at `pkgdir(Fimbul)`; get the path in
-`julia_eval`, then browse it with the file tools (see the `workspace-and-source`
+`run_julia`, then browse it with the file tools (see the `workspace-and-source`
 skill):
 
 ```text
@@ -55,7 +55,7 @@ glob("/.../JutulDarcy/examples/**/*.jl")          # reservoir + well setup
 grep("setup_well", path="/.../JutulDarcy/src")
 ```
 
-For docstrings, stay in the REPL: `julia_eval("@doc egg_geothermal_doublet")`.
+For docstrings, stay in the REPL: `run_julia("@doc egg_geothermal_doublet")`.
 
 ## Result inspection
 
@@ -90,7 +90,7 @@ unconverted Kelvin value.
 ## Plotting
 
 Fimbul reuses JutulDarcy's **native plotters** (GLMakie, the default backend),
-captured by `julia_plot` automatically — headless or interactive:
+captured by `plot_julia` automatically — headless or interactive:
 
 - `plot_reservoir(case.model, result.states)` — 3D reservoir (e.g. `key = :Temperature`)
 - `plot_well_results(result.wells)` — well dashboard

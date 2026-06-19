@@ -8,7 +8,7 @@ Slash commands typed into the input box:
 
 - ``/transcript``: render the current session's trace to HTML on disk.
 - ``/transcript md``: render the transcript as markdown instead.
-- ``/add-dir <path>``: mount an extra folder so the agent can read/edit it.
+- ``/add-dir <path>``: add an extra folder so the agent can read/edit it.
 - ``/model [provider:model]``: open the model selector, or switch directly.
 - ``/context``: show how much of the model's context window is used.
 - ``/compact``: summarize older turns to free context space.
@@ -41,13 +41,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Markdown, Static
 
+from jutul_agent.agent.added_dirs import AddDirError, add_dir, added_dirs
 from jutul_agent.agent.approval import (
     ApprovalMode,
     ToolAllowlist,
     parse_approval_mode,
     should_auto_approve_interrupt,
 )
-from jutul_agent.agent.mounts import MountError, mount_dir, mounted_dirs
 from jutul_agent.agent.turns import (
     TurnInterrupt,
     TurnReasoningDelta,
@@ -58,14 +58,13 @@ from jutul_agent.agent.turns import (
 from jutul_agent.interfaces.tui.approval import (
     SUPPORTED_APPROVAL_DECISIONS,
     allowed_decisions_for_interrupt,
-    approval_command_hints,
     render_interrupt_cards,
 )
 from jutul_agent.interfaces.tui.approval_menu import ApprovalMenu, build_approval_options
 from jutul_agent.interfaces.tui.commands import (
+    ALL_COMMANDS,
     InputHistory,
     SlashCommandSpec,
-    active_commands,
     find_command,
     matching_specs,
 )
@@ -166,7 +165,14 @@ class _AssistantStream:
             if block is None:
                 block = ReasoningBlock()
                 self.reasoning = block
-                await log.mount(block)
+                # Reasoning belongs above the answer it precedes. Text and
+                # reasoning are drained concurrently, so a stray text delta can
+                # mount the prose block first; anchor the reasoning above it
+                # rather than letting arrival order decide.
+                if self.prose is not None and self.prose.is_mounted:
+                    await log.mount(block, before=self.prose)
+                else:
+                    await log.mount(block)
             elif not block.is_mounted:
                 await block._mounted_event.wait()
             await block.append_content(text)
@@ -473,7 +479,7 @@ class TUIApp(App[None]):
             return
         editor = _resolve_editor()
         if not editor:
-            await self._note(f"no editor found — set $EDITOR, or open the file directly: {target}")
+            await self._note(f"no editor found. Set $EDITOR, or open the file directly: {target}")
             return
         with self.suspend():
             subprocess.run([*shlex.split(editor), str(target)], check=False)
@@ -513,7 +519,7 @@ class TUIApp(App[None]):
         else:
             if result is None:
                 await self._note(
-                    "nothing to compact yet — compaction keeps the newest "
+                    "nothing to compact yet. Compaction keeps the newest "
                     f"{MANUAL_KEEP_MESSAGES} messages and the conversation isn't "
                     "longer than that."
                 )
@@ -580,7 +586,7 @@ class TUIApp(App[None]):
     async def _replay_history(self) -> None:
         """Mount the resumed conversation's prior exchanges from the trace.
 
-        Only the user/assistant prose is replayed — tool calls and reasoning
+        Only the user/assistant prose is replayed; tool calls and reasoning
         stay in the trace (``/transcript`` renders everything). Long sessions
         replay just the newest messages so startup stays instant.
         """
@@ -622,10 +628,10 @@ class TUIApp(App[None]):
         if key == "down":
             self._approval_menu.action_move_down()
             return True
-        if key in {"enter", "y"}:
+        if key == "enter":
             self._approval_menu.action_confirm()
             return True
-        if key in {"escape", "n"}:
+        if key == "escape":
             self._approval_menu.action_select_reject()
             return True
         return False
@@ -776,6 +782,8 @@ class TUIApp(App[None]):
         elif self._history.is_navigating:
             self._history.reset()
         self._refresh_prompt_guide()
+        if self._pending_interrupts and self._approval_menu.visible:
+            self._approval_menu.set_reply_preview(self._prompt.value)
 
     async def on_prompt_text_area_submitted(self, event: PromptTextArea.Submitted) -> None:
         if self._busy:
@@ -793,7 +801,17 @@ class TUIApp(App[None]):
             return
 
         if self._pending_interrupts:
-            await self._note("approval is pending. Use the menu above or a slash command.")
+            # Typing a message while approval is pending is the "No, and tell the
+            # agent what to do differently" path: decline the action and send the
+            # text as the reason the model sees. (respond is a synthetic success,
+            # used only as a fallback when the request disallows reject.)
+            allowed = self._pending_allowed_decisions()
+            if "reject" in allowed:
+                await self._resume_pending({"type": "reject", "message": text})
+            elif "respond" in allowed:
+                await self._resume_pending({"type": "respond", "message": text})
+            else:
+                await self._note("This request can't take a reply. Choose an option above.")
             return
 
         if self._agent is None:
@@ -897,23 +915,8 @@ class TUIApp(App[None]):
     async def _command_quit(self, _arg: str) -> None:
         self.exit()
 
-    async def _command_approve(self, _arg: str) -> None:
-        await self._resume_pending({"type": "approve"})
-
-    async def _command_reject(self, arg: str) -> None:
-        decision: dict[str, str] = {"type": "reject"}
-        if arg:
-            decision["message"] = arg
-        await self._resume_pending(decision)
-
-    async def _command_respond(self, arg: str) -> None:
-        if not arg:
-            await self._note("usage: /respond <message>")
-            return
-        await self._resume_pending({"type": "respond", "message": arg})
-
     async def _command_help(self, _arg: str) -> None:
-        lines = [f"{spec.name:<11} — {spec.description}" for spec in self._command_specs()]
+        lines = [f"{spec.name:<16}{spec.description}" for spec in self._command_specs()]
         await self._note("\n".join(lines))
 
     async def _command_approval_mode(self, arg: str) -> None:
@@ -955,11 +958,11 @@ class TUIApp(App[None]):
         await self._note("copied the last assistant message to the clipboard")
 
     async def _command_add_dir(self, raw: str) -> None:
-        """Mount a folder into the agent filesystem, or list mounted folders.
+        """Add a folder to the agent filesystem, or list the folders already added.
 
-        With no argument, lists the folders already mounted this session; with a
-        path, mounts it writable under ``/dirs/<name>/`` so the file tools can
-        reach it. The route is live for the agent's next tool call.
+        With no argument, lists the folders added this session; with a path,
+        records it so the file tools reach it. The real-path backend already
+        reaches any absolute path, so the folder is usable on the next tool call.
         """
         if self._backend is None:
             await self._note("adding folders isn't available in this session.")
@@ -967,25 +970,25 @@ class TUIApp(App[None]):
 
         path = raw.strip().strip("\"'")
         if not path:
-            mounts = mounted_dirs(self._backend)
-            if mounts:
+            dirs = added_dirs(self._backend)
+            if dirs:
                 lines = ["Added folders:"]
-                lines += [f"  `{mount.path}`" for mount in mounts]
+                lines += [f"  `{entry.path}`" for entry in dirs]
                 await self._note("\n".join(lines))
             else:
                 await self._note(
-                    "usage: /add-dir <path> — mount a folder so the agent can read and edit it"
+                    "usage: /add-dir <path>. Adds a folder the agent can read and edit."
                 )
             return
 
         try:
-            mount = mount_dir(self._backend, path, workspace=workspace_root())
-        except MountError as exc:
+            entry = add_dir(self._backend, path, workspace=workspace_root())
+        except AddDirError as exc:
             await self._note(f"could not add folder: {exc}")
             return
 
         await self._note(
-            f"Added `{mount.path}`. The agent reads, greps, writes, and edits it "
+            f"Added `{entry.path}`. The agent reads, greps, writes, and edits it "
             f"by its real absolute path in every tool (file tools, Julia, and shell)."
         )
 
@@ -1107,9 +1110,9 @@ class TUIApp(App[None]):
         """Rebuild the agent on the new model and persist the choice.
 
         The rebuilt agent shares the session's checkpointer and thread id, so
-        the conversation continues; ``/add-dir`` mounts are re-applied.
+        the conversation continues; ``/add-dir`` folders are re-applied.
         """
-        dirs = [mount.path for mount in mounted_dirs(self._backend)] if self._backend else []
+        dirs = [entry.path for entry in added_dirs(self._backend)] if self._backend else []
         try:
             agent, backend = self._agent_factory(model_id, dirs)
         except Exception as exc:
@@ -1232,7 +1235,7 @@ class TUIApp(App[None]):
 
     def _has_running_julia_tool(self) -> bool:
         return any(
-            block.status == "running" and block.tool_name in {"julia_eval", "julia_plot"}
+            block.status == "running" and block.tool_name in {"run_julia", "plot_julia"}
             for block in self._tool_blocks
         )
 
@@ -1310,6 +1313,9 @@ class TUIApp(App[None]):
         self._busy = False
         self._set_status("approval required" if self._pending_interrupts else "ready")
         if not self._pending_interrupts:
+            # Turn settled: rewrite any report's sidecar transcript so it now
+            # includes the model's closing message (write_report ran mid-turn).
+            self._session.refresh_report_transcripts()
             self._hide_approval_menu()
             self._prompt.focus()
         self._prompt.disabled = False
@@ -1435,7 +1441,7 @@ class TUIApp(App[None]):
         # event from the tool-call projection) see the block and dedupe.
         self._tool_blocks.append(block)
         await self._log.mount(block)
-        if name in {"julia_eval", "julia_plot"}:
+        if name in {"run_julia", "plot_julia"}:
             block.start_elapsed_timer()
         self._set_status("updating plan…" if name == "write_todos" else f"running {name}…")
 
@@ -1516,13 +1522,14 @@ class TUIApp(App[None]):
                 self._active_approval_blocks.append(block)
                 rendered_cards += 1
 
-        commands = ", ".join(self._approval_help_lines())
-        if commands:
-            prefix = "approval is pending" if rendered_cards else "approval required"
-            await self._set_approval_note(f"{prefix}. Select an option in the menu below.")
+        # The card shows the request and the menu below shows the options, so no
+        # extra "approval is pending" line is needed, only a note for the rare
+        # request the TUI can't resolve at all.
+        if self._pending_allowed_decisions():
+            await self._clear_approval_note()
         else:
             await self._set_approval_note(
-                "approval required. This request cannot be resolved from the TUI."
+                "This request needs a decision the TUI can't make; resolve it elsewhere."
             )
         self._show_approval_menu()
         self._set_status("approval required")
@@ -1593,11 +1600,8 @@ class TUIApp(App[None]):
         await self._log.mount(WelcomeBlock(simulator_label=self._session.simulator.display_name))
         self._jump_to_latest()
 
-    def _approval_help_lines(self) -> list[str]:
-        return approval_command_hints(self._pending_allowed_decisions())
-
     def _command_specs(self) -> list[SlashCommandSpec]:
-        return active_commands(self._pending_allowed_decisions())
+        return list(ALL_COMMANDS)
 
     def _refresh_prompt_guide(self) -> None:
         guide = self.query_one("#prompt-guide", PromptGuide)
@@ -1623,9 +1627,11 @@ class TUIApp(App[None]):
             value = self._prompt.value
             if value.startswith("/"):
                 return self._command_guide(value)
-            if self._approval_menu.visible:
-                return "↑/↓ select · Enter confirm · Esc reject · Shift+Tab cycle mode"
-            return "approval pending"
+            if value.strip():
+                return "Enter sends this to the agent as what to do instead"
+            # The approval menu beneath the prompt owns the key map (↑/↓ move,
+            # enter confirm, type to reply); don't repeat it in the footer.
+            return ""
         if self._busy:
             return "Ctrl+G cancel"
         value = self._prompt.value
@@ -1637,10 +1643,10 @@ class TUIApp(App[None]):
             tool_hint = " · Ctrl+O expand tool output"
         else:
             tool_hint = ""
-        mode_hint = f" · {self._approval_mode.display_label()}"
+        # The current mode lives in the top status bar (always visible); the
+        # footer only needs to say how to change it, not repeat its value.
         return (
-            "Enter send · Shift+Enter newline · Ctrl+P/↑ history · Shift+Tab cycle mode"
-            f"{tool_hint}{mode_hint}"
+            f"Enter send · Shift+Enter newline · Ctrl+P/↑ history · Shift+Tab cycle mode{tool_hint}"
         )
 
     def _command_guide(self, value: str) -> str:

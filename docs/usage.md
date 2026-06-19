@@ -28,7 +28,7 @@ saves it to the user-global `.env`. Local models through
 verifies the whole setup and prints a fix per finding.
 
 Prefer a clone for hacking on jutul-agent itself? See
-[development](development.md) — there you run commands as `uv run jutul-agent`.
+[development](development.md), where you run commands as `uv run jutul-agent`.
 
 ## Workspaces
 
@@ -76,7 +76,7 @@ jutul-agent upgrade --check  # just report the latest vs what's installed
 `upgrade` does the right thing for how you installed: a tool install runs
 `uv tool upgrade jutul-agent`; a dev checkout is told to `git pull && uv sync`.
 On Windows the running executable can't replace itself, so the upgrade runs in
-a new console window and jutul-agent exits to release the file — reopen it when
+a new console window and jutul-agent exits to release the file; reopen it when
 that window finishes.
 At launch, jutul-agent also prints a one-line notice when a newer version is
 available (a background check, cached for a day; it never delays startup). Turn
@@ -101,7 +101,7 @@ jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
 
 Inside the TUI, `/add-dir <path>` adds one immediately and `/add-dir` lists
 the folders added so far. The agent uses each at its real absolute path in
-every tool: the file tools, `julia_eval`, and `execute`. Added folders last
+every tool: the file tools, `run_julia`, and `execute`. Added folders last
 for the session and are not written to config.
 
 ## The TUI

@@ -72,23 +72,23 @@ def _display_note(open_windows: bool) -> str:
 
     Without it the agent can't know it's headless and will wrongly tell the user a
     window opened (e.g. after a native ``plot_well_results`` call). When no window
-    can show, steer it to ``julia_plot`` (which still renders a PNG) and away from
+    can show, steer it to ``plot_julia`` (which still renders a PNG) and away from
     claiming interactivity the user can't see.
     """
 
     if open_windows:
         return (
-            "Display: live plot windows are available this session. `julia_plot` "
+            "Display: live plot windows are available this session. `plot_julia` "
             "opens an interactive Makie window the user can rotate/zoom/step, and "
             "also saves a PNG."
         )
     return (
-        "Display: this session is HEADLESS — no on-screen window can appear. "
-        "`julia_plot` still renders and saves a PNG (the user sees it in the "
+        "Display: this session is HEADLESS, so no on-screen window can appear. "
+        "`plot_julia` still renders and saves a PNG (the user sees it in the "
         "transcript/report), so use it for every figure. Native interactive viewers "
         "(`plot_well_results`, `plot_reservoir`, `plot_cell_data`, …) called in "
-        "`julia_eval` draw to an offscreen virtual display the user cannot see — "
-        "wrap such results in `julia_plot` instead. Never tell the user a window "
+        "`run_julia` draw to an offscreen virtual display the user cannot see, so "
+        "wrap such results in `plot_julia` instead. Never tell the user a window "
         "opened or that they can rotate/zoom/interact with a plot; they can't."
     )
 
@@ -98,7 +98,7 @@ def _tool_guide(adapter: SimulatorAdapter) -> str:
     return (
         "You operate in the user's *workspace* (their current working "
         "directory). Two tool families:\n"
-        "  - `julia_eval` and `julia_plot` run code in a persistent Julia "
+        "  - `run_julia` and `plot_julia` run code in a persistent Julia "
         "REPL. State persists across calls. Use the REPL for probing APIs "
         "(`@doc`, `methods`, `names`, `fieldnames`, `pkgdir`), running "
         "simulations, and including workspace scripts.\n"
@@ -107,29 +107,29 @@ def _tool_guide(adapter: SimulatorAdapter) -> str:
         "from the workspace. Use them to create real implementation files the "
         "user can inspect and edit, and to read installed package source: every "
         "package the environment resolves has its source on disk at the path "
-        f"`pkgdir(<Package>)` returns (e.g. `pkgdir({primary})` in `julia_eval`); "
+        f"`pkgdir(<Package>)` returns (e.g. `pkgdir({primary})` in `run_julia`); "
         "`read_file`, `glob`, and `grep` that path to study its "
         "`examples/`, `docs/`, and `src/`. Installed source is read-only (the "
         "shared depot); `Pkg.develop` a package to edit it. See the "
         "`workspace-and-source` skill.\n"
         "Two ways to run Julia, one shared REPL:\n"
-        '    1. Direct — `julia_eval("<code>")` for probes, quick computations, '
+        '    1. Direct: `run_julia("<code>")` for probes, quick computations, '
         "and building/solving inline.\n"
-        "    2. From a file — for a real implementation the user can keep, "
+        "    2. From a file: for a real implementation the user can keep, "
         "`write_file` a `.jl` file in the workspace, then run it in the same REPL "
-        "with `julia_eval('include(\"candidate.jl\")')`. Edit the file with "
+        "with `run_julia('include(\"candidate.jl\")')`. Edit the file with "
         "`edit_file` and re-`include` to re-run. The REPL keeps state, so loaded "
         "packages and earlier results survive across calls.\n"
         "Decision rule: real implementations → write a `.jl` file and `include` it; "
-        "quick probes → `julia_eval` directly.\n"
-        "Plots: build figures only with `julia_plot`, never `julia_eval`, which "
+        "quick probes → `run_julia` directly.\n"
+        "Plots: build figures only with `plot_julia`, never `run_julia`, which "
         "draws a figure nobody can see. See the `plotting-basics` skill. Prefer "
         "the simulator's documented native plotters (the per-simulator skill names "
         "them); you may also build a `Figure` inline, and you don't need to return "
         "it or avoid `display`. Plotting runs on GLMakie like normal Julia: in an "
-        "interactive session `julia_plot` opens a live window the user can "
+        "interactive session `plot_julia` opens a live window the user can "
         "rotate/zoom/step and also saves a PNG; headless runs just save the PNG. "
-        "Give related plots a stable `slot` — the same slot refreshes one window "
+        "Give related plots a stable `slot`: the same slot refreshes one window "
         "in place, distinct slots get distinct windows, and "
         "`recapture_plot(slot=...)` / `close_plots(slot=...)` address that window. "
         "Pass `view=true` only when you need to see the result yourself (verify a "
@@ -147,7 +147,7 @@ def _ground_rules() -> str:
 
     return (
         "Ground rules:\n"
-        "  - Paths are real and shared: the file tools, `execute`, and `julia_eval` "
+        "  - Paths are real and shared: the file tools, `execute`, and `run_julia` "
         "all use the working directory above. Name a workspace file by a relative "
         "path (`model.jl`, `experiments/foo.csv`) or its absolute path under the "
         "working directory; both mean the same file in all three, so the file you "
@@ -156,9 +156,9 @@ def _ground_rules() -> str:
         "exist, so don't invent them. Everything you touch (your files, installed "
         "package source, memory, added folders) is a real path that opens the same "
         "in every tool.\n"
-        "  - Julia runs only in the shared REPL: `julia_eval`, or `julia_plot` for "
+        "  - Julia runs only in the shared REPL: `run_julia`, or `plot_julia` for "
         "figures. Never spawn `julia` (or `julia --project`, `julia -e`) through "
-        "`execute` — a fresh process shares no state, pays a full precompile, "
+        "`execute`, since a fresh process shares no state, pays a full precompile, "
         "and needs approval. Results that feed the task's conclusions "
         "(simulation outputs, quantities the user asked for) come from the "
         "session REPL, not recomputed elsewhere; `execute` covers ordinary "
@@ -173,5 +173,5 @@ def _ground_rules() -> str:
         "what the workspace env already provides, use a stdlib alternative, or "
         "`Pkg.add` it when the task needs it.\n"
         "  - Folders the user adds to the session are available at their real "
-        "absolute path in every tool: the file tools, `execute`, and `julia_eval`."
+        "absolute path in every tool: the file tools, `execute`, and `run_julia`."
     )

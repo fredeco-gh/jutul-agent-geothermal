@@ -52,7 +52,7 @@ def filesystem_source() -> Task:
                 id=f"fss-{sim}-source-to-workspace",
                 input=(
                     f"The {package} package is installed in this environment. Find its "
-                    "source directory (the path `pkgdir` returns in `julia_eval`), then "
+                    "source directory (the path `pkgdir` returns in `run_julia`), then "
                     f"write that path to a new workspace file `notes/{package}_source.txt`. "
                     "Reply with the path you wrote."
                 ),
@@ -68,7 +68,7 @@ def filesystem_source() -> Task:
         scorer=[
             includes(),
             workspace_file_exists("notes/*_source.txt"),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             used_any_tool(["write_file", "read_file", "grep", "glob", "ls"]),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),

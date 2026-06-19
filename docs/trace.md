@@ -39,7 +39,7 @@ writer and reader API, though plain `sqlite3` works too.
 | `tool_result` | recorder middleware | `tool_call_id`, `name`, `content`, `status` |
 | `hitl_request` | `TurnRunner` | the pending tool call awaiting approval |
 | `hitl_response` | `TurnRunner` | `interrupt_id`, the decision payload |
-| `artifact` | `julia_plot` / `recapture_plot` | `path` (relative to the session output dir), `mime`, `caption`, `tool_call_id`, `format`, `size_px`, `dpi`, `slot`, `source_code` |
+| `artifact` | `plot_julia` / `recapture_plot` | `path` (relative to the session output dir), `mime`, `caption`, `tool_call_id`, `format`, `size_px`, `dpi`, `slot`, `source_code` |
 | `attempt` | `record_attempt` | `id`, `parent_id`, `rationale`, `parameters_changed`, `metrics`, `candidate_path`, `plot_artifact_path`, `notes` |
 
 The recorder is an agent middleware (`trace/recorder.py`), so it observes

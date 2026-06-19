@@ -24,12 +24,12 @@ def test_render_full_turn(snapshot) -> None:
         make_event(
             3,
             "tool_call",
-            {"id": "call-1", "name": "julia_eval", "args": {"code": "2+2"}},
+            {"id": "call-1", "name": "run_julia", "args": {"code": "2+2"}},
         ),
         make_event(
             4,
             "tool_result",
-            {"tool_call_id": "call-1", "name": "julia_eval", "content": "4"},
+            {"tool_call_id": "call-1", "name": "run_julia", "content": "4"},
         ),
         make_event(5, "message_assistant", {"content": "The answer is 4."}),
         make_event(6, "session_end", {"session_id": "abc"}),
@@ -45,6 +45,72 @@ def test_render_escapes_html_in_payload(snapshot) -> None:
     assert "&lt;script&gt;" in html
     assert "<script>alert(1)</script>" not in html
     assert html == snapshot
+
+
+def test_render_escapes_raw_html_inside_markdown_message() -> None:
+    """Markdown-looking prose with raw HTML smuggled in: the markdown renders,
+    but the raw ``<script>`` is escaped to text, not passed through."""
+    events = [
+        make_event(
+            1,
+            "message_assistant",
+            {"content": "## Findings\n\n<script>alert('x')</script>\n\nDone."},
+        ),
+    ]
+    html = render_html(events)
+    assert "<h2>Findings</h2>" in html  # markdown still works
+    assert "<script>alert('x')</script>" not in html  # raw HTML did not pass through
+    assert "&lt;script&gt;" in html
+
+
+def test_filter_chip_counts_reflect_rendered_cards() -> None:
+    """A tool call and its result render as one merged card, so the Tools chip
+    should count 1, not 2 (call + result). Same for an approval round-trip."""
+    events = [
+        make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
+        make_event(2, "tool_call", {"id": "c1", "name": "run_julia", "args": {"code": "1+1"}}),
+        make_event(3, "tool_result", {"tool_call_id": "c1", "name": "run_julia", "content": "2"}),
+        make_event(4, "hitl_request", {"interrupt_id": "i1", "value": {"action_requests": []}}),
+        make_event(5, "hitl_response", {"interrupt_id": "i1", "payload": {"decisions": []}}),
+    ]
+    html = render_html(events)
+    assert 'Tools <span class="count">1</span>' in html
+    assert 'Approval <span class="count">1</span>' in html
+
+
+def test_render_html_drops_internal_telemetry_events() -> None:
+    """model_usage / eval_target are trace telemetry, not conversation: they must
+    not render as cards or leak into the filter chips."""
+    events = [
+        make_event(1, "session_start", {"session_id": "abc", "simulator": "battmo"}),
+        make_event(2, "message_user", {"content": "hi"}),
+        make_event(3, "model_usage", {"input_tokens": 10, "output_tokens": 5}),
+        make_event(4, "eval_target", {"expected": "42"}),
+        make_event(5, "message_assistant", {"content": "hello"}),
+    ]
+    html = render_html(events)
+    assert "model_usage" not in html
+    assert "eval_target" not in html
+    assert "Raw payload" not in html  # no fall-through card for the telemetry kinds
+    assert "hello" in html  # the real conversation still renders
+
+
+def test_render_html_has_csp_with_script_hash() -> None:
+    """The transcript is opened from disk with untrusted content in it, so it
+    ships a CSP: only its own inline script runs (matched by hash), images are
+    local/data-only, and there is no remote egress."""
+    import base64
+    import hashlib
+
+    from jutul_agent.transcript.html import _SCRIPT
+
+    head = render_html([make_event(1, "message_user", {"content": "hi"})]).split("</head>")[0]
+    want = base64.b64encode(hashlib.sha256(_SCRIPT.encode()).digest()).decode()
+    assert '<meta http-equiv="Content-Security-Policy"' in head
+    assert f"script-src 'sha256-{want}'" in head  # the page's own script, by hash
+    assert "img-src 'self' data: file:" in head  # local + inlined, never remote
+    assert "default-src 'none'" in head
+    assert "https:" not in head and "http:" not in head  # no remote origin allowed
 
 
 def test_render_assistant_markdown(snapshot) -> None:
@@ -132,8 +198,8 @@ def test_render_todos_args(snapshot) -> None:
 
 def test_filter_groups_merge_tools(snapshot) -> None:
     events = [
-        make_event(1, "tool_call", {"name": "julia_eval", "args": {}}),
-        make_event(2, "tool_result", {"name": "julia_eval", "content": "4"}),
+        make_event(1, "tool_call", {"name": "run_julia", "args": {}}),
+        make_event(2, "tool_result", {"name": "run_julia", "content": "4"}),
     ]
     html = render_html(events)
     assert 'data-filter="tool_call"' not in html
@@ -229,7 +295,7 @@ def test_render_unknown_kind_fallback(snapshot) -> None:
 
 def test_lifecycle_kinds_render_as_markers_not_raw_dumps() -> None:
     """session_title/session_resume/context_compaction are session structure:
-    title in the header, dividers in the timeline — never the raw-payload
+    title in the header, dividers in the timeline, never the raw-payload
     catch-all card (which stays the fallback for truly unknown kinds)."""
     from jutul_agent.transcript import render_markdown
 

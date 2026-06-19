@@ -2,13 +2,13 @@
 
 This module wires everything ``create_deep_agent`` needs in one place:
 
-- ``build_backend``: the CompositeBackend mounting the workspace plus the
-  skill/memory/session routes.
+- ``build_backend``: the real-path CompositeBackend over the workspace
+  (skills, memory, package source, and added folders all at their real paths).
 - ``register_provider_profiles``: ``HarnessProfile`` registration per
   provider (disables the default general-purpose subagent; all prompt text
   lives in ``agent.prompts``).
 - ``build_agent``: the entry point used by the CLI/TUI. Returns the agent
-  together with its live backend, so callers can mount extra folders
+  together with its live backend, so callers can add extra folders
   mid-session (``/add-dir``).
 """
 
@@ -28,26 +28,26 @@ from deepagents import (
 )
 from deepagents.backends import CompositeBackend
 
+from jutul_agent.agent.added_dirs import add_dir
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
 from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
 from jutul_agent.agent.context_editing import build_context_editing_middleware
-from jutul_agent.agent.julia_plot import (
-    make_close_plots_tool,
-    make_julia_plot_tool,
-    make_recapture_tool,
-)
 from jutul_agent.agent.memory import (
     build_memory_middleware,
     ensure_memory_dir,
     make_remember_tool,
 )
-from jutul_agent.agent.mounts import mount_dir
+from jutul_agent.agent.plot_julia import (
+    make_close_plots_tool,
+    make_plot_julia_tool,
+    make_recapture_tool,
+)
 from jutul_agent.agent.prompts import assemble_session_prompt
 from jutul_agent.agent.recovery import InvalidToolCallRecoveryMiddleware
 from jutul_agent.agent.tools import (
-    make_julia_eval_tool,
     make_record_attempt_tool,
     make_reset_julia_tool,
+    make_run_julia_tool,
     make_write_report_tool,
 )
 from jutul_agent.agent.windows_paths import enable_windows_real_paths
@@ -141,7 +141,7 @@ _ANTHROPIC_MAX_TOKENS = 24_000
 def _model_profile(model_id: str) -> dict[str, Any]:
     """The provider package's bundled profile for the model (``{}`` unknown).
 
-    Profiles are the maintained capability source — keying decisions on them
+    Profiles are the maintained capability source. Keying decisions on them
     means new models are covered by upgrading the provider package, never by
     editing a list here. Reading one builds the model, which needs the
     provider key; callers treat a raised error as "no settings".
@@ -159,7 +159,7 @@ def _ollama_settings(model_id: str) -> dict[str, Any]:
     # Thinking-capable local models must have think mode requested
     # explicitly: left at the daemon default, the thinking segment is
     # dropped on the client side, so a turn the model spends entirely on
-    # thinking surfaces as an empty reply with no tool calls — the agent
+    # thinking surfaces as an empty reply with no tool calls, and the agent
     # falls silent. Requested, the thinking is separated, tool calls parse
     # reliably, and the reasoning becomes visible like the cloud providers'.
     if ollama_client.thinks(name):
@@ -192,7 +192,7 @@ def _anthropic_settings(model_id: str) -> dict[str, Any] | None:
 def _google_settings(model_id: str) -> dict[str, Any] | None:
     # Gemini thinks by default (level "high" on Gemini 3+); include_thoughts
     # only makes the thinking visible. An empty profile means the model is
-    # newer than the package's data — those all think; the data marks the
+    # newer than the package's data, and those all think; the data marks the
     # legacy non-thinking models explicitly.
     profile = _model_profile(model_id)
     if profile.get("reasoning_output") or not profile:
@@ -224,8 +224,8 @@ def _resolve_model_for_agent(model: Any) -> Any:
     profile nor a context setting (an instance resolves by provider). And
     models that can reason get it requested and made visible at construction
     (``_MODEL_SETTINGS``): without that the model reasons silently or, on
-    recent OpenAI models, not at all. Everything else — unknown providers,
-    models whose resolver declines, failures while probing — keeps the spec
+    recent OpenAI models, not at all. Everything else (unknown providers,
+    models whose resolver declines, failures while probing) keeps the spec
     string so deepagents builds it exactly as before; an already-built model
     is passed through untouched.
     """
@@ -243,7 +243,7 @@ def _resolve_model_for_agent(model: Any) -> Any:
             _set_profile_window(instance, model)
             return instance
     except Exception:
-        pass  # no key yet, unknown model, offline — run with the plain spec
+        pass  # no key yet, unknown model, or offline: run with the plain spec
     return model
 
 
@@ -253,7 +253,7 @@ def _set_profile_window(model: Any, model_id: str) -> None:
     deepagents' stock summarizer sizes its trigger from
     ``model.profile['max_input_tokens']``. Ollama ships no profile, so the
     trigger would otherwise fall back to a fixed default far larger than the
-    loaded num_ctx — the local-overflow bug. Feed in the window we actually use.
+    loaded num_ctx (the local-overflow bug). Feed in the window we actually use.
     Best-effort: a model whose profile can't be set keeps its native window.
     """
     from jutul_agent.models import context_window
@@ -296,7 +296,7 @@ def build_backend(
     *,
     workspace: Path | None = None,
     package_sources: Sequence[PackageSource] | None = None,
-    mounted_dirs: Sequence[str | Path] | None = None,
+    added_dirs: Sequence[str | Path] | None = None,
     artifacts_root: str | Path | None = None,
 ) -> CompositeBackend:
     """The agent's filesystem: one real-path backend over the workspace.
@@ -307,8 +307,8 @@ def build_backend(
     Package source, skills, memory, and added folders are all read and written
     at their real paths through this backend.
     Writes into the shared Julia depot (registry ``package_sources``) are refused
-    so the agent can study installed source but not corrupt it. ``mounted_dirs``
-    are validated and recorded (see ``agent.mounts``), and the agent uses their
+    so the agent can study installed source but not corrupt it. ``added_dirs``
+    are validated and recorded (see ``agent.added_dirs``), and the agent uses their
     real paths. The composite wrapper carries the recursive-grep fix and an (empty)
     route table the live session can still extend.
     """
@@ -328,8 +328,8 @@ def build_backend(
         # writable directory; build_agent points it at the session state dir.
         artifacts_root=str(artifacts_root) if artifacts_root is not None else "/",
     )
-    for raw in mounted_dirs or ():
-        mount_dir(backend, raw, workspace=ws)
+    for raw in added_dirs or ():
+        add_dir(backend, raw, workspace=ws)
     return backend
 
 
@@ -357,12 +357,12 @@ def build_agent(
     checkpointer: Any | None = None,
     approval_mode: ApprovalMode | str | None = None,
     package_sources: Sequence[PackageSource] | None = None,
-    mounted_dirs: Sequence[str | Path] | None = None,
+    added_dirs: Sequence[str | Path] | None = None,
 ) -> tuple[Any, CompositeBackend]:
     """Build the session agent and return it with its live ``CompositeBackend``.
 
     The backend is returned alongside the agent because it's the same object the
-    filesystem middleware uses: callers keep it to mount more folders mid-session
+    filesystem middleware uses: callers keep it to add more folders mid-session
     (the TUI ``/add-dir`` command), and a route added to it is visible to the
     agent's next tool call. Callers that don't need it just ignore the second
     element.
@@ -376,14 +376,14 @@ def build_agent(
     memory_dir = ensure_memory_dir(session.memory_dir(workspace_memory=workspace_memory_dir()))
     backend = build_backend(
         package_sources=package_sources,
-        mounted_dirs=mounted_dirs,
+        added_dirs=added_dirs,
         artifacts_root=session.state_dir,
     )
 
     tools = [
-        make_julia_eval_tool(session),
+        make_run_julia_tool(session),
         make_reset_julia_tool(session),
-        make_julia_plot_tool(session),
+        make_plot_julia_tool(session),
         make_recapture_tool(session),
         make_close_plots_tool(session),
         make_record_attempt_tool(session),
@@ -415,7 +415,7 @@ def build_agent(
         # by create_deep_agent); its trigger is sized from the model profile,
         # which _set_profile_window points at the real loaded window. The
         # TraceRecorder records each compaction. Tool-result clearing is our one
-        # addition — it sheds old results below the summary trigger so the
+        # addition: it sheds old results below the summary trigger so the
         # expensive summary call is reserved for when clearing isn't enough.
         middleware=[
             m

@@ -135,8 +135,11 @@ def test_resolve_model_for_agent_enables_anthropic_thinking(
     assert isinstance(model, BaseChatModel)
     assert getattr(model, "thinking", None) == {"type": "enabled", "budget_tokens": 10_000}
     assert getattr(model, "max_tokens", None) == 24_000
-    # A model the installed provider package has no profile for stays a string.
-    assert _resolve_model_for_agent("anthropic:claude-opus-4-8") == "anthropic:claude-opus-4-8"
+    # A model the installed provider package has no profile for stays a string
+    # (a fictional id so the assertion can't be invalidated by the provider
+    # package later learning a real model's profile).
+    unknown = "anthropic:claude-imaginary-0-0"
+    assert _resolve_model_for_agent(unknown) == unknown
 
 
 def test_resolve_model_for_agent_degrades_without_credentials(

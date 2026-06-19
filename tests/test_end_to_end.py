@@ -25,7 +25,7 @@ async def _run_turn(agent, session: Session, prompt: str):
     return await runner.run_prompt(prompt)
 
 
-async def test_agent_loop_drives_julia_eval(tmp_path: Path) -> None:
+async def test_agent_loop_drives_run_julia(tmp_path: Path) -> None:
     julia = FakeJulia(answers={"2 + 2": "4"})
     adapter = make_fake_adapter(tmp_path)
     session = Session.create(julia=julia, state_root=tmp_path, simulator=adapter)
@@ -33,7 +33,7 @@ async def test_agent_loop_drives_julia_eval(tmp_path: Path) -> None:
     model = make_scripted_model(
         [
             scripted_tool_call(
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 args={"code": "2 + 2"},
                 tool_call_id="call_eval_1",
             ),
@@ -75,7 +75,7 @@ async def test_tool_output_is_not_streamed_as_assistant_prose(tmp_path: Path) ->
     model = make_scripted_model(
         [
             scripted_tool_call(
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 args={"code": "probe()"},
                 tool_call_id="call_probe_1",
             ),

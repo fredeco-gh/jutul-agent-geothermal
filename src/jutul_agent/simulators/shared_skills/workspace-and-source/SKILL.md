@@ -34,7 +34,7 @@ workspace files with `glob("**/*")` or `ls(".")` / `ls("experiments")`.
 
 Every path is a real filesystem path: your files, installed package source,
 memory notes, and added folders all open the same in the file tools, `execute`,
-and `julia_eval`. A bare leading slash (`/model.jl`) is the machine root, not the
+and `run_julia`. A bare leading slash (`/model.jl`) is the machine root, not the
 workspace.
 
 ## When to write a file vs. evaluate in the REPL
@@ -48,10 +48,10 @@ workspace.
 
 - **Quick probe → REPL.** Tiny one-offs (`@doc`, `methods`, "what fields
   does this struct have?", "what does this return for a small input?")
-  belong in `julia_eval`. Don't litter the workspace with one-liners.
+  belong in `run_julia`. Don't litter the workspace with one-liners.
 
 - **Pattern for running a file you just wrote:** write the file, then
-  load it into the REPL with `julia_eval('include("solve.jl")')`. The
+  load it into the REPL with `run_julia('include("solve.jl")')`. The
   REPL keeps state across calls, so you can iterate on the file and
   re-`include` it without paying the package-load cost again.
 
@@ -64,7 +64,7 @@ read and grep it with the ordinary file tools; the same path string works in
 Julia too:
 
 ```julia
-# julia_eval
+# run_julia
 pkgdir(JutulDarcy)             # -> /.../.julia/packages/JutulDarcy/<hash>
 ```
 
@@ -87,14 +87,14 @@ For exact signatures and docstrings, stay in the REPL — these read the
 installed version directly and are always current:
 
 ```julia
-# julia_eval
+# run_julia
 @doc some_function             # docstring
 methods(solve)                 # available methods
 names(SimulatorPackage)        # exported names of the active simulator's package
 ```
 
 Rule of thumb: **`pkgdir(<Package>)` + the file tools for examples and source
-you want to read or grep; `@doc` / `methods` / `names` in `julia_eval` for
+you want to read or grep; `@doc` / `methods` / `names` in `run_julia` for
 precise API.**
 
 If `.jutul-agent/config.toml` sets a `source_path` for the simulator, its

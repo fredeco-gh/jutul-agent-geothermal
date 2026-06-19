@@ -60,7 +60,7 @@ async def test_clears_old_tool_results_but_keeps_recent_and_excluded() -> None:
         HumanMessage(content="start"),
         *_tool_round("a", "sim_read", "OLD SOURCE DUMP " * 50),  # oldest → cleared
         *_tool_round("b", "record_attempt", "attempt #1 id=keep-me"),  # old but excluded
-        *_tool_round("c", "julia_eval", "recent output one"),  # recent → kept
+        *_tool_round("c", "run_julia", "recent output one"),  # recent → kept
         *_tool_round("d", "sim_read", "recent output two"),  # recent → kept
     ]
     captured: dict[str, list] = {}

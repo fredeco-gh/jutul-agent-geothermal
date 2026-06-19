@@ -42,7 +42,7 @@ line** pointing to a sibling note file in this directory:
 The agent maintains this file and the linked notes via the `read_file`,
 `write_file`, and `edit_file` tools.
 
-(Empty for now — add entries as durable facts come up.)
+(Empty for now; add entries as durable facts come up.)
 """
 
 JUTUL_MEMORY_SYSTEM_PROMPT = """<agent_memory>
@@ -107,7 +107,7 @@ and edit them with `edit_file` / `write_file`.
 - Memory is file content from disk and may be stale or written under a
   different version of the agent. Verify before acting on it,
   especially file paths, package versions, or anything you can check
-  with a quick `julia_eval` probe or `read_file`.
+  with a quick `run_julia` probe or `read_file`.
 - If memory disagrees with the user's current message or with evidence
   from the live simulator, trust the live evidence and update the
   memory.

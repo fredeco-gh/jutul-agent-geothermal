@@ -1,7 +1,7 @@
 """Filesystem suite: resolving workspace paths the agent keeps tripping on.
 
 The file tools (`read_file`, `write_file`, `edit_file`, `glob`, `ls`),
-`julia_eval`, `julia_plot`, and `execute` all share the workspace as their
+`run_julia`, `plot_julia`, and `execute` all share the workspace as their
 working directory and resolve the same real paths: a workspace file is a
 relative path (``model.jl``) or its absolute path, and a bare leading slash
 (``/model.jl``) is the machine root, not the workspace. Writing a workspace
@@ -99,7 +99,7 @@ def filesystem() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             includes(),
-            used_tools(["write_file", "julia_eval"]),
+            used_tools(["write_file", "run_julia"]),
             workspace_file_exists("compute.jl"),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
@@ -131,7 +131,7 @@ def filesystem_nested() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_close(6.0, 0.01),
-            used_tools(["write_file", "julia_eval"]),
+            used_tools(["write_file", "run_julia"]),
             workspace_file_exists("scripts/stats.jl"),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
@@ -166,7 +166,7 @@ def filesystem_edit() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_close(100.0, 0.5),
-            used_tools(["edit_file", "julia_eval"]),
+            used_tools(["edit_file", "run_julia"]),
             no_repeated_identical_calls(),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
@@ -200,7 +200,7 @@ def filesystem_save() -> Task:
         scorer=[
             numeric_close(125.0, 0.5),
             workspace_file_exists("results/cubes.txt"),
-            used_any_tool(["write_file", "julia_eval"]),
+            used_any_tool(["write_file", "run_julia"]),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
             *_efficiency(),
@@ -234,7 +234,7 @@ def filesystem_project() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_close(78.5398, 0.01),
-            used_tools(["write_file", "julia_eval"]),
+            used_tools(["write_file", "run_julia"]),
             workspace_file_exists("src/geom.jl"),
             workspace_file_exists("main.jl"),
             no_unresolvable_path_in_julia(),
@@ -271,7 +271,7 @@ def filesystem_transform() -> Task:
         scorer=[
             numeric_close(180.0, 0.5),
             workspace_file_exists("data/total.txt"),
-            used_any_tool(["read_file", "julia_eval"]),
+            used_any_tool(["read_file", "run_julia"]),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
             *_efficiency(),

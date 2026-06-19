@@ -27,13 +27,13 @@ A simulation is four parts you compose in order:
    `sim = Simulation(model, cell_parameters, cycling_protocol)` performs
    validation; check `sim.is_valid`. Then `sol = solve(sim)` runs it.
    `solve` is expensive (a full simulation): bind `sol = solve(sim)` **once**
-   and reuse `sol` in later `julia_eval` / `julia_plot` calls — the REPL keeps
+   and reuse `sol` in later `run_julia` / `plot_julia` calls — the REPL keeps
    it. Do not re-run `solve` just to inspect or plot the result.
 
 ## Finding what you need
 
 BattMo's source is read-only depot source at the path `pkgdir(BattMo)` returns;
-get it in `julia_eval`, then browse it with the file tools (see the
+get it in `run_julia`, then browse it with the file tools (see the
 `workspace-and-source` skill):
 
 ```text
@@ -43,7 +43,7 @@ grep("load_cell_parameters", path="/.../BattMo/src")    # locate APIs and uses
 read_file("/.../BattMo/examples/beginner_tutorials/2_run_a_simulation.jl")
 ```
 
-For docstrings, stay in the REPL: `julia_eval("@doc LithiumIonBattery")`.
+For docstrings, stay in the REPL: `run_julia("@doc LithiumIonBattery")`.
 
 ## Result inspection
 
@@ -69,17 +69,17 @@ what's actually there. `sol` has no `keys`/`getindex` of its own — go through
 ## Plotting
 
 BattMo's native plotters run on **GLMakie** (a default dependency) and are
-captured by `julia_plot` automatically — headless or interactive:
+captured by `plot_julia` automatically — headless or interactive:
 
 - `plot_dashboard(output; new_window = false)` — interactive results dashboard
 - `plot_output(output; new_window = false)` — standard result plots
 - `plot_cell_curves(cell_parameters; new_window = false)` — per-cell property curves
 
 Call them directly — you do **not** need to load a backend or strip `GLMakie`
-from example code; the tool activates the right backend. `julia_plot` captures
+from example code; the tool activates the right backend. `plot_julia` captures
 the figure as an artifact whether BattMo opens its own window (`new_window=true`,
 its default) or not; in an interactive session it also opens a live window for
-the user. Reuse the `output`/`sol` you already solved; `julia_plot` shares the
+the user. Reuse the `output`/`sol` you already solved; `plot_julia` shares the
 REPL.
 
 For a custom 2D view, build the figure inline from `sol.time_series`:

@@ -1,8 +1,8 @@
-"""Integration tests: real Julia + GLMakie via julia_plot.
+"""Integration tests: real Julia + GLMakie via plot_julia.
 
 Three intentional layers:
 
-- ``test_julia_plot_captures_figure_shapes`` and ``..._view_returns_image_blocks``
+- ``test_plot_julia_captures_figure_shapes`` and ``..._view_returns_image_blocks``
   exercise *our* capture/view machinery against plain Makie. They don't touch a
   simulator's plotters, so they stay stable across upstream changes; they guard
   the code we own.
@@ -20,7 +20,7 @@ To run locally:
         s(Path('src/jutul_agent/simulators/jutuldarcy/julia_env'))"
     julia --project=src/jutul_agent/simulators/jutuldarcy/julia_env \
         -e 'using Pkg; Pkg.instantiate()'
-    uv run pytest tests/integration/test_julia_plot_integration.py
+    uv run pytest tests/integration/test_plot_julia_integration.py
 
 On headless Linux GLMakie needs a virtual display; the ``plot_display`` fixture
 starts a private Xvfb (as production does via ``managed_display``). CI runs these
@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from jutul_agent.agent.julia_plot import make_julia_plot_tool
+from jutul_agent.agent.plot_julia import make_plot_julia_tool
 from jutul_agent.display import has_display, managed_display, xvfb_available
 from jutul_agent.juliakernel import JuliaKernel, KernelConfig
 from jutul_agent.session import Session
@@ -104,7 +104,7 @@ async def _plot(tool, code: str, slot: str):
     msg = await tool.ainvoke(
         {
             "type": "tool_call",
-            "name": "julia_plot",
+            "name": "plot_julia",
             "id": f"call_{slot}",
             "args": {"code": code, "slot": slot},
         }
@@ -130,14 +130,14 @@ _FIGURE_SHAPES = {
     not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_captures_figure_shapes(tmp_path: Path, plot_display) -> None:
-    """julia_plot captures every Makie return shape, and errors (not captures a stale
+async def test_plot_julia_captures_figure_shapes(tmp_path: Path, plot_display) -> None:
+    """plot_julia captures every Makie return shape, and errors (not captures a stale
     figure) when the code draws nothing new. Guards our capture logic, not anyone's
     plotters."""
     config = _plot_kernel_config(plot_display)
     async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "capture-shapes")
-        tool = make_julia_plot_tool(session)
+        tool = make_plot_julia_tool(session)
 
         failures: list[str] = []
         for slot, code in _FIGURE_SHAPES.items():
@@ -164,12 +164,12 @@ async def test_julia_plot_captures_figure_shapes(tmp_path: Path, plot_display) -
     not _julia_available() or not _gl_ready(JUTULDARCY_ENV),
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
-async def test_julia_plot_view_returns_image_blocks(tmp_path: Path, plot_display) -> None:
+async def test_plot_julia_view_returns_image_blocks(tmp_path: Path, plot_display) -> None:
     """view=True returns text + image content blocks the model can see."""
     config = _plot_kernel_config(plot_display)
     async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "view-image")
-        tool = make_julia_plot_tool(session)
+        tool = make_plot_julia_tool(session)
         code = (
             "fig = Figure(size = (320, 240))\n"
             "lines!(Axis(fig[1, 1]), 1:4, [1.0, 4.0, 9.0, 16.0])\n"
@@ -178,7 +178,7 @@ async def test_julia_plot_view_returns_image_blocks(tmp_path: Path, plot_display
         msg = await tool.ainvoke(
             {
                 "type": "tool_call",
-                "name": "julia_plot",
+                "name": "plot_julia",
                 "id": "call_view",
                 "args": {"code": code, "view": True},
             }
@@ -214,7 +214,7 @@ _NATIVE_PLOTTERS = {
     reason="Julia and a GLMakie-instantiated jutuldarcy env are required",
 )
 async def test_native_plotters_render_to_png(tmp_path: Path, plot_display) -> None:
-    """Every native plotter we document renders to a non-blank PNG through julia_plot."""
+    """Every native plotter we document renders to a non-blank PNG through plot_julia."""
     config = _plot_kernel_config(plot_display)
     async with JuliaKernel(config) as julia:
         session = _session(julia, tmp_path, "native-plotters")
@@ -235,7 +235,7 @@ async def test_native_plotters_render_to_png(tmp_path: Path, plot_display) -> No
 
         # Run every plotter, collecting failures so one broken plotter doesn't mask
         # which of the others render (the report then names exactly what failed).
-        tool = make_julia_plot_tool(session)
+        tool = make_plot_julia_tool(session)
         failures: list[str] = []
         for slot, code in _NATIVE_PLOTTERS.items():
             result = await _plot(tool, code, slot)

@@ -15,8 +15,8 @@ from typing import Any
 from jutul_agent.review.findings import Finding, ReviewReport, append_report, now_iso
 from jutul_agent.review.prompt import SYSTEM, build_user_message
 
-# Keep the transcript we send bounded — a runaway solve can print megabytes, and
-# the tail (results, the agent's conclusion) matters more than a flood of progress.
+# Keep the transcript we send bounded, since a runaway solve can print megabytes,
+# and the tail (results, the agent's conclusion) matters more than a flood of progress.
 _TRANSCRIPT_CAP = 120_000
 
 
@@ -103,15 +103,6 @@ def render_session(session: Any) -> str:
     return render_markdown(session.trace.iter_events())
 
 
-def render_session_id(session_id: str) -> str:
-    """Markdown of a stored session's trace, for reviewing a past run from the CLI."""
-    from jutul_agent.session import session_dir
-    from jutul_agent.trace import TraceLog
-    from jutul_agent.transcript import render_markdown
-
-    return render_markdown(TraceLog(session_dir(session_id) / "trace.sqlite").iter_events())
-
-
 def session_simulator(session: Any) -> str | None:
     return getattr(getattr(session, "simulator", None), "name", None)
 
@@ -184,7 +175,7 @@ async def ingest_findings(
 
     This is the coding-agent path: a tool like Claude Code reads the transcript
     (see ``jutul-agent review prompt``), produces the same ``{summary, findings}``
-    JSON the critic would, and feeds it back here — so the expensive read costs no
+    JSON the critic would, and feeds it back here, so the expensive read costs no
     API. ``source`` records who produced it; curation still runs (cheaply) unless
     disabled.
     """

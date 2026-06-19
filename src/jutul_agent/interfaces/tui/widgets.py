@@ -15,7 +15,7 @@ from textual.widgets import Markdown, Static
 
 from jutul_agent.agent.tool_output import is_interrupt_payload, normalize_tool_output
 from jutul_agent.interfaces.tui._rendering import shorten, shorten_single_line
-from jutul_agent.interfaces.tui.approval import ApprovalCard, approval_ui_hints
+from jutul_agent.interfaces.tui.approval import ApprovalCard
 from jutul_agent.interfaces.tui.tool_display import (
     display_path,
     display_tool_body,
@@ -24,6 +24,7 @@ from jutul_agent.interfaces.tui.tool_display import (
 )
 from jutul_agent.juliakernel.text import render_terminal_output
 from jutul_agent.paths import is_dated_session_id
+from jutul_agent.tool_labels import tool_label
 
 if TYPE_CHECKING:
     from textual.timer import Timer
@@ -274,7 +275,11 @@ class WelcomeBlock(MessageBlock):
 
 
 class ApprovalBlock(Vertical):
-    """Structured card for a pending approval request and the chosen response."""
+    """Card for a pending approval: the tool and what it will do.
+
+    Controls (approve / reject / reply) live in the approval menu at the prompt,
+    so the request is shown once here and resolved in one place below.
+    """
 
     DEFAULT_CSS = """
     ApprovalBlock {
@@ -285,36 +290,16 @@ class ApprovalBlock(Vertical):
         background: $surface;
     }
 
-    ApprovalBlock.approve {
-        border: solid $success;
-    }
-
-    ApprovalBlock.reject {
-        border: solid $error;
-    }
-
-    ApprovalBlock.respond {
-        border: solid $accent;
-    }
-
     ApprovalBlock Markdown {
         padding: 0;
         margin: 0;
-    }
-
-    ApprovalBlock .approval-hint {
-        color: $text-muted;
-        height: auto;
     }
     """
 
     def __init__(self, card: ApprovalCard) -> None:
         super().__init__()
         self._card = card
-        self._state = "pending"
         self._body_widget: Markdown | None = None
-        self._message: str | None = None
-        self._hint_widget: Static | None = None
         self.border_title = card.title
 
     @property
@@ -323,37 +308,16 @@ class ApprovalBlock(Vertical):
 
     def compose(self):
         yield Markdown(self._card.body, id="approval-body", parser_factory=_link_friendly_parser)
-        yield Static("", classes="approval-hint", id="approval-hint", markup=False)
 
     def on_mount(self) -> None:
         self._body_widget = self.query_one("#approval-body", Markdown)
-        self._hint_widget = self.query_one("#approval-hint", Static)
+        self.border_subtitle = "awaiting review"
         self.refresh_for_width()
-        self._refresh()
 
     def refresh_for_width(self) -> None:
         if self._body_widget is not None:
             self._body_widget.refresh(layout=True)
-        if self._hint_widget is not None:
-            self._hint_widget.refresh(layout=True)
         self.refresh(layout=True)
-
-    async def set_decision(self, decision_type: str, message: str | None = None) -> None:
-        self._state = decision_type
-        self._message = message or None
-        self._refresh()
-
-    def _refresh(self) -> None:
-        if self._hint_widget is None:
-            return
-
-        self.remove_class("approve")
-        self.remove_class("reject")
-        self.remove_class("respond")
-        if self._state != "pending":
-            self.add_class(self._state)
-        self.border_subtitle = _approval_status_text(self._state, self._message)
-        self._hint_widget.update(_approval_command_hint(self._card.allowed_decisions))
 
 
 def _render_welcome_message(*, simulator_label: str) -> str:
@@ -364,27 +328,6 @@ def _render_welcome_message(*, simulator_label: str) -> str:
         f"**jutul-agent** is ready for **{simulator_label}**.\n"
         "**Ctrl+C** interrupts a turn (twice to exit) · `/help` for commands."
     )
-
-
-def _approval_status_text(decision_type: str, message: str | None) -> str:
-    if decision_type == "approve":
-        return "approved"
-    if decision_type == "reject":
-        if message:
-            return f"rejected: {message}"
-        return "rejected"
-    if decision_type == "respond":
-        if message:
-            return f"responded: {shorten_single_line(message, 72)}"
-        return "responded"
-    return "awaiting review"
-
-
-def _approval_command_hint(allowed_decisions: frozenset[str]) -> str:
-    hints = approval_ui_hints(allowed_decisions)
-    if not hints:
-        return "Approval is pending. This request cannot be resolved from the TUI."
-    return "Available: " + hints
 
 
 class PromptGuide(Static):
@@ -607,7 +550,7 @@ class ToolBlock(Vertical):
         self._body_widget: Markdown | None = None
         self._elapsed_task: asyncio.Task[None] | None = None
         self._stream_refresh_timer: Timer | None = None
-        self.border_title = _tool_title(tool_name)
+        self.border_title = tool_label(tool_name)
         self.border_subtitle = _status_text(self._status, self._reject_reason)
 
     def compose(self):
@@ -850,7 +793,7 @@ def _render_tool_body(
 
     # Some tools render a running body before any output: julia_* show the Code
     # section, write/edit show the target file and a growing character count.
-    if tool_name in {"julia_eval", "julia_plot", "write_file", "edit_file"}:
+    if tool_name in {"run_julia", "plot_julia", "write_file", "edit_file"}:
         body = display_tool_body(
             tool_name,
             args,
@@ -909,9 +852,9 @@ def _format_tool_display(tool_name: str, args: dict[str, Any]) -> str:
         command = shorten_single_line(str(args["command"]), 80)
         return f'execute("{command}")'
 
-    if tool_name == "julia_eval" and args.get("code"):
+    if tool_name == "run_julia" and args.get("code"):
         code = shorten_single_line(str(args["code"]), 80)
-        return f'julia_eval("{code}")'
+        return f'run_julia("{code}")'
 
     if tool_name == "write_todos":
         todos = args.get("todos")
@@ -929,24 +872,6 @@ def _format_tool_display(tool_name: str, args: dict[str, Any]) -> str:
     if len(args) > 3:
         rendered_args += ", ..."
     return f"{tool_name}({rendered_args})"
-
-
-def _tool_title(tool_name: str) -> str:
-    if tool_name == "write_todos":
-        return "Plan"
-    if tool_name == "task":
-        return "Delegate"
-    if tool_name == "julia_eval":
-        return "Julia · run"
-    if tool_name == "julia_plot":
-        return "Julia · plot"
-    if tool_name == "record_attempt":
-        return "Record attempt"
-    if tool_name == "write_report":
-        return "Write report"
-    if tool_name == "execute":
-        return "Shell · run"
-    return tool_name
 
 
 def _render_todo_request(args: dict[str, Any]) -> str | None:

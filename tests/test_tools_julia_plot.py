@@ -1,4 +1,4 @@
-"""Tests for the julia_plot tool."""
+"""Tests for the plot_julia tool."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fakes import FakeJulia, make_fake_adapter
-from jutul_agent.agent.julia_plot import make_julia_plot_tool, make_recapture_tool
+from jutul_agent.agent.plot_julia import make_plot_julia_tool, make_recapture_tool
 from jutul_agent.julia.session import EvalResult
 from jutul_agent.session import Session
 from jutul_agent.trace import TraceLog
@@ -30,7 +30,7 @@ def test_plot_tool_schemas_are_provider_safe(tmp_path: Path) -> None:
     """
     julia = FakeJulia()
     session = _session(tmp_path, julia)
-    for tool in (make_julia_plot_tool(session), make_recapture_tool(session)):
+    for tool in (make_plot_julia_tool(session), make_recapture_tool(session)):
         schema = tool.args_schema.model_json_schema()
         assert not _contains_key(schema, "prefixItems"), (
             f"{tool.name} schema uses prefixItems (Gemini-incompatible): {schema}"
@@ -41,7 +41,7 @@ async def _invoke(tool, args: dict, *, tool_call_id: str) -> Any:
     msg = await tool.ainvoke(
         {
             "type": "tool_call",
-            "name": "julia_plot",
+            "name": "plot_julia",
             "id": tool_call_id,
             "args": args,
         }
@@ -92,7 +92,7 @@ def _make_plot_eval_handler(
             if not accept_figure:
                 return EvalResult(
                     output="",
-                    error="julia_plot: the code did not produce a Makie figure. Return a Figure.",
+                    error="plot_julia: the code did not produce a Makie figure. Return a Figure.",
                 )
             path = _extract_path(code)
             if path:
@@ -119,12 +119,12 @@ def _session(tmp_path: Path, julia: FakeJulia, *, open_windows: bool = False) ->
     )
 
 
-async def test_julia_plot_records_artifact_and_writes_file(tmp_path: Path) -> None:
+async def test_plot_julia_records_artifact_and_writes_file(tmp_path: Path) -> None:
     written: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(
         tool,
         {"code": "plot_reservoir(model)", "caption": "reservoir"},
@@ -148,12 +148,12 @@ async def test_julia_plot_records_artifact_and_writes_file(tmp_path: Path) -> No
         log.close()
 
 
-async def test_julia_plot_slot_overwrites_path(tmp_path: Path) -> None:
+async def test_plot_julia_slot_overwrites_path(tmp_path: Path) -> None:
     written: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(
         tool,
         {"code": "lines(1:2)", "slot": "comparison"},
@@ -172,12 +172,12 @@ async def test_julia_plot_slot_overwrites_path(tmp_path: Path) -> None:
         log.close()
 
 
-async def test_julia_plot_records_tool_call_id(tmp_path: Path) -> None:
+async def test_plot_julia_records_tool_call_id(tmp_path: Path) -> None:
     written: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     await _plot_call(
         tool,
         {"code": "lines(1:2)", "caption": "rates"},
@@ -192,12 +192,12 @@ async def test_julia_plot_records_tool_call_id(tmp_path: Path) -> None:
         log.close()
 
 
-async def test_julia_plot_size_px_in_artifact(tmp_path: Path) -> None:
+async def test_plot_julia_size_px_in_artifact(tmp_path: Path) -> None:
     written: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     await _plot_call(
         tool,
         {"code": "lines(1:2)", "size": (640, 480)},
@@ -212,23 +212,23 @@ async def test_julia_plot_size_px_in_artifact(tmp_path: Path) -> None:
         log.close()
 
 
-async def test_julia_plot_not_a_figure_error(tmp_path: Path) -> None:
+async def test_plot_julia_not_a_figure_error(tmp_path: Path) -> None:
     julia = FakeJulia(eval_handler=_make_plot_eval_handler([], accept_figure=False))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(tool, {"code": "42"}, tool_call_id="call_plot_bad")
 
     assert result.startswith("ERROR:")
     assert "Figure" in result
 
 
-async def test_julia_plot_glmakie_load_failure_is_actionable(tmp_path: Path) -> None:
+async def test_plot_julia_glmakie_load_failure_is_actionable(tmp_path: Path) -> None:
     # GLMakie is the only backend; if it can't load, the tool says so clearly.
     julia = FakeJulia(eval_handler=_make_plot_eval_handler([], gl_ok=False))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(tool, {"code": "lines(1:10)"}, tool_call_id="call_plot_no_gl")
 
     assert result.startswith("ERROR:")
@@ -236,12 +236,12 @@ async def test_julia_plot_glmakie_load_failure_is_actionable(tmp_path: Path) -> 
     assert "xvfb" in result  # points at the headless-Linux fix
 
 
-async def test_julia_plot_view_returns_image_block(tmp_path: Path) -> None:
+async def test_plot_julia_view_returns_image_block(tmp_path: Path) -> None:
     written: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written))
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     content = await _invoke(
         tool,
         {"code": "plot_well_results(wd)", "view": True},
@@ -258,13 +258,13 @@ async def test_julia_plot_view_returns_image_block(tmp_path: Path) -> None:
     assert image["base64"]  # non-empty base64 payload
 
 
-async def test_julia_plot_opens_window_when_session_can(tmp_path: Path) -> None:
+async def test_plot_julia_opens_window_when_session_can(tmp_path: Path) -> None:
     written: list[str] = []
     seen: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written, seen=seen))
     plot_session = _session(tmp_path, julia, open_windows=True)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(
         tool,
         {"code": "plot_reservoir(model)", "slot": "reservoir"},
@@ -278,13 +278,13 @@ async def test_julia_plot_opens_window_when_session_can(tmp_path: Path) -> None:
     assert 'window_key = raw"reservoir"' in render
 
 
-async def test_julia_plot_window_false_suppresses(tmp_path: Path) -> None:
+async def test_plot_julia_window_false_suppresses(tmp_path: Path) -> None:
     written: list[str] = []
     seen: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written, seen=seen))
     plot_session = _session(tmp_path, julia, open_windows=True)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(
         tool, {"code": "plot_reservoir(model)", "window": False}, tool_call_id="call_no_win"
     )
@@ -293,14 +293,14 @@ async def test_julia_plot_window_false_suppresses(tmp_path: Path) -> None:
     assert "open_window = false" in render
 
 
-async def test_julia_plot_no_window_when_headless(tmp_path: Path) -> None:
+async def test_plot_julia_no_window_when_headless(tmp_path: Path) -> None:
     written: list[str] = []
     seen: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written, seen=seen))
     # Headless session (open_windows defaults False): window=True must not open one.
     plot_session = _session(tmp_path, julia)
 
-    tool = make_julia_plot_tool(plot_session)
+    tool = make_plot_julia_tool(plot_session)
     result = await _plot_call(tool, {"code": "plot_reservoir(model)"}, tool_call_id="call_headless")
     assert "opened window" not in result
     render = next(c for c in seen if "JutulAgentPlots.capture" in c)
@@ -313,7 +313,7 @@ async def test_recapture_returns_image_by_default(tmp_path: Path) -> None:
     julia = FakeJulia(eval_handler=_make_plot_eval_handler(written, seen=seen))
     plot_session = _session(tmp_path, julia, open_windows=True)
 
-    from jutul_agent.agent.julia_plot import make_recapture_tool
+    from jutul_agent.agent.plot_julia import make_recapture_tool
 
     tool = make_recapture_tool(plot_session)
     msg = await tool.ainvoke(
@@ -332,7 +332,7 @@ async def test_recapture_targets_window_slot(tmp_path: Path) -> None:
     seen: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler([], seen=seen))
     plot_session = _session(tmp_path, julia, open_windows=True)
-    from jutul_agent.agent.julia_plot import make_recapture_tool
+    from jutul_agent.agent.plot_julia import make_recapture_tool
 
     tool = make_recapture_tool(plot_session)
     await tool.ainvoke(
@@ -351,7 +351,7 @@ async def test_close_plots(tmp_path: Path) -> None:
     seen: list[str] = []
     julia = FakeJulia(eval_handler=_make_plot_eval_handler([], seen=seen))
     plot_session = _session(tmp_path, julia, open_windows=True)
-    from jutul_agent.agent.julia_plot import make_close_plots_tool
+    from jutul_agent.agent.plot_julia import make_close_plots_tool
 
     tool = make_close_plots_tool(plot_session)
     one = await tool.ainvoke(
@@ -371,7 +371,7 @@ async def test_recapture_no_window_errors(tmp_path: Path) -> None:
 
     julia = FakeJulia(eval_handler=fake_eval)
     plot_session = _session(tmp_path, julia)
-    from jutul_agent.agent.julia_plot import make_recapture_tool
+    from jutul_agent.agent.plot_julia import make_recapture_tool
 
     tool = make_recapture_tool(plot_session)
     msg = await tool.ainvoke(

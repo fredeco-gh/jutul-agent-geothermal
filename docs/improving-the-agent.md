@@ -32,7 +32,7 @@ and prefer one worked example over prose. Keep frontmatter valid YAML.
 ## Tools over instructions
 
 If a behavior matters, encode it in a tool instead of asking the model
-nicely. `julia_plot` rejects empty figures rather than instructing the model
+nicely. `plot_julia` rejects empty figures rather than instructing the model
 to check. `record_attempt` makes investigation structure a tool contract
 rather than a convention. Include rewriting in the kernel makes relative
 paths just work instead of documenting a workaround. Prompt text asking for
