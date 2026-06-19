@@ -30,13 +30,13 @@ async def test_multi_tool_turn_renders_full_block_sequence(
     model = make_scripted_model(
         [
             scripted_tool_call(
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 args={"code": "2 + 2"},
                 tool_call_id="call_eval_1",
                 content="Let me compute that.",
             ),
             scripted_tool_call(
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 args={"code": "print(pkgdir(FakePkg))"},
                 tool_call_id="call_eval_2",
             ),
@@ -60,8 +60,8 @@ async def test_multi_tool_turn_renders_full_block_sequence(
     assert "You" in titles
     assert "Assistant" in titles
     assert [block.border_title for block in tool_blocks] == [
-        "Julia · run",
-        "Julia · run",
+        "Julia",
+        "Julia",
     ]
     assert markdown_count >= 4
     assert "2 + 2" in julia.calls
@@ -80,10 +80,10 @@ async def test_multi_tool_turn_renders_full_block_sequence(
     assert "pkgdir(FakePkg)" in trace_text
 
 
-async def test_julia_eval_output_streams_live_into_tool_card(
+async def test_run_julia_output_streams_live_into_tool_card(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End-to-end live streaming: a julia_eval producing carriage-return progress
+    """End-to-end live streaming: a run_julia producing carriage-return progress
     delivers each fragment to the tool card *before* the call finishes, through the
     real graph (tool -> delta writer -> output_deltas -> TurnToolEvent -> ToolBlock).
 
@@ -117,7 +117,7 @@ async def test_julia_eval_output_streams_live_into_tool_card(
     model = make_scripted_model(
         [
             scripted_tool_call(
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 args={"code": "solve()"},
                 tool_call_id="call_solve",
             ),
@@ -134,7 +134,7 @@ async def test_julia_eval_output_streams_live_into_tool_card(
 
     session.finalize()
 
-    # Each fragment reached the card live, in order — the streaming path is wired.
+    # Each fragment reached the card live, in order, so the streaming path is wired.
     assert recorded == chunks
     # And the final card shows one collapsed bar, not three stacked lines.
     assert final_output == "Progress 100%|########|"

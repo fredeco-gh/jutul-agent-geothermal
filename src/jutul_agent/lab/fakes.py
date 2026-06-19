@@ -97,21 +97,6 @@ class Interrupt:
     value: dict[str, Any]
 
 
-def hitl_execute_interrupt(
-    *,
-    command: str = "ls -la",
-    allowed_decisions: list[str] | None = None,
-    description: str = "Review the requested tool action.",
-) -> dict[str, Any]:
-    allowed = allowed_decisions or ["approve", "reject", "respond"]
-    return {
-        "action_requests": [
-            {"name": "execute", "args": {"command": command}, "description": description}
-        ],
-        "review_configs": [{"action_name": "execute", "allowed_decisions": allowed}],
-    }
-
-
 # ---------------------------------------------------------------------------
 # v3 event-stream script DSL. The helpers below produce small dicts; a
 # ``ScriptedV3Agent`` reads them and synthesizes typed projections.
@@ -400,7 +385,7 @@ def _build_typed_run(events: Iterable[dict[str, Any]]) -> FakeTypedRun:
                 # The real ``run.messages`` projection surfaces a ToolMessage as
                 # its own stream (``node="tools"``) whose ``.text`` is the full
                 # tool result. Reproduce that so the turn runner's node filter is
-                # exercised — the result must render as a tool card, never prose.
+                # exercised. The result must render as a tool card, never prose.
                 _flush_open()
                 content = payload.content if isinstance(payload.content, str) else ""
                 messages.append(
@@ -440,7 +425,7 @@ def _build_typed_run(events: Iterable[dict[str, Any]]) -> FakeTypedRun:
                 continue
 
             if isinstance(payload, AIMessage):
-                # A complete pre-built message — emit as a single-delta stream.
+                # A complete pre-built message: emit it as a single-delta stream.
                 _flush_open()
                 content = payload.content if isinstance(payload.content, str) else ""
                 tool_call_chunks: list[dict[str, Any]] = []
@@ -681,7 +666,7 @@ class FakeJulia:
         self._answers = answers or {}
         self._eval_handler = eval_handler
         # When set, eval emits these as live stdout fragments through ``on_chunk``
-        # before returning — lets a test exercise the streaming path.
+        # before returning, which lets a test exercise the streaming path.
         self._stream_chunks = list(stream_chunks or [])
         self.calls: list[str] = []
         self.reset_count: int = 0

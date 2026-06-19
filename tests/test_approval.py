@@ -28,7 +28,7 @@ def test_render_execute_approval_card(tmp_path: Path) -> None:
     )
 
     assert len(cards) == 1
-    assert cards[0].title == "Approval · execute"
+    assert cards[0].title == "Approval · Shell"
     assert cards[0].allowed_decisions == frozenset({"approve", "reject"})
     assert "Run a shell command in the jutul-agent workspace." in cards[0].body
     assert "```sh" in cards[0].body
@@ -54,7 +54,7 @@ def test_render_write_file_card_for_new_file(tmp_path: Path) -> None:
     )
 
     assert len(cards) == 1
-    assert "- Target: `/notes.txt`" in cards[0].body
+    assert "`/notes.txt`" in cards[0].body  # the target path (title already names the tool)
     assert "#### Content Preview" in cards[0].body
     assert "hello" in cards[0].body
 

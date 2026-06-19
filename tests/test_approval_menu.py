@@ -14,7 +14,7 @@ def test_build_approval_options_for_shell() -> None:
         ],
     )
     labels = [option.label for option in options]
-    assert labels == ["Yes", "No"]
+    assert labels == ["Yes", "No, and tell the agent what to do differently"]
 
 
 def test_build_approval_options_for_file_edits() -> None:

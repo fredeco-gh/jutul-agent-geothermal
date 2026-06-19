@@ -30,10 +30,10 @@ from jutul_agent.interfaces.tui.widgets import (
 )
 from jutul_agent.session import Session
 
-_TRICKY_TOOL_NAME = "julia_eval"
+_TRICKY_TOOL_NAME = "run_julia"
 _TRICKY_TOOL_ID = "call_Wadq4EXSvtuKOjcPsMw7lxy9"
 _TRICKY_OUTPUT = (
-    "[ToolMessage(content='2', name='julia_eval', "
+    "[ToolMessage(content='2', name='run_julia', "
     f"tool_call_id='{_TRICKY_TOOL_ID}', additional_kwargs={{}})]"
 )
 _TRICKY_ARGS = {"code": "[1, 2, 3] .+ 1"}
@@ -61,11 +61,11 @@ def _stub_agent() -> ScriptedV3Agent:
 
 
 def _long_tool_agent() -> ScriptedV3Agent:
-    # Must exceed the julia_eval preview budget (see tool_display.is_expandable).
+    # Must exceed the run_julia preview budget (see tool_display.is_expandable).
     long_output = "\n".join(f"line {index}" for index in range(60))
     return ScriptedV3Agent(
         tool_call_events(
-            tool_name="julia_eval",
+            tool_name="run_julia",
             tool_call_id="call_long_1",
             args={"code": "println(1)"},
             output=long_output,
@@ -83,7 +83,7 @@ def _julia_delta_agent() -> ScriptedV3Agent:
                 {
                     "event": "tool-started",
                     "tool_call_id": "call_delta_1",
-                    "tool_name": "julia_eval",
+                    "tool_name": "run_julia",
                     "input": {"code": "run()"},
                 }
             ),
@@ -170,9 +170,9 @@ async def test_chat_app_renders_approval_card_for_pending_interrupt(session: Ses
     async with app.run_test() as pilot:
         await submit_prompt(pilot, "approve")
         titles = [block.border_title for block in app.query(ApprovalBlock)]
-        message_titles = [block.border_title for block in app.query(MessageBlock)]
-        assert "Approval · execute" in titles
-        assert "System" in message_titles
+        assert "Approval · Shell" in titles
+        # The menu below the card is the single control surface; no extra note.
+        assert app.query_one("#approval-menu", ApprovalMenu).visible
 
 
 async def test_chat_app_approves_pending_interrupt(session: Session) -> None:
@@ -180,25 +180,11 @@ async def test_chat_app_approves_pending_interrupt(session: Session) -> None:
     app = TUIApp(agent=agent, session=session)
     async with app.run_test() as pilot:
         await submit_prompt(pilot, "approve")
-        await pilot.press(*list("/approve"))
-        await pilot.press("enter")
+        await pilot.press("enter")  # confirm the default-selected "Approve"
         await wait_until_ready(app)
 
         titles = [block.border_title for block in app.query(MessageBlock)]
         assert "Assistant" in titles
-
-    assert len(agent.resume_inputs) == 1
-    assert agent.resume_inputs[0].resume == {"interrupt-1": {"decisions": [{"type": "approve"}]}}
-
-
-async def test_chat_app_approves_pending_interrupt_with_y(session: Session) -> None:
-    agent = interrupt_agent()
-    app = TUIApp(agent=agent, session=session)
-    async with app.run_test() as pilot:
-        await submit_prompt(pilot, "approve")
-        assert app.query_one("#approval-menu", ApprovalMenu).visible
-        await pilot.press("y")
-        await wait_until_ready(app)
 
     assert len(agent.resume_inputs) == 1
     assert agent.resume_inputs[0].resume == {"interrupt-1": {"decisions": [{"type": "approve"}]}}
@@ -221,41 +207,47 @@ async def test_chat_app_navigates_approval_menu_with_arrows(session: Session) ->
     }
 
 
-async def test_chat_app_rejects_pending_interrupt_with_reason(session: Session) -> None:
+async def test_chat_app_replies_to_pending_interrupt_by_typing(session: Session) -> None:
+    """Typing a message while approval is pending is the "No, and tell the agent
+    what to do differently" path: it declines the action with the text as reason."""
     agent = interrupt_agent()
     app = TUIApp(agent=agent, session=session)
     async with app.run_test() as pilot:
         await submit_prompt(pilot, "approve")
-        for ch in "/reject use safer command":
-            await pilot.press(ch if ch != " " else "space")
-        await pilot.press("enter")
+        await submit_prompt(pilot, "use a safer command")
         await wait_until_ready(app)
 
     assert len(agent.resume_inputs) == 1
     assert agent.resume_inputs[0].resume == {
-        "interrupt-1": {"decisions": [{"type": "reject", "message": "use safer command"}]}
+        "interrupt-1": {"decisions": [{"type": "reject", "message": "use a safer command"}]}
     }
 
 
-async def test_chat_app_blocks_plain_text_while_approval_pending(session: Session) -> None:
-    agent = interrupt_agent()
+async def test_typing_during_approval_previews_in_reject_option(session: Session) -> None:
+    """As the user types, the reject option mirrors it ("No, <text>") and the
+    selection moves to it, so the typed reply is visibly the optional reason for
+    declining."""
+    app = TUIApp(agent=interrupt_agent(), session=session)
+    async with app.run_test() as pilot:
+        await submit_prompt(pilot, "approve")
+        menu = app.query_one("#approval-menu", ApprovalMenu)
+        await pilot.press(*"use safer")
+        await pilot.pause()
+        assert menu._reply_preview == "use safer"
+        assert menu._options[menu._index].decision["type"] == "reject"
+
+
+async def test_chat_app_refuses_reply_when_only_approve_allowed(session: Session) -> None:
+    """A request that allows neither reject nor respond can't take a typed reply;
+    the user is pointed at the menu rather than the message being dropped."""
+    agent = interrupt_agent(allowed_decisions=["approve"])
     app = TUIApp(agent=agent, session=session)
     async with app.run_test() as pilot:
         await submit_prompt(pilot, "approve")
-        await pilot.press(*list("continue"))
-        await pilot.press("enter")
-        await wait_until_ready(app)
+        await submit_prompt(pilot, "some reply")
+        await pilot.pause()
 
     assert agent.resume_inputs == []
-
-
-async def test_chat_app_hides_respond_for_reject_only_interrupt(session: Session) -> None:
-    app = TUIApp(agent=interrupt_agent(allowed_decisions=["approve", "reject"]), session=session)
-
-    async with app.run_test() as pilot:
-        await submit_prompt(pilot, "approve")
-
-    assert app._approval_help_lines() == ["/approve", "/reject [reason]"]
 
 
 async def test_chat_app_renders_streamed_julia_output(session: Session) -> None:
@@ -500,8 +492,8 @@ async def test_warming_indicator_has_its_own_status_chip(session: Session) -> No
 
         # Turn status and approval state use the bottom line; the chip stays.
         app._busy = True
-        app._status_text = "running julia_eval…"
-        assert app._activity_label() == "running julia_eval…"
+        app._status_text = "running run_julia…"
+        assert app._activity_label() == "running run_julia…"
         assert bar._warming is True
         app._busy = False
 
@@ -594,25 +586,6 @@ async def test_tui_completes_slash_commands_with_tab(session: Session) -> None:
         assert prompt.value == "/transcript"
 
 
-async def test_tui_completes_pending_response_command_with_hint(session: Session) -> None:
-    app = TUIApp(agent=interrupt_agent(), session=session)
-
-    async with app.run_test() as pilot:
-        await submit_prompt(pilot, "approve")
-
-        await pilot.press("/")
-        await pilot.press("r")
-        await pilot.press("e")
-        await pilot.press("s")
-        await pilot.press("tab")
-        await wait_until_ready(app)
-
-        prompt = app.query_one("#prompt", PromptTextArea)
-        guide = app.query_one("#prompt-guide", PromptGuide)
-        assert prompt.value == "/respond "
-        assert "<message>" in guide.message
-
-
 async def test_tui_renders_reasoning_from_v3_event_stream(session: Session) -> None:
     from fakes import reasoning_agent
 
@@ -632,6 +605,11 @@ async def test_tui_renders_reasoning_from_v3_event_stream(session: Session) -> N
         assert reasoning_blocks[0]._content == "Checking simulator state."
         assert len(assistant_blocks) == 1
         assert assistant_blocks[0]._content == "Answer ready"
+
+        # Reasoning must render above the answer it precedes, regardless of the
+        # order the concurrently-drained text/reasoning projections arrive in.
+        ordered = [b.border_title for b in app.query(MessageBlock)]
+        assert ordered.index("Reasoning") < ordered.index("Assistant")
 
 
 async def test_tui_prompt_stays_compact_with_long_multiline_draft(session: Session) -> None:
@@ -667,8 +645,8 @@ async def test_tui_multiline_submit_shows_user_message_immediately(session: Sess
 
 
 async def test_add_dir_command_adds_folder(session: Session, tmp_path: Path) -> None:
+    from jutul_agent.agent.added_dirs import added_dirs
     from jutul_agent.agent.builder import build_backend
-    from jutul_agent.agent.mounts import mounted_dirs
 
     extra = tmp_path / "shared-data"
     extra.mkdir()
@@ -680,7 +658,7 @@ async def test_add_dir_command_adds_folder(session: Session, tmp_path: Path) -> 
         await app._handle_command(f"/add-dir {extra}")
         await pilot.pause()
 
-        assert extra.resolve() in [mount.path for mount in mounted_dirs(backend)]
+        assert extra.resolve() in [entry.path for entry in added_dirs(backend)]
         notes = [block for block in app.query(MessageBlock) if block.border_title == "System"]
         assert any("shared-data" in block._content for block in notes)
 
@@ -701,13 +679,13 @@ async def test_add_dir_command_reports_bad_path(session: Session, tmp_path: Path
 
 
 async def test_add_dir_command_lists_when_no_arg(session: Session, tmp_path: Path) -> None:
+    from jutul_agent.agent.added_dirs import add_dir
     from jutul_agent.agent.builder import build_backend
-    from jutul_agent.agent.mounts import mount_dir
 
     extra = tmp_path / "alpha"
     extra.mkdir()
     backend = build_backend(workspace=tmp_path)
-    mount_dir(backend, extra, workspace=tmp_path)
+    add_dir(backend, extra, workspace=tmp_path)
     app = TUIApp(agent=_stub_agent(), session=session, backend=backend)
 
     async with app.run_test() as pilot:
@@ -810,12 +788,12 @@ async def test_cloud_ollama_switch_skips_pull(
         assert not isinstance(app.screen, OllamaPullModal)
 
 
-async def test_model_switch_preserves_mounted_dirs(
+async def test_model_switch_preserves_added_dirs(
     session: Session, tmp_path: Path, monkeypatch
 ) -> None:
     from jutul_agent import ollama_client
+    from jutul_agent.agent.added_dirs import add_dir
     from jutul_agent.agent.builder import build_backend
-    from jutul_agent.agent.mounts import mount_dir
 
     monkeypatch.setattr(ollama_client, "is_reachable", _async_return(True))
     monkeypatch.setattr(ollama_client, "is_installed", _async_return(True))
@@ -824,7 +802,7 @@ async def test_model_switch_preserves_mounted_dirs(
     extra = tmp_path / "data"
     extra.mkdir()
     backend0 = build_backend(workspace=tmp_path)
-    mount_dir(backend0, extra, workspace=tmp_path)
+    add_dir(backend0, extra, workspace=tmp_path)
 
     calls: list[list[str]] = []
 
@@ -1124,12 +1102,12 @@ async def test_log_stays_put_while_reading_scrollback(session: Session) -> None:
         for index in range(8):
             await app._render_message(AIMessageChunk(content=f"streamed {index}\n\n"))
         await app._render_message(
-            TurnToolEvent(event="started", tool_name="julia_eval", tool_call_id="call_anchor_1")
+            TurnToolEvent(event="started", tool_name="run_julia", tool_call_id="call_anchor_1")
         )
         await app._render_message(
             TurnToolEvent(
                 event="delta",
-                tool_name="julia_eval",
+                tool_name="run_julia",
                 tool_call_id="call_anchor_1",
                 content="progress\n",
             )
@@ -1218,7 +1196,7 @@ async def test_resumed_session_replays_history(tmp_path: Path, fake_julia, fake_
     original.adopt_title("Earlier battery work")
     original.trace.append("message_user", {"content": "set up the cell"})
     original.trace.append("message_assistant", {"content": "Cell ready, OCV 4.1 V."})
-    original.trace.append("tool_call", {"id": "c1", "name": "julia_eval", "args": {}})
+    original.trace.append("tool_call", {"id": "c1", "name": "run_julia", "args": {}})
     original.finalize()
 
     resumed = SessionCls.resume(
@@ -1374,7 +1352,7 @@ async def test_approval_state_clears_once_decided(session: Session) -> None:
         assert bar._pending_count == 1
         assert app._activity_label() == "approval required"
 
-        await pilot.press("y")
+        await pilot.press("enter")  # confirm the default "Approve"
         await wait_until_ready(app)
         await pilot.pause()
 
@@ -1384,7 +1362,7 @@ async def test_approval_state_clears_once_decided(session: Session) -> None:
         assert len(agent.resume_inputs) == 1
 
 
-async def test_respond_marks_tool_blocks_answered(session: Session) -> None:
+async def test_typed_reply_marks_tool_block_rejected(session: Session) -> None:
     from fakes import Interrupt
 
     interrupt = Interrupt(
@@ -1419,13 +1397,12 @@ async def test_respond_marks_tool_blocks_answered(session: Session) -> None:
         blocks = list(app.query(ToolBlock))
         assert blocks and blocks[0].status == "approval"
 
-        for ch in "/respond use the chen cell":
-            await pilot.press(ch if ch != " " else "space")
-        await pilot.press("enter")
-        await wait_until_ready(app)
+        # Typing while approval is pending declines the action with the text as
+        # the reason ("No, and tell the agent what to do differently").
+        await submit_prompt(pilot, "use the chen cell")
 
-        assert blocks[0].status == "responded"
-        assert "answered by user" in (blocks[0].border_subtitle or "")
+        assert blocks[0].status == "rejected"
+        assert "use the chen cell" in (blocks[0].border_subtitle or "")
 
 
 async def test_compact_updates_context_figure_immediately(session: Session, monkeypatch) -> None:
@@ -1466,26 +1443,18 @@ async def test_compact_updates_context_figure_immediately(session: Session, monk
         assert panels and "estimated after compaction" in panels[-1]
 
 
-async def test_pending_approval_note_is_removed_after_decision(session: Session) -> None:
-    """The 'approval is pending' log line is transient: it must not linger
-    after the user decides, or it reads as if approval is still needed."""
+async def test_resolvable_approval_adds_no_redundant_note(session: Session) -> None:
+    """The card and the menu are the whole surface; a resolvable approval adds
+    no extra 'approval is pending' line repeating what the menu already says."""
     agent = interrupt_agent()
     app = TUIApp(agent=agent, session=session)
 
-    def pending_notes() -> list[str]:
-        return [
-            block.content_text
-            for block in app.query(MessageBlock)
-            if block.border_title == "System" and "approval is pending" in block.content_text
-        ]
-
     async with app.run_test() as pilot:
         await submit_prompt(pilot, "approve")
-        assert pending_notes()  # shown while the decision is open
-
-        await pilot.press("y")
-        await wait_until_ready(app)
-        await pilot.pause()
-
-        assert pending_notes() == []  # gone once decided
+        system_notes = [
+            block.content_text
+            for block in app.query(MessageBlock)
+            if block.border_title == "System"
+        ]
+        assert system_notes == []
         assert app._pending_approval_note is None

@@ -28,7 +28,7 @@ _COMPACT_TOOLS = frozenset(
         "task",
         "record_attempt",
         "write_report",
-        "julia_plot",
+        "plot_julia",
     }
 )
 _NUMBERED_LINE = re.compile(r"^\s*\d+\t")
@@ -73,8 +73,8 @@ def compact_tool_summary(
         return _record_attempt_summary(output)
     if tool_name == "write_report":
         return _render_report_summary(args, output)
-    if tool_name == "julia_plot":
-        return _julia_plot_summary(args, output)
+    if tool_name == "plot_julia":
+        return _plot_julia_summary(args, output)
     return None
 
 
@@ -88,7 +88,7 @@ def display_tool_body(
 ) -> str:
     # Running state: show the Code section while julia tools are in flight so
     # the user can see what is being executed.  This check must come before the
-    # compact-summary path because julia_plot is in _COMPACT_TOOLS and would
+    # compact-summary path because plot_julia is in _COMPACT_TOOLS and would
     # otherwise return "_plot_" with no code context.
     if not output:
         code_section = _julia_code_section(tool_name, args)
@@ -130,7 +130,7 @@ def display_tool_body(
     if expandable:
         preview = (
             _truncate_preview_tail(full, tool_name=tool_name)
-            if tool_name == "julia_eval"
+            if tool_name == "run_julia"
             else _truncate_preview(full, tool_name=tool_name)
         )
     else:
@@ -152,14 +152,14 @@ def display_tool_body(
 
 
 def _julia_code_section(tool_name: str, args: dict[str, Any]) -> str:
-    """Return a fenced ``Code`` block for julia_eval / julia_plot args.
+    """Return a fenced ``Code`` block for run_julia / plot_julia args.
 
     Empty string for any other tool. The TUI uses this so the agent's code
     stays visible alongside the simulator output instead of being replaced
     by it (and so something is shown while the call is still running).
     """
 
-    if tool_name not in {"julia_eval", "julia_plot"}:
+    if tool_name not in {"run_julia", "plot_julia"}:
         return ""
     code = args.get("code")
     if not isinstance(code, str) or not code.strip():
@@ -290,7 +290,7 @@ def _render_report_summary(args: dict[str, Any], output: str) -> str:
     return f"Rendered {path_link(raw)}"
 
 
-def _julia_plot_summary(args: dict[str, Any], output: str) -> str:
+def _plot_julia_summary(args: dict[str, Any], output: str) -> str:
     cleaned = output.strip()
     if cleaned.startswith("ERROR"):
         return "plot · failed"
@@ -389,16 +389,16 @@ def path_link(path_str: str) -> str:
 
 
 _TOOL_LANGUAGES: dict[str, str] = {
-    "julia_eval": "julia",
+    "run_julia": "julia",
     "execute": "sh",
 }
 _PREVIEW_LINES = 6
 _PREVIEW_CHARS = 600
 _TOOL_PREVIEW_LIMITS: dict[str, tuple[int, int]] = {
     "execute": (12, 2000),
-    # julia_eval limits are sized so a typical Jutul summary table plus the
+    # run_julia limits are sized so a typical Jutul summary table plus the
     # return value and elapsed marker fit without a click-to-expand.
-    "julia_eval": (40, 6000),
+    "run_julia": (40, 6000),
     "read_file": (14, 1600),
 }
 
@@ -443,4 +443,4 @@ def _quote_block(text: str) -> str:
 
 
 def _prefer_fenced_preview(tool_name: str) -> bool:
-    return tool_name in {"julia_eval", "read_file"}
+    return tool_name in {"run_julia", "read_file"}

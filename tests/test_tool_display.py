@@ -100,9 +100,9 @@ def test_strip_read_file_line_numbers() -> None:
     assert strip_read_file_line_numbers("     1\talpha\n     2\tbeta") == "alpha\nbeta"
 
 
-def test_julia_eval_body_shows_code_then_output() -> None:
+def test_run_julia_body_shows_code_then_output() -> None:
     body = display_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": "1 + 1"},
         output="2",
         expanded=False,
@@ -119,9 +119,9 @@ def test_julia_eval_body_shows_code_then_output() -> None:
     assert code_index >= 0 and output_index > code_index
 
 
-def test_julia_eval_running_state_shows_code() -> None:
+def test_run_julia_running_state_shows_code() -> None:
     body = display_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": "simulate(model)"},
         output="",
         expanded=False,
@@ -132,12 +132,12 @@ def test_julia_eval_running_state_shows_code() -> None:
     assert "running" in body.lower()
 
 
-def test_julia_eval_tail_truncation_keeps_return_value() -> None:
+def test_run_julia_tail_truncation_keeps_return_value() -> None:
     lines = [f"progress line {i}" for i in range(60)]
     lines.extend(["→ 42", "[1.23s]"])
     output = "\n".join(lines)
     body = display_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": "run()"},
         output=output,
         expanded=False,
@@ -149,7 +149,7 @@ def test_julia_eval_tail_truncation_keeps_return_value() -> None:
     assert "progress line 0" not in body
 
 
-def test_julia_eval_preview_fits_jutul_timing_summary() -> None:
+def test_run_julia_preview_fits_jutul_timing_summary() -> None:
     """The simulation summary tables that follow a Jutul ``simulate(...)``
     call are ~30 lines. The collapsed preview must show all of them along
     with the trailing progress bar, return value, and elapsed marker so
@@ -192,7 +192,7 @@ def test_julia_eval_preview_fits_jutul_timing_summary() -> None:
         ]
     )
     body = display_tool_body(
-        "julia_eval",
+        "run_julia",
         {"code": 'include("candidate.jl"); run_candidate()'},
         output=output,
         expanded=False,

@@ -21,4 +21,4 @@ jutul-agent
 │>Ask a question or describe a task│
 └────────────────────────────────────────────────────────────────────────────┘
 ready · Enter send · Shift+Enter newline · Ctrl+P/↑ history · Shift+Tab
-cycle mode · default
+cycle mode

@@ -9,13 +9,12 @@ from typing import Any
 
 from jutul_agent.interfaces.tui._rendering import fenced_block, truncate_preview
 from jutul_agent.paths import resolve_in_workspace
+from jutul_agent.tool_labels import tool_label
 
 __all__ = [
     "SUPPORTED_APPROVAL_DECISIONS",
     "ApprovalCard",
     "allowed_decisions_for_interrupt",
-    "approval_command_hints",
-    "approval_ui_hints",
     "compute_unified_diff",
     "fenced_block",
     "render_interrupt_cards",
@@ -23,37 +22,6 @@ __all__ = [
 ]
 
 SUPPORTED_APPROVAL_DECISIONS = frozenset({"approve", "reject", "respond"})
-
-# Decision name → user-facing slash command (with optional argument hint).
-_APPROVAL_COMMAND_HINTS: dict[str, str] = {
-    "approve": "/approve",
-    "reject": "/reject [reason]",
-    "respond": "/respond <message>",
-}
-
-
-def approval_command_hints(allowed_decisions: frozenset[str]) -> list[str]:
-    """Slash-command hints (`/approve`, `/reject [reason]`, …) for the given decisions.
-
-    Returned in canonical order. The caller decides whether to render them as a
-    status hint, a help message, or autocomplete entries.
-    """
-
-    supported = allowed_decisions & SUPPORTED_APPROVAL_DECISIONS
-    return [hint for decision, hint in _APPROVAL_COMMAND_HINTS.items() if decision in supported]
-
-
-def approval_ui_hints(allowed_decisions: frozenset[str]) -> str:
-    """Keyboard and slash hints for a pending approval card."""
-
-    parts: list[str] = []
-    supported = allowed_decisions & SUPPORTED_APPROVAL_DECISIONS
-    if "approve" in supported:
-        parts.append("y approve")
-    if "reject" in supported:
-        parts.append("n reject")
-    parts.extend(approval_command_hints(allowed_decisions))
-    return " · ".join(parts)
 
 
 def allowed_decisions_for_interrupt(value: Any) -> frozenset[str]:
@@ -115,7 +83,7 @@ def render_interrupt_cards(
         description = action.get("description")
         cards.append(
             ApprovalCard(
-                title=f"Approval · {tool_name}",
+                title=f"Approval · {tool_label(tool_name)}",
                 body=_render_card_body(
                     tool_name=tool_name,
                     tool_args=tool_args,
@@ -142,17 +110,15 @@ def _render_card_body(
         lines.append(description)
         lines.append("")
 
+    # The card title already names the tool; show only the target it acts on
+    # (the file for an edit) and the action itself (the command, the diff).
     target = _tool_target(tool_name, tool_args)
-    lines.append(f"- Tool: {_inline_code(tool_name)}")
     if target is not None:
-        lines.append(f"- Target: {_inline_code(target)}")
-
-    tool_sections = _tool_sections(tool_name, tool_args, workspace_root=workspace_root)
-    if tool_sections:
+        lines.append(_inline_code(target))
         lines.append("")
-        lines.extend(tool_sections)
 
-    return "\n".join(lines)
+    lines.extend(_tool_sections(tool_name, tool_args, workspace_root=workspace_root))
+    return "\n".join(lines).strip()
 
 
 def _tool_sections(tool_name: str, tool_args: dict[str, Any], *, workspace_root: Path) -> list[str]:
@@ -160,7 +126,7 @@ def _tool_sections(tool_name: str, tool_args: dict[str, Any], *, workspace_root:
         command = str(tool_args.get("command") or "").strip()
         if not command:
             return []
-        return ["#### Command", "", fenced_block(truncate_preview(command), language="sh")]
+        return [fenced_block(truncate_preview(command), language="sh")]
 
     if tool_name == "write_file":
         return _write_file_sections(tool_args, workspace_root=workspace_root)
