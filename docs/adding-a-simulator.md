@@ -1,7 +1,7 @@
 # Adding a simulator
 
-A simulator is a folder of data under `src/jutul_agent/simulators/`, plus one
-registry entry. The agent code does not change.
+A simulator is a folder of data under `src/jutul_agent/simulators/`. The registry
+discovers it automatically, and the agent code does not change.
 
 ```
 simulators/<name>/
@@ -36,7 +36,8 @@ the agent is told it can `using`, and `primary_package` is what `doctor`
 checks is actually resolved in the env. Adapters can also contribute simulator
 subagents through `subagent_factories`.
 
-Register it in `simulators/registry.py`.
+That is all the registration needed: the registry finds the adapter by scanning
+the simulator folders, so there is no list to edit.
 
 ## 2. The Julia environment template
 

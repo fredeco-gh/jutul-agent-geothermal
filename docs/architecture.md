@@ -126,8 +126,8 @@ The shared `JutulAgent` Julia package (`julia_runtime/`) is synced into every
 env at bootstrap and carries cross-simulator runtime helpers, including the
 ensemble runner.
 
-Adding a simulator adds data in that folder plus a registry entry. No agent
-code changes.
+Adding a simulator adds data in that folder; the registry discovers it
+automatically. No agent code changes.
 
 ## Memory
 
