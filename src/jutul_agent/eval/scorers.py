@@ -148,7 +148,7 @@ def julia_code_matches(pattern: str) -> Scorer:
 
     The trajectory check for tasks whose point is a specific in-session
     mechanism (e.g. ``run_ensemble`` for a parallel sweep): the mechanism
-    must appear in the code of a ``julia_eval``/``julia_plot`` call, so a
+    must appear in the code of a ``run_julia``/``plot_julia`` call, so a
     textual claim of having used it cannot pass.
     """
     from jutul_agent.trace import TraceLog
@@ -164,7 +164,7 @@ def julia_code_matches(pattern: str) -> Scorer:
                 for event in log.iter_events():
                     if event.kind != "tool_call":
                         continue
-                    if event.payload.get("name") not in ("julia_eval", "julia_plot"):
+                    if event.payload.get("name") not in ("run_julia", "plot_julia"):
                         continue
                     code = str((event.payload.get("args") or {}).get("code", ""))
                     match = compiled.search(code)
@@ -177,7 +177,7 @@ def julia_code_matches(pattern: str) -> Scorer:
             explanation=(
                 f"julia code matched {pattern!r}: {hits}"
                 if hits
-                else f"no julia_eval/julia_plot code matched {pattern!r}"
+                else f"no run_julia/plot_julia code matched {pattern!r}"
             ),
         )
 
@@ -189,7 +189,7 @@ def tool_call_matches(tool: str, args_pattern: str) -> Scorer:
     """Pass when a call to ``tool`` has arguments matching ``args_pattern``.
 
     The pattern is searched in the JSON-serialized arguments, so it can pin
-    a specific parameter (e.g. ``"view": true`` on ``julia_plot``, meaning the
+    a specific parameter (e.g. ``"view": true`` on ``plot_julia``, meaning the
     agent must have actually looked at its own plot).
     """
     import json as _json
@@ -229,7 +229,7 @@ def tool_call_matches(tool: str, args_pattern: str) -> Scorer:
 def artifact_produced(suffix: str = ".png") -> Scorer:
     """Pass when the trace records a non-empty artifact with the suffix.
 
-    ``julia_plot`` records every figure it saves as an ``artifact`` event, so
+    ``plot_julia`` records every figure it saves as an ``artifact`` event, so
     "a plot exists" is checked against the trace plus the file on disk; a
     textual claim of having plotted cannot pass.
     """
@@ -238,7 +238,7 @@ def artifact_produced(suffix: str = ".png") -> Scorer:
     async def score(state: TaskState, target: Target) -> Score:
         path = state.store.get(STORE_TRACE_DB)
         # Artifact paths are recorded relative to the session output dir
-        # (julia_plot writes "artifacts/<name>.png"); the workspace is kept
+        # (plot_julia writes "artifacts/<name>.png"); the workspace is kept
         # as a fallback root for artifacts recorded by other tools.
         roots = [
             Path(root)
@@ -453,7 +453,7 @@ def no_numeric_claim(low: float, high: float, *, ignore: tuple[str, ...] = ()) -
 # session, the workspace, or the environment. Pure reads are not here; they
 # cannot make a previously failing call succeed.
 _STATE_CHANGING_TOOLS = frozenset(
-    {"write_file", "edit_file", "execute", "julia_eval", "julia_plot", "reset_julia"}
+    {"write_file", "edit_file", "execute", "run_julia", "plot_julia", "reset_julia"}
 )
 
 
@@ -617,7 +617,7 @@ _LINE_COMMENT = re.compile(r"#[^\n]*")
 
 @scorer(metrics=[accuracy()])
 def no_unresolvable_path_in_julia(
-    tools: tuple[str, ...] = ("julia_eval", "julia_plot", "execute"),
+    tools: tuple[str, ...] = ("run_julia", "plot_julia", "execute"),
 ) -> Scorer:
     """Fail when Julia or the shell got a leading-slash path that can't resolve.
 
@@ -745,7 +745,7 @@ def julia_probe_count() -> Scorer:
 
     Exploration is not bad (reading the real API beats guessing), but a
     harness that surfaces the right API faster needs fewer probes. Counts
-    ``julia_eval``/``julia_plot`` calls whose code introspects rather than
+    ``run_julia``/``plot_julia`` calls whose code introspects rather than
     computes, so a skill or mount change that cuts the hunting shows up here.
     """
 
@@ -753,7 +753,7 @@ def julia_probe_count() -> Scorer:
         count = sum(
             1
             for payload in _trace_tool_call_payloads(state)
-            if payload.get("name") in ("julia_eval", "julia_plot")
+            if payload.get("name") in ("run_julia", "plot_julia")
             and _PROBE.search(str((payload.get("args") or {}).get("code", "")))
         )
         return Score(value=count, explanation=f"{count} API-probe REPL calls")

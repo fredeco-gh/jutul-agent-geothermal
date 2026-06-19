@@ -49,9 +49,9 @@ def _state(tmp_path: Path, events: list[tuple[str, dict]]) -> SimpleNamespace:
 
 
 async def test_used_tools_requires_every_tool(tmp_path: Path) -> None:
-    state = _state(tmp_path, [("tool_call", {"name": "julia_eval", "args": {}})])
-    passed = await used_tools(["julia_eval"])(state, Target(""))
-    failed = await used_tools(["julia_eval", "read_file"])(state, Target(""))
+    state = _state(tmp_path, [("tool_call", {"name": "run_julia", "args": {}})])
+    passed = await used_tools(["run_julia"])(state, Target(""))
+    failed = await used_tools(["run_julia", "read_file"])(state, Target(""))
     assert passed.value == "C"
     assert failed.value == "I"
     assert "read_file" in (failed.explanation or "")
@@ -84,7 +84,7 @@ async def test_no_interpreters_via_execute_reads_the_arguments(tmp_path: Path) -
         tmp_path / "c",
         [
             ("tool_call", {"name": "execute", "args": {"command": "ls"}}),
-            ("tool_call", {"name": "julia_eval", "args": {"code": "1+1"}}),
+            ("tool_call", {"name": "run_julia", "args": {"code": "1+1"}}),
         ],
     )
     assert (await no_interpreters_via_execute()(harmless, Target(""))).value == "C"
@@ -359,12 +359,12 @@ async def test_no_numeric_claim_inverts_on_fabrication() -> None:
 async def test_no_repeated_identical_calls_spots_stuck_loops(tmp_path: Path) -> None:
     from jutul_agent.eval.scorers import no_repeated_identical_calls
 
-    fail = ("tool_call", {"id": "1", "name": "julia_eval", "args": {"code": 'include("a.jl")'}})
+    fail = ("tool_call", {"id": "1", "name": "run_julia", "args": {"code": 'include("a.jl")'}})
     fail_result = (
         "tool_result",
-        {"tool_call_id": "1", "name": "julia_eval", "content": "ERROR: x"},
+        {"tool_call_id": "1", "name": "run_julia", "content": "ERROR: x"},
     )
-    retry = ("tool_call", {"id": "2", "name": "julia_eval", "args": {"code": 'include("a.jl")'}})
+    retry = ("tool_call", {"id": "2", "name": "run_julia", "args": {"code": 'include("a.jl")'}})
 
     stuck = _state(tmp_path, [fail, fail_result, retry])
     assert (await no_repeated_identical_calls()(stuck, Target(""))).value == "I"
@@ -505,7 +505,7 @@ async def test_no_unresolvable_path_in_julia_flags_only_bad_paths(tmp_path: Path
     from jutul_agent.eval.scorers import no_unresolvable_path_in_julia
 
     def julia(code: str) -> list[tuple[str, dict]]:
-        return [("tool_call", {"name": "julia_eval", "args": {"code": code}})]
+        return [("tool_call", {"name": "run_julia", "args": {"code": code}})]
 
     def shell(command: str) -> list[tuple[str, dict]]:
         return [("tool_call", {"name": "execute", "args": {"command": command}})]
@@ -546,9 +546,9 @@ async def test_efficiency_scorers_count_the_right_calls(tmp_path: Path) -> None:
     events = [
         ("tool_call", {"name": "read_file", "args": {"file_path": "a.jl"}}),
         ("tool_call", {"name": "glob", "args": {"pattern": "**/*.jl"}}),
-        ("tool_call", {"name": "julia_eval", "args": {"code": "@doc build_grid"}}),
-        ("tool_call", {"name": "julia_eval", "args": {"code": "methods(solve_newton)"}}),
-        ("tool_call", {"name": "julia_eval", "args": {"code": "build_grid(10, 10).ncells"}}),
+        ("tool_call", {"name": "run_julia", "args": {"code": "@doc build_grid"}}),
+        ("tool_call", {"name": "run_julia", "args": {"code": "methods(solve_newton)"}}),
+        ("tool_call", {"name": "run_julia", "args": {"code": "build_grid(10, 10).ncells"}}),
     ]
     state = _state(tmp_path, events)
     # Every tool call.

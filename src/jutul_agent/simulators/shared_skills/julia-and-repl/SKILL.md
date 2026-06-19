@@ -19,7 +19,7 @@ work, with the same paths. Reference workspace files by bare relative path
 path works too. A bare leading slash (`/script.jl`) is the machine root, not the
 workspace.
 
-**Always run Julia code through `julia_eval` (or `julia_plot` for figures).**
+**Always run Julia code through `run_julia` (or `plot_julia` for figures).**
 Never reach for `execute` to spawn `julia`, `julia --project`, `julia -e ...`,
 or a shell pipeline that runs Julia: every such call starts a brand-new
 process with no shared state, pays the full precompile cost, and the user

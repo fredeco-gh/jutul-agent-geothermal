@@ -38,7 +38,7 @@ def plotting() -> Task:
     return Task(
         dataset=[sample],
         solver=jutul_agent_solver(),
-        scorer=[used_tools(["julia_plot"]), artifact_produced(".png")],
+        scorer=[used_tools(["plot_julia"]), artifact_produced(".png")],
         time_limit=1800,
         token_limit=2_000_000,
         message_limit=50,
@@ -98,7 +98,7 @@ def plotting_vision() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             reads_digit(_VALUE),
-            tool_call_matches("julia_plot", r'"view":\s*true'),
+            tool_call_matches("plot_julia", r'"view":\s*true'),
             artifact_produced(".png"),
             no_interpreters_via_execute(),
         ],

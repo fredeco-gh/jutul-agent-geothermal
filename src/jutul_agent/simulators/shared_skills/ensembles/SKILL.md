@@ -9,7 +9,7 @@ description: Run parallel ensembles (UQ, parameter sweeps) across warm Distribut
 
 Use this when a task runs the **same simulation many times** with different inputs —
 uncertainty quantification, parameter sweeps, sensitivity studies — and the runs are
-independent. For a single run, just use `julia_eval`.
+independent. For a single run, just use `run_julia`.
 
 When the task asks for a parallel ensemble, run it in parallel — don't quietly
 fall back to a serial loop. If the parallel path fails, fix it or say so.
@@ -17,7 +17,7 @@ fall back to a serial loop. If the parallel path fails, fix it or say so.
 ## How
 
 The session loads the `JutulAgent` package, which exports `run_ensemble` (if it's
-not yet defined, run `using JutulAgent` first). Call it from `julia_eval`
+not yet defined, run `using JutulAgent` first). Call it from `run_julia`
 (`MySim` below stands for whatever packages the case function needs):
 
 ```julia
@@ -91,4 +91,4 @@ more than a few lines: it stays editable as a file and runs serially too
 
 For very heavy sweeps, set `nworkers` to the cores you want to use; for a one-off
 parallel block you can also drop to plain `Distributed` (`addprocs`, `@everywhere`,
-`pmap`) inside `julia_eval` — `run_ensemble` is just the ergonomic path.
+`pmap`) inside `run_julia` — `run_ensemble` is just the ergonomic path.

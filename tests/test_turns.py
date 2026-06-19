@@ -212,7 +212,7 @@ async def test_turn_runner_streams_tool_output_deltas() -> None:
                 {
                     "event": "tool-started",
                     "tool_call_id": "tool-julia",
-                    "tool_name": "julia_eval",
+                    "tool_name": "run_julia",
                     "input": {"code": "run()"},
                 }
             ),

@@ -50,7 +50,7 @@ def mocca() -> Task:
         scorer=[
             numeric_close(0.6560, 0.01),
             numeric_close(353.75, 1.0),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,

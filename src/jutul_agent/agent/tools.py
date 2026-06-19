@@ -78,9 +78,9 @@ _MODULE_DESYNC_HINT = (
 )
 
 
-def make_julia_eval_tool(session: Session):
+def make_run_julia_tool(session: Session):
     @tool
-    async def julia_eval(code: str) -> str:
+    async def run_julia(code: str) -> str:
         """Evaluate Julia code in a persistent REPL session.
 
         State (variables, functions, loaded packages) persists across calls.
@@ -119,7 +119,7 @@ def make_julia_eval_tool(session: Session):
             text += _MODULE_DESYNC_HINT
         return text
 
-    return julia_eval
+    return run_julia
 
 
 def make_reset_julia_tool(session: Session):
@@ -181,7 +181,7 @@ def make_record_attempt_tool(session: Session):
         "root"); each hypothesis you actually evaluate is its own call with
         the previous one as ``parent_attempt_id``.
 
-        Pair every call with ``julia_plot`` and pass the resulting
+        Pair every call with ``plot_julia`` and pass the resulting
         ``artifacts/<slot>.<format>`` path as ``plot_artifact_path`` so the
         report can embed one figure per attempt. See the
         ``investigation-loop`` skill.
@@ -195,7 +195,7 @@ def make_record_attempt_tool(session: Session):
                 the root (baseline) attempt.
             candidate_path: Workspace path to the file being edited (optional).
             plot_artifact_path: Workspace-relative path of the comparison
-                plot created with ``julia_plot`` for this attempt, usually
+                plot created with ``plot_julia`` for this attempt, usually
                 ``artifacts/<slot>.png``.
             notes: Free-form short label (optional).
 
@@ -241,25 +241,44 @@ def _fmt_metric(value: Any) -> str:
 def make_write_report_tool(session: Session):
     @tool
     async def write_report(
-        narrative: str,
+        narrative: str = "",
         title: str | None = None,
+        blocks: list[dict] | None = None,
+        custom_css: str = "",
         output_path: str | None = None,
     ) -> str:
         """Write an HTML report for the session and open it in the browser.
 
-        Use this when the user asks for a written summary of an investigation
-        run. The HTML embeds the supplied narrative, plus any attempts you
-        logged with ``record_attempt`` (rendered as a tree with metrics and
-        any plot artifacts they referenced). If no attempts were logged, only
-        the narrative is shown.
+        Use this when the user asks for a written summary of an investigation.
+        There are two ways to build the report; choose what fits the work.
+
+        Simple (default): pass ``narrative``, the Markdown prose you write
+        yourself. ``![caption](artifacts/plot.png)`` embeds a figure. Any
+        attempts you logged with ``record_attempt`` are appended as a
+        metric/exploration section. With nothing logged, the report is just your
+        write-up.
+
+        Composed: pass ``blocks``, an ordered list of typed building blocks you
+        arrange yourself, with your own titles; nothing is auto-added. Types:
+          - ``{"type": "prose", "markdown": "## Heading\\n..."}``
+          - ``{"type": "figure", "path": "artifacts/x.png", "caption": "..."}``
+          - ``{"type": "metrics", "title": "Best fit", "rows": {"RMSE (mV)": 15.9}}``
+          - ``{"type": "table", "title": "...", "headers": [...], "rows": [[...]]}``
+          - ``{"type": "exploration"}``: the attempt tree and metric chart, shown
+            when you logged attempts.
+          - ``{"type": "html", "html": "<div>...</div>"}``: raw HTML for a fully
+            custom block; pair it with ``custom_css`` to style it.
 
         Args:
-            narrative: Markdown prose. You write this yourself, summarising
-                what was tried, what worked, and what to do next.
-            title: Optional page title (defaults to the simulator name).
-            output_path: Where to write the HTML report. Defaults to the
-                session output directory
-                (``jutul-agent-output/sessions/<id>/report.html``).
+            narrative: Markdown prose for the simple layout (ignored if ``blocks``
+                is given).
+            title: Optional page title, shown as the page heading (defaults to
+                the simulator name). Your first block need not repeat it.
+            blocks: Optional ordered building blocks to compose the report body.
+            custom_css: Optional extra CSS appended to the report's stylesheet,
+                for restyling or styling your own ``html`` blocks.
+            output_path: Where to write the HTML. Defaults to the session output
+                directory (``jutul-agent-output/sessions/<id>/report.html``).
         """
         from jutul_agent.open_file import open_path
         from jutul_agent.transcript.report import render_report
@@ -291,7 +310,10 @@ def make_write_report_tool(session: Session):
             session_id=session.session_id,
             simulator=session.simulator.display_name,
             artifact_dirs=artifact_dirs,
+            blocks=blocks,
+            custom_css=custom_css,
         )
+        session.note_report(out)
         open_path(out)
         return str(out) + note
 

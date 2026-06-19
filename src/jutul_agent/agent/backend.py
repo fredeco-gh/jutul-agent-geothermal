@@ -46,8 +46,8 @@ def interpreter_invocation(command: str, names: frozenset[str] | tuple[str, ...]
 
 _NO_JULIA_SHELL_MSG = (
     "Error: spawning `julia` through the shell is disabled. Julia code runs in "
-    "the persistent session via `julia_eval`: shared state, streamed output, no "
-    'cold start. Use `julia_eval` for code and `include("file.jl")` for scripts.'
+    "the persistent session via `run_julia`: shared state, streamed output, no "
+    'cold start. Use `run_julia` for code and `include("file.jl")` for scripts.'
 )
 
 _READ_ONLY_MSG = (
@@ -110,7 +110,7 @@ class WorkspaceShellBackend(LocalShellBackend):
 
     Constructed with ``virtual_mode=False`` so the file tools speak the real
     filesystem: a relative path resolves against the workspace (the backend's
-    ``cwd``) and an absolute path as itself, the same way ``julia_eval`` and
+    ``cwd``) and an absolute path as itself, the same way ``run_julia`` and
     ``execute`` resolve paths from that working directory. One path string
     therefore names one file in the file tools, the shell, and the REPL. Package
     source, skills, memory, and added folders are all read and written at their

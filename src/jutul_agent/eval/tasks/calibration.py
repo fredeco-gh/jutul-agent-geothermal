@@ -53,7 +53,7 @@ def calibration() -> Task:
     # Simple curve-fit, graded on the answer. An earlier version of this task
     # also required a recorded >=3-step attempt tree (record_attempt /
     # write_report), but capable models solve the exp-decay fit in a single
-    # least-squares step and legitimately record one attempt — so the tree
+    # least-squares step and legitimately record one attempt, so the tree
     # requirement failed every model and measured the prompt, not the agent.
     # The investigation-tier scoring (investigation_recorded) is being reworked
     # around a genuinely iterative problem; until then this stays a plain fit.
@@ -73,7 +73,7 @@ def calibration() -> Task:
         scorer=[
             numeric_close(2.50, 0.05),
             numeric_close(0.70, 0.03),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=1200,

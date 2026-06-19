@@ -46,7 +46,7 @@ def jutuldarcy() -> Task:
         scorer=[
             # A saturation is a fraction; goldens replace this once captured.
             numeric_answer(0.0, 1.0, count=2),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,
@@ -77,7 +77,7 @@ def jutuldarcy_rate_change() -> Task:
         solver=jutul_agent_solver(simulator="jutuldarcy"),
         scorer=[
             numeric_answer(1.0, 1000.0, count=2, order="decreasing"),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
             no_repeated_identical_calls(),
         ],
@@ -94,8 +94,8 @@ def jutuldarcy_unit_conversion() -> Task:
     # get right; leaving it unconverted (100 m^2) makes the solve diverge, so it
     # cannot reach the golden pressure. The golden was captured from a trusted run of
     # this exact case in the JutulDarcy 0.3.8 env (final average reservoir pressure
-    # 203.705 bar), so `numeric_close` proves the conversion landed the right physics
-    # — a deterministic check, no brittle trace matching. Re-capture the golden only
+    # 203.705 bar), so `numeric_close` proves the conversion landed the right physics:
+    # a deterministic check with no brittle trace matching. Re-capture the golden only
     # on a deliberate JutulDarcy upgrade, never by re-running until it matches.
     sample = Sample(
         id="jd-millidarcy-conversion",
@@ -127,7 +127,7 @@ def jutuldarcy_unit_conversion() -> Task:
             # Golden from a trusted 0.3.8 run; the tolerance absorbs solver noise but
             # is far tighter than the gap to any unconverted-permeability result.
             numeric_close(203.705, 8.0),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_interpreters_via_execute(),
         ],
         time_limit=2400,

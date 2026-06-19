@@ -68,7 +68,7 @@ rmse = sqrt(mean((interp(obs.t, t, y) .- obs.y).^2))
 ```
 
 ```python
-julia_plot(
+plot_julia(
     code="""
         fig = Figure()
         ax = Axis(fig[1, 1], xlabel="time (s)", ylabel="V")
@@ -88,7 +88,7 @@ record_attempt(
 )
 ```
 
-When you set ``slot="…"`` on ``julia_plot`` the artifact path is
+When you set ``slot="…"`` on ``plot_julia`` the artifact path is
 ``artifacts/<slot>.<format>``. Pass that exact string to
 ``record_attempt(plot_artifact_path=…)`` — the report locates the file
 relative to the session and embeds it next to the attempt's metrics.

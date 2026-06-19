@@ -1,6 +1,6 @@
 ---
 name: plotting-basics
-description: "How to plot with julia_plot: native plotters, live windows, and seeing your own plots"
+description: "How to plot with plot_julia: native plotters, live windows, and seeing your own plots"
 ---
 
 # Plotting basics
@@ -10,10 +10,10 @@ description: "How to plot with julia_plot: native plotters, live windows, and se
 Use this skill whenever the user asks for a plot, chart, figure, or visualization,
 or when a plot would make simulation results easier to understand.
 
-## The model: `julia_plot` captures whatever you draw
+## The model: `plot_julia` captures whatever you draw
 
-Use `julia_plot` for **anything that produces a figure** — never build a `Figure`
-in `julia_eval` (that saves no artifact and the user can't see it). `julia_plot`:
+Use `plot_julia` for **anything that produces a figure** — never build a `Figure`
+in `run_julia` (that saves no artifact and the user can't see it). `plot_julia`:
 
 - activates the right Makie backend for this session (you don't manage backends),
 - evaluates your code, and
@@ -27,7 +27,7 @@ Just call the plotter.
 ## Prefer native plotters
 
 Call your simulator's own documented plotters first — they are the canonical,
-best-looking views, they run on GLMakie, and `julia_plot` captures them
+best-looking views, they run on GLMakie, and `plot_julia` captures them
 automatically. The `<sim>-overview` skill lists the plotters for your simulator.
 
 Build a `Figure` inline when no native plotter fits, or when you want a specific
@@ -48,12 +48,12 @@ deliberately, not on every plot (each image costs tokens). The user always sees
 the saved artifact regardless of `view`.
 
 ```text
-julia_plot(code="<your plot code>", view=true)   # then reason about what you see
+plot_julia(code="<your plot code>", view=true)   # then reason about what you see
 ```
 
 ## How the user sees a plot
 
-In an interactive session `julia_plot` **opens a live Makie window** for the user,
+In an interactive session `plot_julia` **opens a live Makie window** for the user,
 a real plot window they can rotate, zoom, and step; a PNG is saved too. There's no
 separate "interactive" mode, just plot. (Headless and one-shot runs can't show a
 window and only save the PNG.)
@@ -61,8 +61,8 @@ window and only save the PNG.)
 - `view` is for **you**, not the user — it returns the image to you; it opens
   nothing for them.
 - Pass `window=false` only to compute/inspect a plot without opening a window.
-- If the user says they can't see a plot, you probably built it in `julia_eval`
-  (use `julia_plot`) or set `window=false` — fix that, don't just re-describe it.
+- If the user says they can't see a plot, you probably built it in `run_julia`
+  (use `plot_julia`) or set `window=false` — fix that, don't just re-describe it.
 
 ## Windows: slots, recapture, close
 
@@ -87,10 +87,10 @@ Each plot opens a window keyed by its `slot`:
   finicky about argument types — prefer this). `reports = result.result.reports`,
   then per report step `r`: `length(r[:ministeps])`, `r[:total_time]`, and per
   ministep `m`: `m[:linear_iterations]`, `m[:convergence_time]`. Plot vs report
-  step with `Figure`/`Axis`/`lines!` through `julia_plot`.
+  step with `Figure`/`Axis`/`lines!` through `plot_julia`.
 - **Model structure** (Jutul-based simulators): the dependency graph is drawn by a
   Jutul package extension that only activates once the GraphMakie stack is loaded.
-  Load all three first, in the same `julia_plot` call, then call the plotter:
+  Load all three first, in the same `plot_julia` call, then call the plotter:
   ```julia
   using GraphMakie, NetworkLayout, LayeredLayouts
   plot_variable_graph(reservoir_model(model))   # per-variable dependencies
@@ -114,7 +114,7 @@ obs = CSV.read("experiments/observations/data.csv", DataFrame)   # workspace-rel
 
 ## Performance
 
-- **Do not re-run a full simulation inside `julia_plot`** if the REPL already holds
-  the result/arrays from a recent `julia_eval` — plot from the cached objects.
+- **Do not re-run a full simulation inside `plot_julia`** if the REPL already holds
+  the result/arrays from a recent `run_julia` — plot from the cached objects.
   Plotting should take seconds, not minutes.
 - Reuse `slot=` for comparison plots you refresh during calibration.

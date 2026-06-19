@@ -67,7 +67,7 @@ set `info.num_cycles = 3` before `setup_mocca_case` for a short run.
 ## Building a case directly
 
 The examples are the ground truth. Find the source path with `pkgdir(Mocca)` in
-`julia_eval`, then list them and read the one that fits your task before writing
+`run_julia`, then list them and read the one that fits your task before writing
 your own chain:
 
 ```text
@@ -79,7 +79,7 @@ breakthrough (DCB) variant, an explicit-physics composition for
 non-reference parameters, and the JSON, optimization, and history-matching
 routes. Read whichever fits, and follow its own call chain rather than
 reconstructing it from memory — the internal API moves. For a docstring,
-stay in the REPL: `julia_eval("@doc Mocca.setup_mocca_case")`.
+stay in the REPL: `run_julia("@doc Mocca.setup_mocca_case")`.
 
 ## Reading results
 
@@ -110,7 +110,7 @@ off a pointwise mole fraction as a purity.
 Mocca.export_cell_results("results.csv", case, states, timesteps; format = "csv")
 ```
 
-Call Mocca's native plotters through `julia_plot`; they are backend-agnostic
+Call Mocca's native plotters through `plot_julia`; they are backend-agnostic
 and captured automatically:
 
 - `plot_outlet(case, states, timesteps)`: outlet concentrations / breakthrough

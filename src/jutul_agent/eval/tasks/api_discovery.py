@@ -1,7 +1,7 @@
 """API-discovery suite: how efficiently does the agent learn an unfamiliar API?
 
 Models often spend many turns probing how to call functions (`@doc`,
-`methods`, trial-and-error in `julia_eval`) before doing the work. That
+`methods`, trial-and-error in `run_julia`) before doing the work. That
 exploration is not wrong (reading the real API beats guessing), but a good
 harness makes it cheap. This suite measures the cost on a controlled API: the
 synthetic ``MiniRes`` package (see ``_corpus``) ships in the workspace but is
@@ -81,7 +81,7 @@ def api_discovery_solver() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_close(0.0625, 0.001),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
             *_efficiency(),
@@ -110,7 +110,7 @@ def api_discovery_internal() -> Task:
         solver=jutul_agent_solver(),
         scorer=[
             numeric_close(-25000.0, 1.0),
-            used_tools(["julia_eval"]),
+            used_tools(["run_julia"]),
             no_unresolvable_path_in_julia(),
             no_interpreters_via_execute(),
             *_efficiency(),
