@@ -2,8 +2,8 @@
 
 ## Purpose
 
-jutul-agent is a Deep Agents–based assistant for Julia scientific simulation
-work on the Jutul ecosystem.
+jutul-agent is an assistant for Julia scientific simulation work on the Jutul
+ecosystem, built on Deep Agents.
 
 ## Working rules
 
@@ -34,10 +34,10 @@ work on the Jutul ecosystem.
 
 Two GitHub Actions workflows:
 
-- `ci.yml` — every push/PR. `lint` (ruff); `test` across Linux/Windows/macOS
+- `ci.yml`: every push/PR. `lint` (ruff); `test` across Linux/Windows/macOS
   (`pytest -m "not integration"`, no Julia); `julia-integration` (Linux only:
-  runs `test_juliakernel.py` against base Julia — the kernel needs no env).
-- `simulators.yml` — per-simulator smoke matrix (`jutuldarcy`, `battmo`,
+  runs `test_juliakernel.py` against base Julia, which needs no env).
+- `simulators.yml`: per-simulator smoke matrix (`jutuldarcy`, `battmo`,
   `fimbul`, `mocca`; Linux). On PR + push to `main`, a weekly Monday run
   (catches upstream breakage), and manual dispatch. Each job instantiates the
   env from `Project.toml` and runs `test_simulators_smoke.py`.
@@ -50,38 +50,40 @@ and check on staged `.py` files. To verify the whole tree like CI:
 
 ## Important paths
 
-- `src/jutul_agent/paths.py` — the three runtime anchors (`PACKAGE_ROOT`
-  (install), `workspace_root()` (CWD), `state_home()` (sessions)) and the
-  virtual-path policy (`resolve_in_workspace`, `is_host_path`) — the one
-  place that maps agent-visible paths to real files.
-- `src/jutul_agent/workspace.py` — workspace config
+- `src/jutul_agent/paths.py`: the three runtime anchors (`PACKAGE_ROOT`
+  (install), `workspace_root()` (CWD), `state_home()` (sessions)) and the path
+  policy (`resolve_in_workspace`, `is_host_path`), the one place that maps
+  agent-visible paths to real files.
+- `src/jutul_agent/workspace.py`: workspace config
   (`.jutul-agent/config.toml`), simulator auto-detect, Julia-env bootstrap.
-- `src/jutul_agent/session.py` — `Session`, the unit of work for one
+- `src/jutul_agent/session.py`: `Session`, the unit of work for one
   invocation.
-- `src/jutul_agent/models.py` — provider metadata and the model catalog
-  discovery. `src/jutul_agent/display.py` — display detection and Xvfb
+- `src/jutul_agent/models.py`: provider metadata and the model catalog
+  discovery. `src/jutul_agent/display.py`: display detection and Xvfb
   management for headless plotting.
-- `src/jutul_agent/agent/builder.py` — deepagents wiring: composite backend,
-  HarnessProfile registration, `build_agent` entry point. Custom tools sit
-  alongside (`tools.py`, `julia_plot.py`, `memory.py`, `approval.py`,
-  `turns.py`, `mounts.py` — the `/add-dir` route mounting); the Julia-side
-  plot capture lives in the `julia_runtime/JutulAgent` package. The full
-  system prompt is assembled in `prompts.py` (each rule stated once).
-- `src/jutul_agent/simulators/` — adapter dataclass, registry, env bootstrap +
+- `src/jutul_agent/agent/builder.py`: deepagents wiring (composite backend,
+  HarnessProfile registration, `build_agent` entry point). Custom tools sit
+  alongside (`tools.py`, `plot_julia.py`, `memory.py`, `approval.py`,
+  `turns.py`, and `added_dirs.py`, which records `/add-dir` folders);
+  `tool_labels.py` holds the one friendly name per tool shared by the TUI,
+  approval prompt, and transcript. The Julia-side plot capture lives in the
+  `julia_runtime/JutulAgent` package. The full system prompt is assembled in
+  `prompts.py` (each rule stated once).
+- `src/jutul_agent/simulators/`: adapter dataclass, registry, env bootstrap +
   launch-time preparation (`env_setup.prepare_workspace_env`), shared skills,
   and one folder per simulator (see below).
-- `src/jutul_agent/julia/` — the `JuliaSession` Protocol (`session.py`) and the
+- `src/jutul_agent/julia/`: the `JuliaSession` Protocol (`session.py`) and the
   Julia toolchain checks (`requirements.py`).
-- `src/jutul_agent/juliakernel/` — the backend: a self-contained, supervised
+- `src/jutul_agent/juliakernel/`: the backend, a self-contained, supervised
   Julia runtime (`kernel.py` + stdlib-only `server.jl`) with live output and
   SIGINT interrupt. Splittable into a standalone package.
-- `src/jutul_agent/trace/` — SQLite event log and `TraceRecorder` middleware.
-- `src/jutul_agent/transcript/` — renderers that consume a trace
+- `src/jutul_agent/trace/`: SQLite event log and `TraceRecorder` middleware.
+- `src/jutul_agent/transcript/`: renderers that consume a trace
   (HTML transcript, markdown transcript, investigation report).
-- `src/jutul_agent/interfaces/tui/approval.py` — HITL decision policy and the
+- `src/jutul_agent/interfaces/tui/approval.py`: HITL decision policy and the
   approval card markdown.
-- `src/jutul_agent/interfaces/` — `cli` and the Textual `tui` package.
-- `tests/` — end-to-end, chat, CLI, and tool coverage. `tests/integration/`
+- `src/jutul_agent/interfaces/`: `cli` and the Textual `tui` package.
+- `tests/`: end-to-end, chat, CLI, and tool coverage. `tests/integration/`
   needs Julia; `tests/live/` needs an LLM provider key.
 
 ## Per-simulator layout
@@ -89,10 +91,10 @@ and check on staged `.py` files. To verify the whole tree like CI:
 Each simulator lives under `src/jutul_agent/simulators/<name>/` and owns
 exactly three things:
 
-- `adapter.py` — constructs the `SimulatorAdapter`. Set
+- `adapter.py`: constructs the `SimulatorAdapter`. Set
   `module_dir = Path(__file__).resolve().parent` so the base class can
   derive `julia_env_template_path` and `skills_dir`.
-- `julia_env/` — `Project.toml` declaring the deps the agent can `using`, plus a
+- `julia_env/`: `Project.toml` declaring the deps the agent can `using`, plus a
   per-simulator `JutulAgent<Sim>/` warm package (a local `[sources]` path dep whose
   `@recompile_invalidations` + `@compile_workload` bakes that simulator's
   GLMakie-aware solve/plot into the precompile cache, so the first solve is fast).
@@ -102,7 +104,7 @@ exactly three things:
   `Manifest.toml` is generated on instantiate (gitignored). The whole `julia_env/`
   folder is copied into a workspace on bootstrap, so the relative `[sources]` paths
   keep resolving.
-- `skills/<skill-name>/SKILL.md` — markdown skills surfaced via the
+- `skills/<skill-name>/SKILL.md`: markdown skills surfaced via the
   deep-agents skill system.
 
 Add a simulator by creating that folder and one entry in
@@ -114,16 +116,19 @@ the adapter's `subagent_factories` tuple.
 We pin deepagents (see `[tool.uv] exclude-newer` in `pyproject.toml`) and
 touch a few non-public surfaces. When bumping the pin, re-verify each:
 
-- `agent/tools.py` — reads `langgraph.pregel._tools._tool_call_writer`
+- `agent/tools.py`: reads `langgraph.pregel._tools._tool_call_writer`
   (ContextVar) to stream live Julia output as tool-output deltas.
   Import-guarded: if it moves, streaming silently disables.
-- `agent/turns.py` + `tests/fakes.py` — consume the v3 `astream_events`
+- `agent/turns.py` + `tests/fakes.py`: consume the v3 `astream_events`
   typed projections (`run.messages` / `run.tool_calls` / `run.interrupts` /
   `run.output`); the fakes mirror that shape, so a projection change shows up
   as test failures.
-- `agent/mounts.py` and `agent/packages_backend.py` — mutate a
-  `CompositeBackend`'s `routes` / `sorted_routes` in place (longest-prefix
-  ordering) and read `FilesystemBackend.cwd`.
-- `tests/test_builder.py` — imports
+- `agent/backend.py`: subclasses `CompositeBackend` (overriding `grep`/`glob`
+  so patterns recurse) and `LocalShellBackend` (overriding `write`/`edit`/
+  `execute` to refuse depot writes, reading `cwd` to resolve relative paths).
+  A subclass breaks loudly if a base method's signature moves. After the
+  real-paths refactor nothing routes through a mount, so `added_dirs.py` only
+  records the added folders; every tool already reaches them by absolute path.
+- `tests/test_builder.py`: imports
   `deepagents.profiles.harness.harness_profiles._harness_profile_for_model`
   to assert our profile resolves for built model instances.

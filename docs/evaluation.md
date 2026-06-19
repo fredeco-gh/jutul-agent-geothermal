@@ -162,7 +162,7 @@ def my_suite() -> Task:
     return Task(
         dataset=[sample],
         solver=jutul_agent_solver(),
-        scorer=[includes(), used_tools(["julia_eval"])],
+        scorer=[includes(), used_tools(["run_julia"])],
         time_limit=600,
         token_limit=200_000,
         message_limit=50,
@@ -254,7 +254,7 @@ How runs scale, and the costs that dominate:
 ## Running safely
 
 Bench samples run with `--approval-mode auto`: nobody reviews the agent's
-shell commands, and `julia_eval` is never gated (see
+shell commands, and `run_julia` is never gated (see
 [approval and safety](approval.md)). For the bundled suites (our own
 prompts, major-provider models) the practical risk is accidental damage,
 and each sample already runs in a throwaway workspace with ephemeral

@@ -53,10 +53,10 @@ and descriptions only) and the workspace memory index `MEMORY.md`. Always-on
 behavior rules belong here, not in skill bodies, because skills are read on
 demand (see [improving the agent](improving-the-agent.md)).
 
-Custom tools (`agent/tools.py`, `agent/julia_plot.py`, `agent/memory.py`):
+Custom tools (`agent/tools.py`, `agent/plot_julia.py`, `agent/memory.py`):
 
-- `julia_eval` runs code in the persistent Julia kernel and streams output.
-- `julia_plot` builds a figure, saves a PNG artifact, and records it in the
+- `run_julia` runs code in the persistent Julia kernel and streams output.
+- `plot_julia` builds a figure, saves a PNG artifact, and records it in the
   trace. `recapture_plot` and `close_plots` manage live figure windows.
 - `reset_julia` restarts the kernel process when the REPL state is wedged.
 - `record_attempt` logs one step of a parameter investigation (id, rationale,

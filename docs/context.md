@@ -19,7 +19,7 @@ Every turn, the model receives:
   enter only when read.
 - The conversation so far: messages, tool calls, and tool results.
 
-Tool results enter as real content, not summaries — but they are not kept
+Tool results enter as real content, not summaries, but they are not kept
 forever at full size: a large single result is offloaded and old ones are
 cleared as the window fills (see [Growth and its limits](#growth-and-its-limits)
 below). The Julia kernel's streamed output is rendered through a terminal
@@ -66,7 +66,7 @@ fire only when the cheaper ones are not enough:
   stay verbatim. The summarized turns are offloaded to
   `conversation_history/<thread>.md` first, so they remain recoverable, and the
   summary embeds that path. This is deepagents' stock backend-recoverable
-  `SummarizationMiddleware` — installed by `create_deep_agent`, sized from the
+  `SummarizationMiddleware`, installed by `create_deep_agent`, sized from the
   model profile (which `builder._set_profile_window` points at the real loaded
   window), and non-mutating; `TraceRecorder` records each compaction. We lean on
   the stock middleware so upstream improvements arrive without porting.
@@ -79,14 +79,14 @@ The status bar keeps a `ctx` percentage in view (yellow at 70%, red at 90%).
 The window the thresholds are measured against is the model's real loaded size:
 the provider package's profile data for cloud models, and for a local model the
 `num_ctx` it was actually loaded with (its reported maximum capped at the memory
-budget) — not the daemon's theoretical maximum, which the model was never loaded
+budget), not the daemon's theoretical maximum, which the model was never loaded
 with. Sizing the trigger to the loaded window is what lets compaction fire
 before a local model overflows.
 
 - `/compact` runs a summarization pass on demand against the checkpointed
   thread. Every compaction (automatic or manual) is recorded as a
   `context_compaction` trace event, and the full conversation remains in the
-  trace — compaction is non-mutating, so nothing is lost from the record.
+  trace; compaction is non-mutating, so nothing is lost from the record.
 - Keep sessions task-shaped regardless: clearing and the summary preserve the
   working set and the conclusions, not every byte. Durable knowledge belongs in
   memory, which survives the session boundary by design.
@@ -96,6 +96,6 @@ before a local model overflows.
 Subagents are the structural answer for context-heavy sub-tasks: a subagent runs
 in its own context window and returns a result, so the parent's context pays for
 the conclusion, not the exploration. The seam exists per simulator
-(`subagent_factories`); a general source-exploration subagent — so that browsing
-installed package source never enters the main context at all — is the planned
+(`subagent_factories`); a general source-exploration subagent (so that browsing
+installed package source never enters the main context at all) is the planned
 next step.

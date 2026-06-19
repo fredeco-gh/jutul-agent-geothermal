@@ -107,7 +107,7 @@ exact session transcript behind any issue or finding.
 Each issue carries the date range of the sessions it was seen in (the actual session
 dates, not when the review ran), so an issue last seen weeks ago ranks below one seen
 today. Sort by the "Last session" column, or use the `last session ≥ / ≤` date filters
-to narrow to a window — useful for telling apart issues that still reflect current
+to narrow to a window, which helps tell apart issues that still reflect current
 behaviour from stale ones a refactor has likely already fixed.
 
 Each issue has actions: resolve, dismiss, delete, and generate a fix prompt. Clicking
