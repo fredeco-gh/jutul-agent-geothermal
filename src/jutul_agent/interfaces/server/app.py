@@ -145,6 +145,20 @@ def create_app(manager: SessionManager | None = None) -> FastAPI:
     return app
 
 
+def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
+    """Wire events for produced artifacts: interactive HTML as ``viz``, the rest as ``artifact``."""
+    events: list[dict[str, Any]] = []
+    for payload in payloads:
+        rel = str(payload.get("path") or "")
+        rel = rel[len("artifacts/") :] if rel.startswith("artifacts/") else rel
+        url = f"/sessions/{session_id}/artifacts/{rel}"
+        if payload.get("mime") == "text/html":
+            events.append(protocol.viz_to_wire(url, title=payload.get("caption")))
+        else:
+            events.append(protocol.artifact_to_wire(payload, url=url))
+    return events
+
+
 def _resolve_artifact(host: SessionHost, path: str):
     """The artifact file for ``path``, or ``None`` if it escapes the session dir."""
     base = (host.session.output_dir / "artifacts").resolve()
@@ -223,15 +237,18 @@ class _StreamState:
         self._turn = asyncio.create_task(self._run_turn(factory))
 
     async def _run_turn(self, factory) -> None:
+        seen_artifacts = self._artifact_count()
         try:
             result = await factory()
         except asyncio.CancelledError:
+            await self._emit_new_artifacts(seen_artifacts)
             await _safe_send(self._ws, {"type": "turn_end", "text": "", "cancelled": True})
             raise
         except Exception as exc:  # surface the failure, then end the turn
             await _safe_send(self._ws, {"type": "error", "message": str(exc)})
             await _safe_send(self._ws, {"type": "turn_end", "text": ""})
             return
+        await self._emit_new_artifacts(seen_artifacts)
         self._pending = list(result.interrupts)
         if self._pending:
             # The turn paused for approval. Send the requests and wait for a
@@ -243,6 +260,21 @@ class _StreamState:
         if usage is not None:
             await _safe_send(self._ws, usage)
         await _safe_send(self._ws, protocol.turn_end_to_wire(result.messages))
+
+    def _artifact_payloads(self) -> list[dict[str, Any]]:
+        return [
+            event.payload
+            for event in self._host.session.trace.iter_events()
+            if event.kind == "artifact"
+        ]
+
+    def _artifact_count(self) -> int:
+        return len(self._artifact_payloads())
+
+    async def _emit_new_artifacts(self, since: int) -> None:
+        """Forward artifacts the turn produced (PNGs as ``artifact``, HTML as ``viz``)."""
+        for wire in artifact_wire_events(self._artifact_payloads()[since:], self._host.session_id):
+            await _safe_send(self._ws, wire)
 
     async def _on_message(self, event: Any) -> None:
         wire = protocol.to_wire(event)

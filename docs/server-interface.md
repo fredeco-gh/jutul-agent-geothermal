@@ -136,10 +136,11 @@ has to change.
 
 ## Visualization
 
-The terminal shows plots as images. A webapp can do better. The main path renders
-the agent's own figures into the browser with WebGL, so the user can rotate, zoom,
-and scrub them live. The agent writes the same plotting code it always writes; the
-server serves the interactive figure and tells the front end where to embed it.
+The terminal shows plots as images. A webapp can do better. A figure is rendered
+with WebGL (WGLMakie) and exported to a self-contained HTML file, which the server
+serves as an artifact and the front end embeds in a frame. The user can then
+rotate, zoom, and pan it in the browser. Because the file is self-contained it
+needs no live plotting server, only a place to fetch it from.
 
 The image form is kept as well. It is the record written to the session's history
 and report, the fallback when an interactive view is not available, and what

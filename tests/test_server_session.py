@@ -21,7 +21,7 @@ from fakes import (
     make_fake_adapter,
     streaming_agent,
 )
-from jutul_agent.interfaces.server.app import create_app
+from jutul_agent.interfaces.server.app import artifact_wire_events, create_app
 from jutul_agent.interfaces.server.manager import SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
 from jutul_agent.session import Session, default_session_id
@@ -127,6 +127,27 @@ def test_ws_decision_without_pending_is_error(tmp_path: Path) -> None:
             event = ws.receive_json()
     assert event["type"] == "error"
     assert "no approval" in event["message"]
+
+
+def test_artifact_wire_events_png_and_html() -> None:
+    payloads = [
+        {"path": "artifacts/plot.png", "mime": "image/png", "caption": "fig"},
+        {"path": "artifacts/scene.html", "mime": "text/html", "caption": "interactive"},
+    ]
+    events = artifact_wire_events(payloads, "sid")
+    assert events[0] == {
+        "type": "artifact",
+        "url": "/sessions/sid/artifacts/plot.png",
+        "mime": "image/png",
+        "caption": "fig",
+        "slot": None,
+        "format": None,
+    }
+    assert events[1] == {
+        "type": "viz",
+        "url": "/sessions/sid/artifacts/scene.html",
+        "title": "interactive",
+    }
 
 
 @pytest.mark.parametrize("agent_factory", [echo_agent])
