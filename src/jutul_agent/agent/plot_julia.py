@@ -123,6 +123,64 @@ def _build_render_call(
     )
 
 
+async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) -> str | None:
+    """Load the web plotting backends (CairoMakie + WGLMakie + Bonito) once.
+
+    The web surface renders figures into the browser with WebGL instead of a
+    native window, so it needs WGLMakie and Bonito in the env (plus CairoMakie for
+    a static PNG record). These are only required for web interactivity, so a
+    simulator opts in by adding them to its Julia env; the error says so.
+    """
+
+    loaded = await session.julia.eval("import CairoMakie, WGLMakie, Bonito")
+    if loaded.error:
+        return (
+            f"ERROR: interactive web plots need WGLMakie + Bonito (and CairoMakie) in the "
+            f"{adapter.name} Julia environment, which did not load. Add them to the env's "
+            f"Project.toml and rebuild. Julia said: {_truncate(loaded.error, 300)}"
+        )
+    return None
+
+
+def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -> str:
+    """Julia to evaluate the user code and export the figure for the browser.
+
+    CairoMakie is active while the user code runs (so native 2D plotters have a
+    backend) and writes a PNG for the record. WGLMakie then exports the same figure
+    to a self-contained, responsive HTML file the web UI embeds. The PNG save is
+    guarded so a figure CairoMakie cannot render still yields the interactive HTML.
+    """
+
+    return (
+        "begin\n"
+        "    import CairoMakie, WGLMakie, Bonito\n"
+        "    CairoMakie.activate!()\n"
+        "    local _M = CairoMakie.Makie\n"
+        "    local _val = begin\n"
+        f"{user_code}\n"
+        "    end\n"
+        "    local _fig = if _val isa _M.Figure\n"
+        "        _val\n"
+        "    elseif _val isa _M.FigureAxisPlot\n"
+        "        _val.figure\n"
+        "    elseif _val isa Tuple && length(_val) >= 1 && _val[1] isa _M.Figure\n"
+        "        _val[1]\n"
+        "    else\n"
+        "        _M.current_figure()\n"
+        "    end\n"
+        "    _fig === nothing && error(\n"
+        '        "plot_julia: the code did not produce a Makie figure. Return a Figure, "  *\n'
+        '        "or call a plotter that builds one."\n'
+        "    )\n"
+        f'    try; CairoMakie.save(raw"{png_path.as_posix()}", _fig); catch; end\n'
+        "    WGLMakie.activate!(resize_to = :parent)\n"
+        f'    Bonito.export_static(raw"{html_path.as_posix()}",\n'
+        '        Bonito.App(() -> Bonito.DOM.div(_fig; style = "width:100%; height:100%;")))\n'
+        '    "ok"\n'
+        "end"
+    )
+
+
 def _encode_view_image(png_path: Path, max_edge: int = _VIEW_MAX_EDGE) -> str:
     """Downscale png_path to max_edge on its longest side and return base64 PNG."""
     from PIL import Image
@@ -189,16 +247,63 @@ def _finalize(
     return summary
 
 
-def make_plot_julia_tool(session: Session):
+def _finalize_web(
+    session: Session,
+    *,
+    png_abs: Path,
+    html_rel: str,
+    caption: str,
+    tool_call_id: str,
+    slot: str | None,
+    source_code: str,
+    view: bool,
+) -> str | list[dict[str, Any]]:
+    """Record the interactive HTML artifact and build the reply.
+
+    The HTML artifact is what the server forwards to the browser as a ``viz``; the
+    PNG saved alongside is for ``view`` (so the agent can see the plot) and the
+    static record. When ``view``, the downscaled PNG is returned too.
+    """
+
+    session.trace.append(
+        "artifact",
+        {
+            "path": html_rel,
+            "mime": "text/html",
+            "caption": caption or slot or html_rel.rsplit("/", 1)[-1],
+            "tool_call_id": tool_call_id,
+            "format": "html",
+            "slot": slot,
+            "source_code": source_code,
+        },
+    )
+    summary = f"rendered an interactive plot ({html_rel})"
+    if slot:
+        summary += f"; slot={slot}"
+    if view and png_abs.exists():
+        try:
+            b64 = _encode_view_image(png_abs)
+        except Exception as exc:
+            return f"{summary}; (could not attach image for viewing: {exc})"
+        return [
+            {"type": "text", "text": summary},
+            {"type": "image", "mime_type": "image/png", "base64": b64},
+        ]
+    return summary
+
+
+def make_plot_julia_tool(session: Session, *, surface: str = "tui"):
     artifacts_dir = session.output_dir / "artifacts"
     adapter = session.simulator
+    web = surface == "web"
     ready: list[bool] = []  # one-shot memo: the backend loads once per session
 
     async def ensure_ready() -> str | None:
         """Load the backend on first use; return an error string if it can't load."""
         if ready:
             return None
-        err = await _load_plot_backend(session, adapter)
+        loader = _load_web_plot_backend if web else _load_plot_backend
+        err = await loader(session, adapter)
         if err is None:
             ready.append(True)
         return err
@@ -263,6 +368,25 @@ def make_plot_julia_tool(session: Session):
 
         abs_path = session.output_dir / rel_path
         artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        if web:
+            html_rel = rel_path[:-4] + ".html"
+            html_abs = session.output_dir / html_rel
+            result = await session.julia.eval(
+                _build_web_render_call(user_code=code, png_path=abs_path, html_path=html_abs)
+            )
+            if result.error:
+                return f"ERROR: {result.error}"
+            return _finalize_web(
+                session,
+                png_abs=abs_path,
+                html_rel=html_rel,
+                caption=caption,
+                tool_call_id=tool_call_id,
+                slot=safe_slot,
+                source_code=code,
+                view=view,
+            )
 
         open_window = window and session.open_windows
         window_key = safe_slot or plot_id

@@ -397,7 +397,7 @@ def build_agent(
     tools = [
         make_run_julia_tool(session),
         make_reset_julia_tool(session),
-        make_plot_julia_tool(session),
+        make_plot_julia_tool(session, surface=surface),
         make_recapture_tool(session),
         make_close_plots_tool(session),
         make_record_attempt_tool(session),

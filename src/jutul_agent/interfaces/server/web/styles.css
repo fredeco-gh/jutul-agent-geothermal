@@ -223,7 +223,7 @@ details.block .body {
   border-bottom: 1px solid var(--border);
 }
 .viz-card .head .open { margin-left: auto; }
-.viz-card iframe { width: 100%; height: 340px; border: 0; display: block; background: var(--surface); }
+.viz-card iframe { width: 100%; height: 450px; border: 0; display: block; background: #fff; }
 
 /* Approval */
 .approval {
