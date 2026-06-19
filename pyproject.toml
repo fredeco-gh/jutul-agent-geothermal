@@ -33,6 +33,12 @@ dependencies = [
 jutul-agent = "jutul_agent.__main__:main"
 
 [project.optional-dependencies]
+# The HTTP + WebSocket server interface (`jutul-agent serve`). Optional so the
+# core CLI/TUI install stays lean; a front end pulls this in.
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
 eval = [
     # Validated against 0.3.238; <0.4 guards the framework's next breaking line.
     "inspect-ai>=0.3.238,<0.4",

@@ -9,6 +9,7 @@ Three modes, dispatched on the first argument:
 - ``jutul-agent sessions``                  list resumable sessions.
 - ``jutul-agent eval [<suite>...]``          run bench suites through Inspect.
 - ``jutul-agent review [<id>]``              list review findings, or review a session.
+- ``jutul-agent serve``                      run the HTTP + WebSocket server.
 - ``jutul-agent [--sim <name>] [prompt]``   launch the TUI, or run one turn.
 
 The active *workspace* is ``--workspace`` if given, else the current
@@ -93,6 +94,13 @@ def main(argv: list[str] | None = None) -> int:
         args = review_cmd.build_parser().parse_args(argv[1:])
         apply_workspace_flags(args)
         return review_cmd.run(args)
+
+    if argv and argv[0] == "serve":
+        from jutul_agent.interfaces.cli import serve as serve_cmd
+
+        args = serve_cmd.build_parser().parse_args(argv[1:])
+        apply_workspace_flags(args)
+        return serve_cmd.run(args)
 
     args = run_cmd.build_parser().parse_args(argv)
     apply_workspace_flags(args)

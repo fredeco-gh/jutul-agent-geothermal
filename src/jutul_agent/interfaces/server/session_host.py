@@ -1,0 +1,157 @@
+"""One running session, with everything it needs to take a turn.
+
+A ``SessionHost`` owns a ``Session`` (its Julia kernel, trace, and directories),
+the agent built for it, and the ``TurnRunner`` that drives a turn. ``start``
+builds all of that the way the CLI does; ``aclose`` tears it down. Holding the
+kernel and the checkpointer open for the session's lifetime is what lets a
+server keep many sessions alive at once and resume them later.
+
+The constructor takes a ready-made session and agent so tests can wrap fakes;
+``start`` is the production path that stands up a real kernel.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from typing import TYPE_CHECKING, Any
+
+from jutul_agent.agent.turns import TurnRunner
+
+if TYPE_CHECKING:
+    from contextlib import AsyncExitStack
+    from pathlib import Path
+
+    from jutul_agent.session import Session
+    from jutul_agent.simulators.base import SimulatorAdapter
+
+
+class SessionHost:
+    """A live session plus its agent and turn runner."""
+
+    def __init__(
+        self,
+        *,
+        session: Session,
+        agent: Any,
+        backend: Any | None = None,
+        exit_stack: AsyncExitStack | None = None,
+    ) -> None:
+        self.session = session
+        self.agent = agent
+        self.backend = backend
+        self._exit_stack = exit_stack
+        self._runner: TurnRunner | None = None
+
+    @property
+    def session_id(self) -> str:
+        return self.session.session_id
+
+    @property
+    def runner(self) -> TurnRunner:
+        """The turn runner for this session, built once and reused."""
+        if self._runner is None:
+            self._runner = TurnRunner(
+                self.agent,
+                thread_id=self.session.session_id,
+                trace=self.session.trace,
+            )
+        return self._runner
+
+    async def aclose(self) -> None:
+        """Tear down the kernel and checkpointer, then close the session."""
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        with contextlib.suppress(Exception):
+            self.session.finalize()
+
+    @classmethod
+    async def start(
+        cls,
+        *,
+        simulator: SimulatorAdapter,
+        model: str | None = None,
+        session_id: str | None = None,
+        resume: bool = False,
+        approval_mode: str | None = None,
+        workspace: Path | None = None,
+        state_root: Path | None = None,
+    ) -> SessionHost:
+        """Stand up a real session: prepare the env, start the kernel, build the agent.
+
+        Mirrors the CLI's session bootstrap. The Julia kernel and the SQLite
+        checkpointer are entered on an ``AsyncExitStack`` held by the host, so
+        they stay open until ``aclose``.
+        """
+
+        from contextlib import AsyncExitStack
+
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        from jutul_agent.agent.builder import build_agent
+        from jutul_agent.julia.requirements import require_julia
+        from jutul_agent.julia.threads import (
+            HYPRE_THREADS_ENV_VAR,
+            blas_thread_env,
+            resolve_compute_threads,
+            resolve_hypre_threads,
+        )
+        from jutul_agent.juliakernel import JuliaKernel, KernelConfig
+        from jutul_agent.paths import workspace_root
+        from jutul_agent.session import Session, default_session_id, session_dir
+        from jutul_agent.simulators.env_setup import prepare_workspace_env
+        from jutul_agent.workspace import resolve_julia_project
+
+        require_julia()
+        ws = workspace or workspace_root()
+        julia_project = resolve_julia_project(ws)
+        prepare_workspace_env(
+            simulator,
+            workspace=ws,
+            julia_project=julia_project,
+            sim_name=simulator.name,
+        )
+
+        sid = session_id or default_session_id()
+        sdir = session_dir(sid, state_root=state_root)
+        sdir.mkdir(parents=True, exist_ok=True)
+
+        compute_threads = resolve_compute_threads(None)
+        env = {
+            **blas_thread_env(compute_threads),
+            HYPRE_THREADS_ENV_VAR: str(resolve_hypre_threads()),
+        }
+        kernel_config = KernelConfig(
+            julia_project=julia_project,
+            stderr_file=sdir / "julia-startup.log",
+            cwd=ws,
+            env=env,
+            threads=str(compute_threads),
+        )
+
+        stack = AsyncExitStack()
+        try:
+            julia = await stack.enter_async_context(JuliaKernel(kernel_config))
+            if resume:
+                session = Session.resume(
+                    julia=julia, simulator=simulator, session_id=sid, state_root=state_root
+                )
+            else:
+                session = Session.create(
+                    julia=julia, simulator=simulator, session_id=sid, state_root=state_root
+                )
+            ckpt_path = session.state_dir / "checkpoints.sqlite"
+            checkpointer = await stack.enter_async_context(
+                AsyncSqliteSaver.from_conn_string(str(ckpt_path))
+            )
+            agent, backend = build_agent(
+                session,
+                model=model,
+                checkpointer=checkpointer,
+                approval_mode=approval_mode,
+            )
+        except BaseException:
+            await stack.aclose()
+            raise
+
+        return cls(session=session, agent=agent, backend=backend, exit_stack=stack)
