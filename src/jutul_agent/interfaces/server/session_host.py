@@ -78,6 +78,8 @@ class SessionHost:
         approval_mode: str | None = None,
         workspace: Path | None = None,
         state_root: Path | None = None,
+        julia_project: Path | None = None,
+        prepare_env: bool = True,
         surface: str = "web",
         extensions: Sequence[Capability] = (),
     ) -> SessionHost:
@@ -111,13 +113,16 @@ class SessionHost:
 
         require_julia()
         ws = workspace or workspace_root()
-        julia_project = resolve_julia_project(ws)
-        prepare_workspace_env(
-            simulator,
-            workspace=ws,
-            julia_project=julia_project,
-            sim_name=simulator.name,
-        )
+        project = julia_project or resolve_julia_project(ws)
+        # A caller can supply a pre-provisioned env (and skip preparation); the
+        # default path prepares the workspace env from the simulator template.
+        if prepare_env:
+            prepare_workspace_env(
+                simulator,
+                workspace=ws,
+                julia_project=project,
+                sim_name=simulator.name,
+            )
 
         sid = session_id or default_session_id()
         sdir = session_dir(sid, state_root=state_root)
@@ -129,7 +134,7 @@ class SessionHost:
             HYPRE_THREADS_ENV_VAR: str(resolve_hypre_threads()),
         }
         kernel_config = KernelConfig(
-            julia_project=julia_project,
+            julia_project=project,
             stderr_file=sdir / "julia-startup.log",
             cwd=ws,
             env=env,

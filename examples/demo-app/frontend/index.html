@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jutul-agent demo</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; height: 100vh; display: flex; }
+      #chat { width: 40%; min-width: 320px; display: flex; flex-direction: column; border-right: 1px solid #8884; }
+      #log { flex: 1; overflow-y: auto; padding: 1rem; }
+      #composer { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid #8884; }
+      #prompt { flex: 1; padding: .5rem; }
+      #side { flex: 1; display: flex; flex-direction: column; }
+      #viz { flex: 1; border: 0; width: 100%; }
+      #controls { padding: .75rem; border-top: 1px solid #8884; }
+      .msg { margin: .4rem 0; padding: .5rem .7rem; border-radius: .5rem; white-space: pre-wrap; }
+      .user { background: #3b82f622; }
+      .assistant { background: #10b98122; }
+      .tool { font-size: .85em; color: #888; font-family: ui-monospace, monospace; }
+      .reasoning { font-size: .85em; color: #888; font-style: italic; }
+      .interrupt { background: #f59e0b22; }
+      button { padding: .5rem .8rem; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="chat">
+      <div id="log"></div>
+      <div id="composer">
+        <input id="prompt" placeholder="Ask the agent to plot the response for p=3..." autofocus />
+        <button id="send">Send</button>
+      </div>
+    </div>
+    <div id="side">
+      <iframe id="viz" title="interactive plot"></iframe>
+      <div id="controls">
+        <label>parameter p: <span id="pval">3</span></label><br />
+        <input id="p" type="range" min="0.5" max="8" step="0.5" value="3" style="width: 100%" />
+      </div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

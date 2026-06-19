@@ -237,18 +237,18 @@ class _StreamState:
         self._turn = asyncio.create_task(self._run_turn(factory))
 
     async def _run_turn(self, factory) -> None:
-        seen_artifacts = self._artifact_count()
+        since_id = self._latest_event_id()
         try:
             result = await factory()
         except asyncio.CancelledError:
-            await self._emit_new_artifacts(seen_artifacts)
+            await self._emit_new_outputs(since_id)
             await _safe_send(self._ws, {"type": "turn_end", "text": "", "cancelled": True})
             raise
         except Exception as exc:  # surface the failure, then end the turn
             await _safe_send(self._ws, {"type": "error", "message": str(exc)})
             await _safe_send(self._ws, {"type": "turn_end", "text": ""})
             return
-        await self._emit_new_artifacts(seen_artifacts)
+        await self._emit_new_outputs(since_id)
         self._pending = list(result.interrupts)
         if self._pending:
             # The turn paused for approval. Send the requests and wait for a
@@ -261,20 +261,23 @@ class _StreamState:
             await _safe_send(self._ws, usage)
         await _safe_send(self._ws, protocol.turn_end_to_wire(result.messages))
 
-    def _artifact_payloads(self) -> list[dict[str, Any]]:
-        return [
-            event.payload
-            for event in self._host.session.trace.iter_events()
-            if event.kind == "artifact"
-        ]
+    def _latest_event_id(self) -> int:
+        events = self._host.session.trace.iter_events()
+        return events[-1].id if events else 0
 
-    def _artifact_count(self) -> int:
-        return len(self._artifact_payloads())
-
-    async def _emit_new_artifacts(self, since: int) -> None:
-        """Forward artifacts the turn produced (PNGs as ``artifact``, HTML as ``viz``)."""
-        for wire in artifact_wire_events(self._artifact_payloads()[since:], self._host.session_id):
-            await _safe_send(self._ws, wire)
+    async def _emit_new_outputs(self, since_id: int) -> None:
+        """Forward the side outputs a turn produced: artifacts (plots, reports) and
+        UI commands a tool emitted. Keyed on trace event id so each is sent once."""
+        for event in self._host.session.trace.iter_events():
+            if event.id <= since_id:
+                continue
+            if event.kind == "artifact":
+                for wire in artifact_wire_events([event.payload], self._host.session_id):
+                    await _safe_send(self._ws, wire)
+            elif event.kind == "ui":
+                action = str(event.payload.get("action") or "")
+                payload = event.payload.get("payload")
+                await _safe_send(self._ws, protocol.ui_command(action, payload))
 
     async def _on_message(self, event: Any) -> None:
         wire = protocol.to_wire(event)
