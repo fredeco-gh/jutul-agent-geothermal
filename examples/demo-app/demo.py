@@ -129,7 +129,7 @@ def create_demo_app():
             session_id=session_id,
         )
 
-    app = create_app(SessionManager(host_factory=host_factory))
+    app = create_app(SessionManager(host_factory=host_factory), ui=False)
     app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
     return app
 

@@ -30,6 +30,21 @@ flowchart LR
     SESS --> KERNEL
 ```
 
+## The web UI
+
+`jutul-agent serve` starts the server with a built-in web app: a chat interface
+that is a visual alternative to the terminal UI. Point it at a simulator and open
+the browser:
+
+```
+jutul-agent serve --sim jutuldarcy
+```
+
+Open <http://127.0.0.1:8742>. Type a task and watch the agent stream its reply,
+run tools, and return plots, with the same session core behind it as every other
+front end. The page is plain static files the server hosts, so it also serves as
+a reference for building a custom front end.
+
 ## Running a session
 
 A front end starts by creating a session over REST. Creating a session chooses

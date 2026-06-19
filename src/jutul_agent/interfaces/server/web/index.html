@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jutul-agent</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark"></span> jutul-agent</div>
+        <div class="meta" id="meta"></div>
+        <div class="actions">
+          <button class="ghost" id="new-chat">New chat</button>
+        </div>
+      </header>
+
+      <main class="conversation" id="conversation">
+        <div class="thread" id="thread">
+          <div class="welcome" id="welcome">
+            <h1>What would you like to explore?</h1>
+            <p>Ask a question or describe a task. The agent runs the simulator,
+              writes and runs Julia, and shows results here.</p>
+          </div>
+        </div>
+      </main>
+
+      <footer class="composer-wrap">
+        <div class="composer">
+          <textarea id="prompt" rows="1" placeholder="Message jutul-agent…"></textarea>
+          <button id="send" class="send" title="Send" aria-label="Send">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <path d="M3 20.5l18-8.5L3 3.5l0 6.5l12 2l-12 2z" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <div class="hint" id="hint">Enter to send · Shift+Enter for a newline</div>
+      </footer>
+    </div>
+
+    <aside class="viz-panel" id="viz-panel" hidden>
+      <div class="viz-head">
+        <span id="viz-title">Plot</span>
+        <button class="ghost" id="viz-close">Close</button>
+      </div>
+      <iframe id="viz-frame" title="interactive plot"></iframe>
+    </aside>
+
+    <script src="markdown.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

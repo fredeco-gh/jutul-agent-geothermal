@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Address to bind (default 127.0.0.1, localhost only).",
     )
     parser.add_argument("--port", type=int, default=8742, help="Port to bind (default 8742).")
+    parser.add_argument(
+        "--sim",
+        default=None,
+        help="Default simulator the web UI starts sessions with (e.g. jutuldarcy).",
+    )
     add_workspace_flags(parser)
     return parser
 
@@ -42,5 +47,5 @@ def run(args: argparse.Namespace) -> int:
     from jutul_agent.interfaces.server.app import create_app
 
     print(f"jutul-agent server on http://{args.host}:{args.port}", file=sys.stderr)
-    uvicorn.run(create_app(), host=args.host, port=args.port)
+    uvicorn.run(create_app(default_sim=args.sim), host=args.host, port=args.port)
     return 0

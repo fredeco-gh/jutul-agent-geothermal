@@ -15,16 +15,21 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from jutul_agent.agent.approval import build_resume_payload
 from jutul_agent.interfaces.server import protocol
 from jutul_agent.interfaces.server.manager import SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
+
+# The bundled web UI lives next to this module.
+WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
 class HttpToolSpecModel(BaseModel):
@@ -69,7 +74,12 @@ def _request_extensions(tools: list[HttpToolSpecModel] | None) -> list:
     return [http_tool_capability("host-app", specs)]
 
 
-def create_app(manager: SessionManager | None = None) -> FastAPI:
+def create_app(
+    manager: SessionManager | None = None,
+    *,
+    ui: bool = True,
+    default_sim: str | None = None,
+) -> FastAPI:
     manager = manager or SessionManager()
 
     @asynccontextmanager
@@ -89,6 +99,12 @@ def create_app(manager: SessionManager | None = None) -> FastAPI:
         from jutul_agent.models import DEFAULT_MODEL, PROVIDERS
 
         return {"default": DEFAULT_MODEL, "providers": sorted(PROVIDERS)}
+
+    @app.get("/simulators")
+    def list_simulators() -> dict[str, Any]:
+        from jutul_agent.simulators import registry
+
+        return {"simulators": registry.names(), "default": default_sim}
 
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
@@ -141,6 +157,10 @@ def create_app(manager: SessionManager | None = None) -> FastAPI:
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
         await _serve_stream(websocket, manager.get(session_id))
+
+    # The bundled web UI is mounted last so the API routes above take precedence.
+    if ui and WEB_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
     return app
 

@@ -64,6 +64,19 @@ def test_models_endpoint(tmp_path: Path) -> None:
     assert isinstance(body["providers"], list)
 
 
+def test_simulators_endpoint(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/simulators").json()
+    assert "jutuldarcy" in body["simulators"]
+
+
+def test_web_ui_is_served(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        root = client.get("/")
+    assert root.status_code == 200
+    assert "jutul-agent" in root.text
+
+
 def test_create_list_delete(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
