@@ -37,7 +37,10 @@ checks is actually resolved in the env. Adapters can also contribute simulator
 subagents through `subagent_factories`.
 
 That is all the registration needed: the registry finds the adapter by scanning
-the simulator folders, so there is no list to edit.
+the simulator folders, so there is no list to edit. To ship a simulator from a
+separate package instead of in-tree (no fork), publish its adapter under the
+`jutul_agent.simulators` entry point; see
+[building your application](extending-for-your-application.md).
 
 ## 2. The Julia environment template
 

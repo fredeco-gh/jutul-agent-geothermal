@@ -1,14 +1,22 @@
-"""Simulator registry: discovers adapters from the simulator packages.
+"""Simulator registry: discovers adapters from packages, in-tree and installed.
 
-Each simulator is a subpackage under ``jutul_agent.simulators`` with an
-``adapter.py`` that defines a module-level :class:`SimulatorAdapter`. The
-registry imports each subpackage and collects those adapters, so adding a
-simulator is just adding its folder; this file does not need editing.
+A simulator's adapter is found two ways, so neither this file nor any other core
+file needs editing to add one:
+
+- **Bundled**: each subpackage under ``jutul_agent.simulators`` with an
+  ``adapter.py`` defining a module-level :class:`SimulatorAdapter`. Adding a
+  bundled simulator is just adding its folder.
+- **Installed**: any installed package that publishes a ``SimulatorAdapter``
+  under the ``jutul_agent.simulators`` entry-point group. This is how a separate
+  project adds its own simulator without forking jutul-agent (see
+  docs/server-interface.md). An installed adapter overrides a bundled one of the
+  same name.
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.metadata as importlib_metadata
 import pkgutil
 from functools import cache
 
@@ -16,6 +24,8 @@ from jutul_agent.simulators.base import SimulatorAdapter
 
 # Subpackages under ``simulators`` that are not simulators themselves.
 _NOT_SIMULATORS = frozenset({"shared_skills"})
+# Entry-point group an installed package publishes a SimulatorAdapter under.
+SIMULATOR_ENTRY_POINT_GROUP = "jutul_agent.simulators"
 
 
 def _adapter_in(module: object) -> SimulatorAdapter | None:
@@ -25,9 +35,8 @@ def _adapter_in(module: object) -> SimulatorAdapter | None:
     )
 
 
-@cache
-def _registry() -> dict[str, SimulatorAdapter]:
-    """Import every simulator subpackage and collect its adapter (cached)."""
+def _bundled_adapters() -> dict[str, SimulatorAdapter]:
+    """Adapters from the in-tree simulator subpackages."""
     import jutul_agent.simulators as simulators_pkg
 
     found: dict[str, SimulatorAdapter] = {}
@@ -47,6 +56,44 @@ def _registry() -> dict[str, SimulatorAdapter]:
         if adapter is not None:
             found[adapter.name] = adapter
     return found
+
+
+def _installed_adapters() -> dict[str, SimulatorAdapter]:
+    """Adapters published by installed packages under the entry-point group.
+
+    Each entry point resolves to a ``SimulatorAdapter`` or a zero-argument
+    callable returning one. A broken entry point is skipped rather than failing
+    the whole registry.
+    """
+    found: dict[str, SimulatorAdapter] = {}
+    try:
+        entry_points = importlib_metadata.entry_points(group=SIMULATOR_ENTRY_POINT_GROUP)
+    except Exception:
+        return found
+    for entry_point in entry_points:
+        try:
+            loaded = entry_point.load()
+            adapter = (
+                loaded()
+                if callable(loaded) and not isinstance(loaded, SimulatorAdapter)
+                else loaded
+            )
+            if isinstance(adapter, SimulatorAdapter):
+                found[adapter.name] = adapter
+        except Exception:
+            continue
+    return found
+
+
+@cache
+def _registry() -> dict[str, SimulatorAdapter]:
+    """Collect adapters from the bundled subpackages and installed packages (cached).
+
+    Installed adapters are applied last, so a separate project can override a
+    bundled simulator (e.g. a customised JutulDarcy) by publishing one with the
+    same name.
+    """
+    return {**_bundled_adapters(), **_installed_adapters()}
 
 
 def names() -> list[str]:

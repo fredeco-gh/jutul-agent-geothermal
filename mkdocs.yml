@@ -72,6 +72,7 @@ nav:
       - Context handling: context.md
       - The trace database: trace.md
   - Extending the agent:
+      - Building your application: extending-for-your-application.md
       - Adding a simulator: adding-a-simulator.md
       - Improving the agent: improving-the-agent.md
   - Evaluation:

@@ -27,3 +27,59 @@ def test_names_are_sorted() -> None:
 def test_unknown_simulator_raises() -> None:
     with pytest.raises(KeyError):
         registry.get("does-not-exist")
+
+
+def _adapter(tmp_path, name: str) -> SimulatorAdapter:
+    from fakes import make_fake_adapter
+
+    return make_fake_adapter(tmp_path, name=name, display_name=name.title())
+
+
+def test_installed_adapter_is_discovered(tmp_path, monkeypatch) -> None:
+    """An installed package can add a simulator via the entry-point group."""
+    adapter = _adapter(tmp_path, "mysim")
+
+    class _EP:
+        def load(self):
+            return adapter
+
+    monkeypatch.setattr(registry, "_registry", registry._registry.__wrapped__)
+    monkeypatch.setattr(
+        registry.importlib_metadata,
+        "entry_points",
+        lambda group: [_EP()] if group == registry.SIMULATOR_ENTRY_POINT_GROUP else [],
+    )
+    assert "mysim" in registry.names()
+    assert registry.get("mysim") is adapter
+
+
+def test_installed_adapter_overrides_bundled(tmp_path, monkeypatch) -> None:
+    """An installed adapter wins over a bundled one of the same name (own JutulDarcy)."""
+    custom = _adapter(tmp_path, "jutuldarcy")
+
+    class _EP:
+        def load(self):
+            return custom
+
+    monkeypatch.setattr(registry, "_registry", registry._registry.__wrapped__)
+    monkeypatch.setattr(
+        registry.importlib_metadata,
+        "entry_points",
+        lambda group: [_EP()] if group == registry.SIMULATOR_ENTRY_POINT_GROUP else [],
+    )
+    assert registry.get("jutuldarcy") is custom
+
+
+def test_broken_installed_entry_point_is_skipped(tmp_path, monkeypatch) -> None:
+    class _Broken:
+        def load(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(registry, "_registry", registry._registry.__wrapped__)
+    monkeypatch.setattr(
+        registry.importlib_metadata,
+        "entry_points",
+        lambda group: [_Broken()] if group == registry.SIMULATOR_ENTRY_POINT_GROUP else [],
+    )
+    # The bundled simulators are still there; the broken one is ignored.
+    assert "jutuldarcy" in registry.names()
