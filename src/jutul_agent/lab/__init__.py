@@ -6,6 +6,8 @@ drive it headlessly instead, so an agent or a test can:
 
 - render the TUI through scripted interactions and capture what it looks like
   (:mod:`jutul_agent.lab.tui`, :mod:`jutul_agent.lab.scenarios`),
+- render the bundled web UI in a headless browser from scripted wire-protocol
+  events and capture it (:mod:`jutul_agent.lab.web_ui`),
 - exercise error and edge paths for robustness,
 - drive one real prompt end to end and capture it (:mod:`jutul_agent.lab.live`),
 - and profile cold start and a turn's hot path

@@ -55,6 +55,9 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff>=0.5",
     "syrupy>=4",
+    # Drives the bundled web UI for jutul_agent.lab.web_ui (uses the system
+    # Chrome via channel="chrome"; needs >=1.48 for route_web_socket).
+    "playwright>=1.48",
 ]
 docs = [
     "mkdocs-material>=9.7.6",
