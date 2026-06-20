@@ -401,7 +401,7 @@ def build_agent(
         make_recapture_tool(session),
         make_close_plots_tool(session),
         make_record_attempt_tool(session),
-        make_write_report_tool(session),
+        make_write_report_tool(session, surface=surface),
         make_remember_tool(memory_dir),
         *collect_tools(active, session),
     ]

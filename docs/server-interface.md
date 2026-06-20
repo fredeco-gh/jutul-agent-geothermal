@@ -90,7 +90,7 @@ Messages from the server to the front end:
 | `tool` | A step in a tool call: requested, started, finished, or failed |
 | `interrupt` | A request for approval, with the actions and the decisions allowed |
 | `artifact` | A file the session produced, given as a URL |
-| `viz` | An interactive visualization to embed, given as a URL |
+| `viz` | An interactive view to pin in the side panel: a plot or a report, given as a URL |
 | `usage` | The token usage for the turn |
 | `turn_end` | The turn has finished |
 | `ui` | A command for the front end to apply to its interface |
@@ -162,6 +162,20 @@ with WebGL (WGLMakie) and exported to a self-contained HTML file, which the serv
 serves as an artifact and the front end embeds in a frame. The user can then
 rotate, zoom, and pan it in the browser. Because the file is self-contained it
 needs no live plotting server, only a place to fetch it from.
+
+The server announces such a view with a `viz` message. Besides its URL it carries
+a `kind` (`plot` or `report`), a stable `slot`, and an optional `poster` image
+URL. The bundled UI uses these to keep a persistent **side canvas**: each view is
+pinned there with a tab, the conversation keeps a compact chip that re-opens it,
+and reusing a `slot` refreshes a view in place rather than stacking a new one. The
+canvas is a true split, not an overlay — the conversation reflows beside it — and
+the user can close it (the chips and a "Views" control reopen it). A front end is
+free to present `viz` views differently; the protocol only fixes the message.
+
+A written report is delivered the same way. `write_report` renders a
+self-contained HTML document into the session's artifacts and the server forwards
+it as a `viz` of kind `report`, so it lands in the same canvas next to the plots
+instead of opening a desktop window.
 
 This covers both figures the agent builds with Makie and a simulator's own native
 interactive plotters. The native 3D viewers (for example JutulDarcy's

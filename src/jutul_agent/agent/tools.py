@@ -238,7 +238,9 @@ def _fmt_metric(value: Any) -> str:
     return f"{f:.4g}"
 
 
-def make_write_report_tool(session: Session):
+def make_write_report_tool(session: Session, *, surface: str = "tui"):
+    web = surface == "web"
+
     @tool
     async def write_report(
         narrative: str = "",
@@ -284,14 +286,22 @@ def make_write_report_tool(session: Session):
         from jutul_agent.transcript.report import render_report
 
         note = ""
-        out = resolve_in_workspace(output_path) if output_path else None
-        if out is None:
-            out = session.output_dir / "report.html"
+        # On the web surface the report is pinned into the app's canvas, so it
+        # must live under the session's artifacts dir (where the server serves
+        # it from) rather than open in a desktop browser.
+        if web:
+            out = session.output_dir / "artifacts" / "report.html"
             if output_path:
-                note = (
-                    f" (requested path {output_path!r} is outside the workspace; "
-                    "wrote to the session output directory instead)"
-                )
+                note = " (shown in the app; the report lives in the session artifacts)"
+        else:
+            out = resolve_in_workspace(output_path) if output_path else None
+            if out is None:
+                out = session.output_dir / "report.html"
+                if output_path:
+                    note = (
+                        f" (requested path {output_path!r} is outside the workspace; "
+                        "wrote to the session output directory instead)"
+                    )
         out.parent.mkdir(parents=True, exist_ok=True)
 
         ws = workspace_root()
@@ -314,6 +324,22 @@ def make_write_report_tool(session: Session):
             custom_css=custom_css,
         )
         session.note_report(out)
+        if web:
+            # Surface it to the app as a report view (pinned to the canvas) rather
+            # than opening a desktop browser window the web user would never see.
+            rel = out.relative_to(session.output_dir).as_posix()
+            session.trace.append(
+                "artifact",
+                {
+                    "path": rel,
+                    "mime": "text/html",
+                    "caption": title or f"{session.simulator.display_name} report",
+                    "format": "html",
+                    "kind": "report",
+                    "slot": "report",
+                },
+            )
+            return f"wrote the report and showed it in the app ({rel})" + note
         open_path(out)
         return str(out) + note
 

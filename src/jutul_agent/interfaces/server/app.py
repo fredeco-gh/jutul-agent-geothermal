@@ -165,15 +165,33 @@ def create_app(
     return app
 
 
+def _artifact_url(session_id: str, rel: str) -> str:
+    """The fetch URL for a session artifact given its workspace-relative path."""
+    rel = rel[len("artifacts/") :] if rel.startswith("artifacts/") else rel
+    return f"/sessions/{session_id}/artifacts/{rel}"
+
+
 def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
-    """Wire events for produced artifacts: interactive HTML as ``viz``, the rest as ``artifact``."""
+    """Wire events for produced artifacts: interactive HTML as ``viz``, the rest as ``artifact``.
+
+    An HTML artifact (an interactive plot, or a written report) becomes a ``viz``
+    the front end pins to its canvas, carrying the artifact's ``kind``, ``slot``,
+    and a ``poster`` image URL when one was saved alongside.
+    """
     events: list[dict[str, Any]] = []
     for payload in payloads:
-        rel = str(payload.get("path") or "")
-        rel = rel[len("artifacts/") :] if rel.startswith("artifacts/") else rel
-        url = f"/sessions/{session_id}/artifacts/{rel}"
+        url = _artifact_url(session_id, str(payload.get("path") or ""))
         if payload.get("mime") == "text/html":
-            events.append(protocol.viz_to_wire(url, title=payload.get("caption")))
+            poster = payload.get("poster")
+            events.append(
+                protocol.viz_to_wire(
+                    url,
+                    title=payload.get("caption"),
+                    kind=str(payload.get("kind") or "plot"),
+                    poster=_artifact_url(session_id, str(poster)) if poster else None,
+                    slot=payload.get("slot"),
+                )
+            )
         else:
             events.append(protocol.artifact_to_wire(payload, url=url))
     return events

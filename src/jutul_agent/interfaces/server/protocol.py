@@ -138,10 +138,23 @@ def artifact_to_wire(payload: dict[str, Any], *, url: str) -> dict[str, Any]:
     }
 
 
-def viz_to_wire(url: str, *, title: str | None = None) -> dict[str, Any]:
-    """Serialize an interactive visualization to embed (its URL)."""
+def viz_to_wire(
+    url: str,
+    *,
+    title: str | None = None,
+    kind: str = "plot",
+    poster: str | None = None,
+    slot: str | None = None,
+) -> dict[str, Any]:
+    """Serialize an interactive view to pin in the front end's canvas.
 
-    return {"type": "viz", "url": url, "title": title}
+    ``kind`` is ``"plot"`` (an interactive figure) or ``"report"`` (a document);
+    a front end uses it only for the label/icon. ``poster`` is an optional image
+    URL for a lightweight inline thumbnail, and ``slot`` is the view's stable key
+    so a refreshed view replaces the previous one in place rather than stacking.
+    """
+
+    return {"type": "viz", "url": url, "title": title, "kind": kind, "poster": poster, "slot": slot}
 
 
 def ui_command(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

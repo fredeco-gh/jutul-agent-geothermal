@@ -39,14 +39,14 @@ def assemble_session_prompt(
             f"Working directory: {workspace}\nThis is the user's workspace and the "
             "working directory for the file tools, `execute`, and the Julia REPL."
         )
-    sections += [
-        _tool_guide(adapter),
-        _ground_rules(),
-        _display_note(open_windows),
-    ]
-    surface_note = _surface_note(surface)
-    if surface_note is not None:
-        sections.append(surface_note)
+    sections += [_tool_guide(adapter), _ground_rules()]
+    # The web surface renders plots/reports in the app, so its surface note is the
+    # complete display guidance; the terminal display note would contradict it
+    # (it forbids claiming interactivity, which the browser does provide).
+    if surface == "web":
+        sections.append(_surface_note(surface))
+    else:
+        sections.append(_display_note(open_windows))
     if resumed:
         sections.append(_resume_note())
     hints = adapter.domain_hints.strip()
@@ -66,17 +66,21 @@ def _surface_note(surface: str) -> str | None:
 
     if surface == "web":
         return (
-            "Interface: you are driving a web application, not a terminal. The user "
-            "sees your replies, plots, and results in that application. Some tools "
-            "may update the application's interface directly; use them when the task "
-            "calls for it.\n"
-            "Plots: `plot_julia` renders an interactive figure in the browser (the "
-            "user can rotate, zoom, and pan it). You can either build a figure with "
-            "Makie (e.g. `heatmap`, `lines`, `surface`, `contourf`) or call the "
-            "simulator's native interactive plotter. When you call a native plotter "
-            "that would otherwise open a desktop window (e.g. JutulDarcy's "
-            "`plot_reservoir`), pass `new_window = false` so it returns the figure "
-            "for the browser instead of trying to open a window."
+            "Interface: you are driving a web application, not a terminal. Your "
+            "replies, plots, and reports appear in that app, and the user reads them "
+            "there; there is no desktop window.\n"
+            "Plots: make every figure with `plot_julia` — build one with Makie (e.g. "
+            "`heatmap`, `lines`, `surface`, `contourf`) or call the simulator's native "
+            "interactive plotter. It renders as an interactive figure in a side panel "
+            "the user can rotate, zoom, and pan, and it stays pinned there so you can "
+            "refer back to it. When a native plotter would otherwise open a desktop "
+            "window (e.g. a reservoir or results viewer), pass `new_window = false` so "
+            "it returns the figure for the browser. A figure built in `run_julia` is "
+            "shown to no one — always go through `plot_julia`.\n"
+            "Reports: `write_report` opens a written report in that same side panel "
+            "(not a desktop window); use it when the user wants a written summary.\n"
+            "Some tools may update the application's interface directly; use them when "
+            "the task calls for it."
         )
     return None
 

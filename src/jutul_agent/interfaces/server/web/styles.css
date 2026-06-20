@@ -12,6 +12,7 @@
   --shadow: 0 1px 2px #0000000d, 0 1px 8px #0000000a;
   --radius: 14px;
   --maxw: 760px;
+  --canvas-w: 46%;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light dark;
@@ -45,11 +46,15 @@ html, body {
   line-height: 1.6;
 }
 
+/* Two-pane workspace: conversation (left, flexes) + canvas (right, closable). */
+.workspace { display: flex; height: 100vh; min-width: 0; }
+
 .app {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  min-width: 0;
 }
 
 /* Top bar */
@@ -97,6 +102,12 @@ button { font-family: inherit; font-size: 0.85rem; cursor: pointer; }
   transition: background 0.12s, border-color 0.12s;
 }
 .ghost:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--border) 60%, var(--accent)); }
+.views-btn { display: inline-flex; align-items: center; gap: 0.4rem; }
+.views-btn[hidden] { display: none; }
+.views-btn .count {
+  background: var(--accent); color: #fff; border-radius: 999px;
+  font-size: 0.68rem; padding: 0.02rem 0.4rem; font-variant-numeric: tabular-nums;
+}
 
 /* Conversation */
 .conversation { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
@@ -253,21 +264,56 @@ details.block .body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Viz card in the thread */
-.viz-card {
+/* Inline result chip: a compact reference to a view that lives in the canvas.
+   Clicking it opens (or re-focuses) that view in the side panel. */
+.viz-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: border-color 0.12s, background 0.12s, transform 0.05s;
+}
+.viz-chip:hover { border-color: color-mix(in srgb, var(--border) 45%, var(--accent)); background: var(--surface-2); }
+.viz-chip:active { transform: translateY(1px); }
+.viz-chip.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset, var(--shadow); }
+.viz-chip .ico {
+  width: 36px; height: 36px; border-radius: 9px; flex: none;
+  display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent);
+}
+.viz-chip .ico.report { background: #8b5cf61f; color: #8b5cf6; }
+.viz-chip .info { flex: 1; min-width: 0; }
+.viz-chip .t {
+  font-weight: 600; color: var(--text); font-size: 0.9rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.viz-chip .s { color: var(--muted); font-size: 0.78rem; }
+.viz-chip .go { color: var(--muted); flex: none; display: flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; }
+.viz-chip:hover .go { color: var(--accent); }
+
+/* Static image artifact card (the saved PNG record) */
+.art-card {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
-.viz-card .head {
+.art-card .head {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.5rem 0.75rem; font-size: 0.82rem; color: var(--muted);
   border-bottom: 1px solid var(--border);
 }
-.viz-card .head .open { margin-left: auto; }
-.viz-card iframe { width: 100%; height: 450px; border: 0; display: block; background: #fff; }
+.art-card .head .grow { flex: 1; }
+.art-card img { width: 100%; display: block; cursor: zoom-in; background: #fff; }
+.art-card a.file { display: block; padding: 0.6rem 0.8rem; color: var(--accent); word-break: break-all; }
 
 /* Approval */
 .approval {
@@ -333,13 +379,84 @@ details.block .body {
 .working span:nth-child(3) { animation-delay: 0.36s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 0.9; } }
 
-/* Side viz panel (expanded) */
-.viz-panel {
-  position: fixed; top: 0; right: 0; height: 100vh; width: min(560px, 50vw);
-  background: var(--surface); border-left: 1px solid var(--border);
-  display: flex; flex-direction: column; box-shadow: -8px 0 24px #0000001a; z-index: 20;
+/* ---- Canvas: the persistent right-side view panel ---- */
+.canvas {
+  flex: 0 0 var(--canvas-w);
+  min-width: 380px;
+  max-width: 72%;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
-.viz-panel[hidden] { display: none; }
-.viz-head { display: flex; align-items: center; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
-.viz-head #viz-title { flex: 1; font-weight: 600; }
-.viz-panel iframe { flex: 1; border: 0; width: 100%; }
+.canvas[hidden] { display: none; }
+.canvas-grip {
+  position: absolute; left: -3px; top: 0; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 5;
+}
+.canvas-grip:hover, .canvas-grip.dragging { background: linear-gradient(to right, transparent, var(--accent-soft)); }
+.canvas-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.55rem; min-height: 48px;
+  border-bottom: 1px solid var(--border);
+}
+.canvas-tabs {
+  flex: 1; display: flex; gap: 0.25rem; overflow-x: auto;
+  scrollbar-width: thin;
+}
+.canvas-tabs::-webkit-scrollbar { height: 5px; }
+.canvas-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.32rem 0.55rem; border-radius: 9px;
+  font-size: 0.8rem; color: var(--muted);
+  border: 1px solid transparent; background: transparent;
+  white-space: nowrap; max-width: 220px; cursor: pointer;
+}
+.tab:hover { background: var(--surface-2); }
+.tab.active { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.tab .tab-ico { display: flex; flex: none; opacity: 0.85; }
+.tab .tab-label { overflow: hidden; text-overflow: ellipsis; }
+.tab .tab-close {
+  flex: none; width: 16px; height: 16px; border-radius: 5px; border: 0;
+  background: transparent; color: var(--muted); display: grid; place-items: center;
+  opacity: 0; transition: opacity 0.1s;
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 0.7; }
+.tab .tab-close:hover { opacity: 1; background: var(--border); }
+.canvas-actions { display: flex; gap: 0.15rem; flex: none; }
+.icon-btn {
+  border: 0; background: transparent; color: var(--muted);
+  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  transition: background 0.12s, color 0.12s;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.canvas-body { flex: 1; position: relative; overflow: hidden; background: #fff; }
+.canvas-body iframe,
+.canvas-body img {
+  position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+  display: none; background: #fff;
+}
+.canvas-body img { object-fit: contain; padding: 1rem; }
+.canvas-body iframe.active, .canvas-body img.active { display: block; }
+.canvas-empty {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--muted); font-size: 0.9rem; text-align: center; padding: 2rem;
+}
+.canvas-loading {
+  position: absolute; inset: 0; display: none; gap: 0.5rem;
+  align-items: center; justify-content: center;
+  background: var(--surface); color: var(--muted); font-size: 0.85rem;
+}
+.canvas-loading.on { display: flex; }
+
+/* Narrow screens: the canvas can't share the row, so it overlays full width. */
+@media (max-width: 880px) {
+  .canvas {
+    position: fixed; inset: 0; width: 100%; max-width: none; min-width: 0;
+    z-index: 40; box-shadow: -8px 0 24px #0000001a;
+  }
+  .canvas-grip { display: none; }
+}

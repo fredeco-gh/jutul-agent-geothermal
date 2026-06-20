@@ -145,7 +145,21 @@ def test_ws_decision_without_pending_is_error(tmp_path: Path) -> None:
 def test_artifact_wire_events_png_and_html() -> None:
     payloads = [
         {"path": "artifacts/plot.png", "mime": "image/png", "caption": "fig"},
-        {"path": "artifacts/scene.html", "mime": "text/html", "caption": "interactive"},
+        {
+            "path": "artifacts/scene.html",
+            "mime": "text/html",
+            "caption": "interactive",
+            "kind": "plot",
+            "poster": "artifacts/scene.png",
+            "slot": "scene",
+        },
+        {
+            "path": "artifacts/report.html",
+            "mime": "text/html",
+            "caption": "Run report",
+            "kind": "report",
+            "slot": "report",
+        },
     ]
     events = artifact_wire_events(payloads, "sid")
     assert events[0] == {
@@ -156,10 +170,23 @@ def test_artifact_wire_events_png_and_html() -> None:
         "slot": None,
         "format": None,
     }
+    # An interactive plot becomes a viz carrying its kind, slot, and poster URL.
     assert events[1] == {
         "type": "viz",
         "url": "/sessions/sid/artifacts/scene.html",
         "title": "interactive",
+        "kind": "plot",
+        "poster": "/sessions/sid/artifacts/scene.png",
+        "slot": "scene",
+    }
+    # A written report is a viz too, of kind "report" and with no poster.
+    assert events[2] == {
+        "type": "viz",
+        "url": "/sessions/sid/artifacts/report.html",
+        "title": "Run report",
+        "kind": "report",
+        "poster": None,
+        "slot": "report",
     }
 
 

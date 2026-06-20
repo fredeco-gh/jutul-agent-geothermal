@@ -1,5 +1,6 @@
 // jutul-agent web client. One WebSocket per session; renders the wire protocol
-// (docs/server-interface.md) as a chat. Vanilla JS, no build step.
+// (docs/server-interface.md) as a chat, with interactive views (plots, reports)
+// pinned to a closable side canvas. Vanilla JS, no build step.
 
 const thread = document.getElementById("thread");
 const conversation = document.getElementById("conversation");
@@ -7,10 +8,11 @@ const welcome = document.getElementById("welcome");
 const promptEl = document.getElementById("prompt");
 const sendEl = document.getElementById("send");
 const metaEl = document.getElementById("meta");
-const hintEl = document.getElementById("hint");
-const vizPanel = document.getElementById("viz-panel");
-const vizFrame = document.getElementById("viz-frame");
-const vizTitle = document.getElementById("viz-title");
+const canvasEl = document.getElementById("canvas");
+const canvasBody = document.getElementById("canvas-body");
+const canvasTabs = document.getElementById("canvas-tabs");
+const viewsBtn = document.getElementById("views-btn");
+const viewsCount = document.getElementById("views-count");
 
 let ws = null;
 let sessionId = null;
@@ -19,6 +21,13 @@ let model = null;
 let assistant = null; // { el, raw } for the in-progress assistant message
 const toolCards = new Map(); // tool_call_id -> { details, body, chip }
 let busy = false;
+
+const ICONS = {
+  plot: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>',
+  report: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg>',
+  image: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5L5 20"/></svg>',
+};
+const KIND_LABEL = { plot: "Interactive plot", report: "Report", image: "Image" };
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -75,6 +84,7 @@ async function newChat() {
   thread.innerHTML = "";
   toolCards.clear();
   assistant = null;
+  resetCanvas();
   const w = el("div", "welcome");
   w.innerHTML = "<h1>What would you like to explore?</h1>";
   thread.appendChild(w);
@@ -215,46 +225,213 @@ function setOutput(card, content) {
   if (atBottom()) scrollDown();
 }
 
-function onViz(msg) {
-  finalizeAssistant();
-  const card = el("div", "viz-card");
-  const head = el("div", "head");
-  head.appendChild(el("span", null, msg.title || "Interactive plot"));
-  const open = el("button", "ghost open", "Expand");
-  open.onclick = () => openViz(msg.url, msg.title);
-  head.appendChild(open);
-  const frame = el("iframe");
-  frame.src = msg.url;
-  frame.loading = "lazy";
-  card.append(head, frame);
-  add(card);
+// --- the canvas: a registry of pinned views shown in the side panel -------
+
+const views = new Map(); // id -> { id, url, title, kind, poster, frame }
+let viewOrder = []; // id order for the tab strip
+let activeView = null; // id
+let canvasOpen = false;
+const chips = []; // { id, el } inline chips, to keep their active highlight in sync
+
+function viewId(msg) {
+  return msg.slot ? `slot:${msg.slot}` : `url:${msg.url}`;
 }
 
-function openViz(url, title) {
-  vizTitle.textContent = title || "Plot";
-  vizFrame.src = url;
-  vizPanel.hidden = false;
+function onViz(msg) {
+  finalizeAssistant();
+  const id = viewId(msg);
+  const kind = msg.kind === "report" ? "report" : "plot";
+  const title = msg.title || (kind === "report" ? "Report" : "Interactive plot");
+  const existing = views.get(id);
+  const view = existing || { id };
+  Object.assign(view, { url: msg.url, title, kind, poster: msg.poster || null });
+  if (!existing) {
+    views.set(id, view);
+    viewOrder.push(id);
+  } else if (view.frame) {
+    // A refreshed view (same slot): reload its frame so the new content shows.
+    view.loaded = false;
+    view.frame.src = bust(view.url);
+  }
+  addChip(view); // a fresh inline reference in the conversation each time
+  openView(id); // reveal the panel and focus this view
 }
 
 function onArtifact(msg) {
   finalizeAssistant();
-  const card = el("div", "viz-card");
-  const head = el("div", "head");
-  head.appendChild(el("span", null, msg.caption || "Artifact"));
-  card.appendChild(head);
   if (msg.mime && msg.mime.startsWith("image/")) {
+    const id = viewId(msg);
+    const title = msg.caption || "Image";
+    const existing = views.get(id);
+    const view = existing || { id };
+    Object.assign(view, { url: msg.url, title, kind: "image", poster: msg.url });
+    if (!existing) { views.set(id, view); viewOrder.push(id); }
+    // Static images stay visible inline (a direct record), and also open larger
+    // in the canvas on click.
+    const card = el("div", "art-card");
+    const head = el("div", "head");
+    head.appendChild(el("span", "grow", title));
+    const openBtn = el("button", "ghost", "Open");
+    openBtn.onclick = () => openView(id);
+    head.appendChild(openBtn);
     const img = el("img");
+    const wasBottom = atBottom();
     img.src = msg.url;
-    img.style.cssText = "width:100%;display:block";
-    card.appendChild(img);
+    img.onclick = () => openView(id);
+    // The image's height isn't known until it loads; keep the view pinned to the
+    // bottom once it does, so a late-loading figure doesn't strand the latest
+    // messages (e.g. an approval) below the fold.
+    img.onload = () => { if (wasBottom) scrollDown(); };
+    card.append(head, img);
+    add(card);
   } else {
-    const a = el("a", null, msg.url);
+    const card = el("div", "art-card");
+    card.appendChild(el("div", "head", msg.caption || "Artifact"));
+    const a = el("a", "file", msg.url);
     a.href = msg.url;
     a.target = "_blank";
-    a.style.cssText = "display:block;padding:0.6rem 0.8rem";
     card.appendChild(a);
+    add(card);
   }
-  add(card);
+}
+
+function addChip(view) {
+  const chip = el("button", "viz-chip");
+  const ico = el("span", `ico ${view.kind}`);
+  ico.innerHTML = ICONS[view.kind] || ICONS.plot;
+  const info = el("div", "info");
+  info.appendChild(el("div", "t", view.title));
+  info.appendChild(el("div", "s", KIND_LABEL[view.kind] || "View"));
+  const go = el("span", "go");
+  go.innerHTML = "Open <svg viewBox='0 0 24 24' width='14' height='14' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M9 6l6 6-6 6'/></svg>";
+  chip.append(ico, info, go);
+  chip.onclick = () => openView(view.id);
+  add(chip);
+  chips.push({ id: view.id, el: chip });
+  syncChips();
+}
+
+function bust(url) {
+  return url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
+}
+
+// A spinner shown over the canvas until the active view finishes loading (a
+// WebGL figure can take a moment to spin up).
+let canvasLoader = null;
+function showLoading(on) {
+  if (!canvasLoader) {
+    canvasLoader = el("div", "canvas-loading");
+    canvasLoader.innerHTML = '<span class="spinner"></span><span>Loading view…</span>';
+    canvasBody.appendChild(canvasLoader);
+  }
+  canvasLoader.classList.toggle("on", on);
+}
+
+// Lazily build the canvas element for a view (iframe for html, img for image),
+// kept in the DOM so switching tabs preserves each view's state.
+function ensureFrame(view) {
+  if (view.frame) return view.frame;
+  const node = view.kind === "image" ? el("img") : el("iframe");
+  if (view.kind !== "image") {
+    node.setAttribute("title", view.title);
+    node.setAttribute("loading", "lazy");
+  }
+  node.addEventListener("load", () => {
+    view.loaded = true;
+    if (activeView === view.id) showLoading(false);
+  });
+  node.src = view.url;
+  canvasBody.appendChild(node);
+  view.frame = node;
+  return node;
+}
+
+function openView(id) {
+  const view = views.get(id);
+  if (!view) return;
+  activeView = id;
+  ensureFrame(view);
+  showLoading(!view.loaded);
+  for (const v of views.values()) {
+    if (v.frame) v.frame.classList.toggle("active", v.id === id);
+  }
+  if (canvasLoader) canvasBody.appendChild(canvasLoader); // keep the loader on top
+  revealCanvas();
+  renderTabs();
+  syncChips();
+}
+
+function renderTabs() {
+  canvasTabs.innerHTML = "";
+  for (const id of viewOrder) {
+    const view = views.get(id);
+    if (!view) continue;
+    const tab = el("button", "tab" + (id === activeView ? " active" : ""));
+    const ico = el("span", "tab-ico");
+    ico.innerHTML = ICONS[view.kind] || ICONS.plot;
+    const label = el("span", "tab-label", view.title);
+    tab.append(ico, label);
+    const close = el("button", "tab-close");
+    close.innerHTML = "<svg viewBox='0 0 24 24' width='12' height='12' fill='none' stroke='currentColor' stroke-width='2.4' stroke-linecap='round'><path d='M6 6l12 12M18 6L6 18'/></svg>";
+    close.title = "Remove view";
+    close.onclick = (e) => { e.stopPropagation(); removeView(id); };
+    tab.appendChild(close);
+    tab.onclick = () => openView(id);
+    canvasTabs.appendChild(tab);
+  }
+}
+
+function removeView(id) {
+  const view = views.get(id);
+  if (view && view.frame) view.frame.remove();
+  views.delete(id);
+  viewOrder = viewOrder.filter((x) => x !== id);
+  if (activeView === id) {
+    activeView = viewOrder[viewOrder.length - 1] || null;
+    if (activeView) openView(activeView);
+    else closeCanvas();
+  }
+  renderTabs();
+  syncChips();
+  updateViewsButton();
+}
+
+function revealCanvas() {
+  canvasOpen = true;
+  canvasEl.hidden = false;
+  updateViewsButton();
+}
+
+function closeCanvas() {
+  canvasOpen = false;
+  canvasEl.hidden = true;
+  syncChips();
+  updateViewsButton();
+}
+
+function resetCanvas() {
+  for (const v of views.values()) if (v.frame) v.frame.remove();
+  views.clear();
+  viewOrder = [];
+  chips.length = 0;
+  activeView = null;
+  closeCanvas();
+}
+
+function syncChips() {
+  for (const c of chips) {
+    c.el.classList.toggle("active", canvasOpen && c.id === activeView);
+  }
+}
+
+function updateViewsButton() {
+  const n = views.size;
+  if (n && !canvasOpen) {
+    viewsBtn.hidden = false;
+    viewsCount.innerHTML = `Views <span class="count">${n}</span>`;
+  } else {
+    viewsBtn.hidden = true;
+  }
 }
 
 function onInterrupt(msg) {
@@ -360,10 +537,34 @@ promptEl.addEventListener("keydown", (e) => {
 });
 sendEl.onclick = () => (busy ? stop() : send());
 document.getElementById("new-chat").onclick = newChat;
-document.getElementById("viz-close").onclick = () => {
-  vizPanel.hidden = true;
-  vizFrame.src = "about:blank";
+document.getElementById("canvas-close").onclick = closeCanvas;
+viewsBtn.onclick = () => { if (activeView) openView(activeView); };
+document.getElementById("canvas-popout").onclick = () => {
+  const v = views.get(activeView);
+  if (v) window.open(v.url, "_blank", "noopener");
 };
+
+// Drag the grip to resize the canvas (and so the conversation) live.
+(function () {
+  const grip = document.getElementById("canvas-grip");
+  let dragging = false;
+  grip.addEventListener("mousedown", (e) => {
+    dragging = true;
+    grip.classList.add("dragging");
+    document.body.style.userSelect = "none";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const w = Math.min(Math.max(window.innerWidth - e.clientX, 320), window.innerWidth * 0.72);
+    document.documentElement.style.setProperty("--canvas-w", w + "px");
+  });
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+    grip.classList.remove("dragging");
+    document.body.style.userSelect = "";
+  });
+})();
 
 // Preview/test hook: lets a headless browser drive the renderer with scripted
 // events (and set the meta line) so the UI can be screenshotted deterministically.
@@ -373,7 +574,9 @@ window.jutulDebug = {
   setBusy,
   showWorking,
   setMeta: (html) => (metaEl.innerHTML = html),
+  openView,
+  closeCanvas,
+  views,
 };
 
 init();
-

@@ -290,6 +290,11 @@ def _finalize_web(
     static record. When ``view``, the downscaled PNG is returned too.
     """
 
+    # A CairoMakie PNG is saved alongside the HTML when the figure is 2D; expose
+    # it as a poster for a lightweight inline thumbnail. A GL-only 3D scene yields
+    # no PNG, and the interactive HTML still carries the view.
+    poster_rel = html_rel[:-5] + ".png"
+    has_poster = (session.output_dir / poster_rel).exists()
     session.trace.append(
         "artifact",
         {
@@ -298,6 +303,8 @@ def _finalize_web(
             "caption": caption or slot or html_rel.rsplit("/", 1)[-1],
             "tool_call_id": tool_call_id,
             "format": "html",
+            "kind": "plot",
+            "poster": poster_rel if has_poster else None,
             "slot": slot,
             "source_code": source_code,
         },
