@@ -209,13 +209,18 @@ function onReasoning(text) {
 // Args worth previewing on the collapsed summary line, in priority order.
 const PREVIEW_KEYS = ["code", "command", "caption", "file_path", "path", "query", "slot"];
 
-function argPreview(args) {
+function argPreview(args, name) {
   if (!args) return "";
+  if (name === "write_todos" && Array.isArray(args.todos)) {
+    const active = args.todos.find((t) => t.status === "in_progress");
+    return active ? active.content : `${args.todos.length} item${args.todos.length === 1 ? "" : "s"}`;
+  }
   for (const k of PREVIEW_KEYS) {
     if (args[k]) return String(args[k]).split("\n").find((l) => l.trim()) || "";
   }
   const first = Object.values(args)[0];
-  return first == null ? "" : String(first).split("\n")[0];
+  if (first == null || typeof first === "object") return "";
+  return String(first).split("\n")[0];
 }
 
 function codeArg(args) {
@@ -287,7 +292,7 @@ function onTool(msg) {
     details.open = true; // show what ran; the user complained about all-collapsed
     const sum = el("summary");
     sum.appendChild(el("span", "tool-name", msg.label || msg.name));
-    sum.appendChild(el("span", "tool-preview", argPreview(msg.args)));
+    sum.appendChild(el("span", "tool-preview", argPreview(msg.args, msg.name)));
     const chip = el("span", "chip-status running");
     chip.innerHTML = '<span class="spinner"></span>';
     sum.appendChild(chip);
