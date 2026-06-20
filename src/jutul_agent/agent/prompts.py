@@ -69,7 +69,14 @@ def _surface_note(surface: str) -> str | None:
             "Interface: you are driving a web application, not a terminal. The user "
             "sees your replies, plots, and results in that application. Some tools "
             "may update the application's interface directly; use them when the task "
-            "calls for it."
+            "calls for it.\n"
+            "Plots: `plot_julia` renders an interactive figure in the browser (the "
+            "user can rotate, zoom, and pan it). Build the figure yourself with Makie "
+            "from the data you computed (e.g. `heatmap`, `lines`, `surface`, "
+            "`contourf`, reshaping a field over the grid). Do not call a simulator's "
+            "native desktop viewer that opens an on-screen window (e.g. JutulDarcy's "
+            "`plot_reservoir`); those need the desktop backend and will not render "
+            "here."
         )
     return None
 

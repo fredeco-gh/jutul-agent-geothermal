@@ -367,7 +367,13 @@ document.getElementById("viz-close").onclick = () => {
 
 // Preview/test hook: lets a headless browser drive the renderer with scripted
 // events (and set the meta line) so the UI can be screenshotted deterministically.
-window.jutulDebug = { handle, addUserBubble, setMeta: (html) => (metaEl.innerHTML = html) };
+window.jutulDebug = {
+  handle,
+  addUserBubble,
+  setBusy,
+  showWorking,
+  setMeta: (html) => (metaEl.innerHTML = html),
+};
 
 init();
 
