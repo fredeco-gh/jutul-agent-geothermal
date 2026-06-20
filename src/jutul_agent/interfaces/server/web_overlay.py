@@ -76,11 +76,16 @@ def ensure_web_overlay(*, julia_executable: str = "julia") -> Path:
 
 
 def load_path_for(workspace_project: Path, overlay: Path) -> str:
-    """The ``JULIA_LOAD_PATH`` stacking the overlay over the workspace project.
+    """The ``JULIA_LOAD_PATH`` stacking the overlay under the workspace project.
 
-    Order is overlay, then the active project (``@``, set by ``--project`` to the
-    workspace env), then the standard library. The overlay is first so its
-    WGLMakie/Bonito resolve, while everything else comes from the workspace env.
+    Order is the active project (``@``, set by ``--project`` to the workspace
+    env) first, then the overlay, then the standard library. WGLMakie and Bonito
+    live only in the overlay, so they still resolve from it; putting the workspace
+    env first means that for a package both provide (a transitive dep like JSON),
+    the simulator's version wins. The overlay must not shadow a simulator's deps —
+    overlay-first did, which broke BattMo (its JSON-loaded ``CellParameters``
+    stopped matching once Bonito's JSON shadowed the one BattMo expects). The
+    Makie/WGLMakie/GLMakie identity the plot tool guards still holds either way.
     """
 
-    return os.pathsep.join([str(overlay), "@", "@stdlib"])
+    return os.pathsep.join(["@", str(overlay), "@stdlib"])
