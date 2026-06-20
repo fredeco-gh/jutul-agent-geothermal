@@ -163,6 +163,19 @@ serves as an artifact and the front end embeds in a frame. The user can then
 rotate, zoom, and pan it in the browser. Because the file is self-contained it
 needs no live plotting server, only a place to fetch it from.
 
+This covers both figures the agent builds with Makie and a simulator's own native
+interactive plotters. The native 3D viewers (for example JutulDarcy's
+`plot_reservoir`, with its mesh, well trajectories, and field/timestep widgets)
+build standard Makie scenes; their plotting methods ship in a GLMakie extension,
+so the web session loads GLMakie for those methods while WGLMakie does the actual
+browser rendering. Loading GLMakie needs a GL context, which the server provides
+with an Xvfb on a headless box and which is already present on a workstation with
+a display. A native plotter is asked to return its figure rather than open a
+desktop window (`new_window = false`). Camera control (rotate, zoom, pan) is
+handled in the browser; the in-figure widgets (a timestep slider, a field
+selector) drive Julia callbacks and so are fully live only when the figure is
+served from the running session rather than exported as a static file.
+
 The image form is kept as well. It is the record written to the session's history
 and report, the fallback when an interactive view is not available, and what
 headless and evaluation runs use. An application that owns its own visualization,

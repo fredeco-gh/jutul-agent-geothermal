@@ -134,34 +134,38 @@ class SessionHost:
             **blas_thread_env(compute_threads),
             HYPRE_THREADS_ENV_VAR: str(resolve_hypre_threads()),
         }
-        # The web surface stacks the WGLMakie/Bonito overlay on top of the
-        # workspace env so interactive plots work without putting those heavy
-        # packages in the base (TUI/CLI) env. Best-effort: if the overlay can't be
-        # prepared (e.g. offline), the session still runs with static PNG plots.
-        if surface == "web":
-            import asyncio as _asyncio
-
-            from jutul_agent.interfaces.server.web_overlay import (
-                WebOverlayError,
-                ensure_web_overlay,
-                load_path_for,
-            )
-
-            try:
-                overlay = await _asyncio.to_thread(ensure_web_overlay)
-                env["JULIA_LOAD_PATH"] = load_path_for(project, overlay)
-            except WebOverlayError as exc:
-                print(f"warning: {exc}", file=sys.stderr)
-        kernel_config = KernelConfig(
-            julia_project=project,
-            stderr_file=sdir / "julia-startup.log",
-            cwd=ws,
-            env=env,
-            threads=str(compute_threads),
-        )
 
         stack = AsyncExitStack()
         try:
+            # The web surface stacks the WGLMakie/Bonito overlay on top of the
+            # workspace env so interactive plots work without putting those heavy
+            # packages in the base (TUI/CLI) env, and gives the kernel a GL context
+            # so native plotters (whose methods live in the GLMakie extension) load.
+            # Both are best-effort: without them the session still runs with the
+            # agent's inline plots / static PNGs.
+            if surface == "web":
+                import asyncio as _asyncio
+
+                from jutul_agent.interfaces.server.web_overlay import (
+                    WebOverlayError,
+                    ensure_web_overlay,
+                    load_path_for,
+                )
+
+                try:
+                    overlay = await _asyncio.to_thread(ensure_web_overlay)
+                    env["JULIA_LOAD_PATH"] = load_path_for(project, overlay)
+                except WebOverlayError as exc:
+                    print(f"warning: {exc}", file=sys.stderr)
+                _add_headless_display(stack, env)
+
+            kernel_config = KernelConfig(
+                julia_project=project,
+                stderr_file=sdir / "julia-startup.log",
+                cwd=ws,
+                env=env,
+                threads=str(compute_threads),
+            )
             julia = await stack.enter_async_context(JuliaKernel(kernel_config))
             if resume:
                 session = Session.resume(
@@ -188,3 +192,22 @@ class SessionHost:
             raise
 
         return cls(session=session, agent=agent, backend=backend, exit_stack=stack)
+
+
+def _add_headless_display(stack: AsyncExitStack, env: dict[str, str]) -> None:
+    """Start an Xvfb for this session (headless boxes) and set ``DISPLAY`` in ``env``.
+
+    GLMakie needs a GL context just to load, which is what makes the native
+    plotters' methods available for WGLMakie to render. On a machine with a real
+    display this is a no-op; the Xvfb is tied to the session's exit stack.
+    """
+    from jutul_agent.display import managed_display, should_wrap_xvfb
+
+    if not should_wrap_xvfb():
+        return
+    try:
+        display = stack.enter_context(managed_display())
+    except Exception as exc:  # missing/slow Xvfb must not break the session
+        print(f"warning: could not start a virtual display for plotting ({exc}).", file=sys.stderr)
+        return
+    env["DISPLAY"] = display

@@ -71,12 +71,12 @@ def _surface_note(surface: str) -> str | None:
             "may update the application's interface directly; use them when the task "
             "calls for it.\n"
             "Plots: `plot_julia` renders an interactive figure in the browser (the "
-            "user can rotate, zoom, and pan it). Build the figure yourself with Makie "
-            "from the data you computed (e.g. `heatmap`, `lines`, `surface`, "
-            "`contourf`, reshaping a field over the grid). Do not call a simulator's "
-            "native desktop viewer that opens an on-screen window (e.g. JutulDarcy's "
-            "`plot_reservoir`); those need the desktop backend and will not render "
-            "here."
+            "user can rotate, zoom, and pan it). You can either build a figure with "
+            "Makie (e.g. `heatmap`, `lines`, `surface`, `contourf`) or call the "
+            "simulator's native interactive plotter. When you call a native plotter "
+            "that would otherwise open a desktop window (e.g. JutulDarcy's "
+            "`plot_reservoir`), pass `new_window = false` so it returns the figure "
+            "for the browser instead of trying to open a window."
         )
     return None
 

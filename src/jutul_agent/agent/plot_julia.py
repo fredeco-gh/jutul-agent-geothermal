@@ -124,12 +124,19 @@ def _build_render_call(
 
 
 async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) -> str | None:
-    """Load the web plotting backends (CairoMakie + WGLMakie + Bonito) once.
+    """Load the web plotting backends once: WGLMakie + Bonito, plus GLMakie.
 
-    The web surface renders figures into the browser with WebGL instead of a
-    native window, so it needs WGLMakie and Bonito in the env (plus CairoMakie for
-    a static PNG record). These are only required for web interactivity, so a
-    simulator opts in by adding them to its Julia env; the error says so.
+    The web surface renders figures into the browser with WebGL (WGLMakie) instead
+    of a native window. GLMakie is also imported, not to render, but so the
+    simulator's native plotters (whose methods live in Jutul/JutulDarcy's GLMakie
+    extension, e.g. ``plot_reservoir``'s 3D mesh and well trajectories) are defined;
+    those methods dispatch on backend-agnostic Makie types, so WGLMakie renders
+    them to the browser. CairoMakie gives a static PNG for the record.
+
+    GLMakie needs a GL context to load (a real display, or the Xvfb the server
+    starts); if it can't load, native plotters are unavailable but inline Makie
+    figures (built by the agent) still render interactively, so its failure is a
+    warning, not an error.
     """
 
     loaded = await session.julia.eval("import CairoMakie, WGLMakie, Bonito")
@@ -150,6 +157,8 @@ async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) ->
             "delete the 'web-overlay' directory under the jutul-agent state home and "
             "restart the server."
         )
+    # Best-effort: enables native plotters when a GL context is available.
+    await session.julia.eval("try; @eval import GLMakie; catch; end")
     return None
 
 
@@ -166,6 +175,7 @@ def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -
     return (
         "begin\n"
         "    import CairoMakie, WGLMakie, Bonito\n"
+        "    try; @eval import GLMakie; catch; end  # native plotter methods (needs GL context)\n"
         "    WGLMakie.activate!(resize_to = :parent)\n"
         "    local _M = WGLMakie.Makie\n"
         "    local _val = begin\n"
