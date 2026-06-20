@@ -20,13 +20,49 @@ async def _call(tool, args: dict) -> str:
     return str(getattr(msg, "content", msg))
 
 
-async def test_web_surface_exports_interactive_html(tmp_path: Path) -> None:
+async def test_web_surface_serves_plot_live(tmp_path: Path) -> None:
+    # With the session's Bonito server up, a plot is served live (its in-figure
+    # widgets work); the recorded artifact is the PNG and a live URL is attached.
     seen: list[str] = []
 
     async def fake_eval(code: str) -> EvalResult:
         seen.append(code)
         if code.strip() == "CairoMakie.Makie === WGLMakie.Makie":
             return EvalResult(output="true")
+        return EvalResult(output="")  # server start + render both "succeed"
+
+    session = _session(tmp_path, FakeJulia(eval_handler=fake_eval))
+    tool = make_plot_julia_tool(session, surface="web")
+
+    result = await _call(tool, {"code": "lines(1:3, 1:3)", "caption": "field", "slot": "pres"})
+
+    assert "live" in result
+    assert any("Bonito.Server" in c for c in seen)  # the session server started
+    assert any("Bonito.route!" in c for c in seen)  # the figure was routed live
+    assert not any("Bonito.export_static" in c for c in seen)  # no static export on the live path
+
+    log = TraceLog(session.state_dir / "trace.sqlite")
+    try:
+        artifact = next(ev for ev in log.iter_events() if ev.kind == "artifact")
+        assert artifact.payload["mime"] == "image/png"
+        assert artifact.payload["path"] == "artifacts/pres.png"
+        assert artifact.payload["kind"] == "plot"
+        assert "/viz/" in (artifact.payload["live_url"] or "")
+    finally:
+        log.close()
+
+
+async def test_web_surface_static_fallback_when_server_down(tmp_path: Path) -> None:
+    # If the Bonito server can't start, plots fall back to a self-contained static
+    # HTML export (the camera still works; the in-figure widgets don't).
+    seen: list[str] = []
+
+    async def fake_eval(code: str) -> EvalResult:
+        seen.append(code)
+        if code.strip() == "CairoMakie.Makie === WGLMakie.Makie":
+            return EvalResult(output="true")
+        if "Bonito.Server" in code:
+            return EvalResult(output="", error="could not bind port")
         return EvalResult(output="")
 
     session = _session(tmp_path, FakeJulia(eval_handler=fake_eval))
@@ -35,7 +71,6 @@ async def test_web_surface_exports_interactive_html(tmp_path: Path) -> None:
     result = await _call(tool, {"code": "lines(1:3, 1:3)", "caption": "field", "slot": "pres"})
 
     assert ".html" in result
-    assert any("import CairoMakie, WGLMakie, Bonito" in c for c in seen)
     assert any("Bonito.export_static" in c and "resize_to = :parent" in c for c in seen)
 
     log = TraceLog(session.state_dir / "trace.sqlite")
@@ -44,6 +79,7 @@ async def test_web_surface_exports_interactive_html(tmp_path: Path) -> None:
         assert artifact.payload["mime"] == "text/html"
         assert artifact.payload["format"] == "html"
         assert artifact.payload["path"] == "artifacts/pres.html"
+        assert artifact.payload["live_url"] is None
     finally:
         log.close()
 
