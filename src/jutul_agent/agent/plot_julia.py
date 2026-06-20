@@ -9,6 +9,12 @@ plotters do not work.
 
 When ``view=True`` the saved PNG is downscaled and returned to the model as a
 multimodal image block, so the agent can see the plot it just made.
+
+On the web surface, figures render in the browser with WGLMakie. They are served
+live from a per-session Bonito server when it can start, so a figure's in-figure
+widgets (a timestep slider, a field selector) run their Julia callbacks and update
+the view; if the server can't start, a self-contained static HTML export is
+embedded instead (camera control still works, the widgets do not).
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ from __future__ import annotations
 import base64
 import io
 import re
+import socket
+import sys
 import uuid
 from pathlib import Path
 from typing import Annotated, Any
@@ -206,6 +214,86 @@ def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -
     )
 
 
+def _free_port() -> int:
+    """Pick a free localhost TCP port for the session's Bonito server."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _build_web_server_start(port: int) -> str:
+    """Julia to start the session's Bonito server once (idempotent).
+
+    The server lives in the Julia process for the session's lifetime and holds
+    the live figures, so their in-figure widgets (a timestep slider, a field
+    selector) run their Julia callbacks over the WebSocket and update the view —
+    interactivity a static export cannot provide.
+    """
+
+    # ``global`` (not ``Main.X = ``) so the assignment defines the Main global even
+    # under Julia 1.12's stricter check, which rejects assigning to a qualified
+    # global that doesn't exist yet.
+    return (
+        "begin\n"
+        "    import WGLMakie, Bonito\n"
+        "    if !isdefined(Main, :__JUTUL_WEB_SERVER__)\n"
+        f'        global __JUTUL_WEB_SERVER__ = Bonito.Server("127.0.0.1", {int(port)})\n'
+        "        global __JUTUL_WEB_FIGS__ = Dict{String,Any}()\n"
+        "    end\n"
+        '    "ok"\n'
+        "end"
+    )
+
+
+def _build_web_live_call(*, user_code: str, png_path: Path, route: str) -> str:
+    """Julia to build the figure, keep it alive, and serve it on the live route.
+
+    WGLMakie is active while the user code runs, so native plotters build WebGL
+    scenes. The figure is stored (keeping its Observables alive) and routed on the
+    session's Bonito server, so the browser gets a *live* view whose in-figure
+    widgets run their Julia callbacks — no static export is needed (the live route
+    is the view). A CairoMakie PNG is saved best-effort as the poster/record/``view``,
+    restoring WGLMakie afterwards so client connections render with it.
+    """
+
+    return (
+        "begin\n"
+        "    import CairoMakie, WGLMakie, Bonito\n"
+        "    try; @eval import GLMakie; catch; end  # native plotter methods (needs GL context)\n"
+        "    WGLMakie.activate!(resize_to = :parent)\n"
+        "    local _M = WGLMakie.Makie\n"
+        "    local _val = begin\n"
+        f"{user_code}\n"
+        "    end\n"
+        "    local _fig = if _val isa _M.Figure\n"
+        "        _val\n"
+        "    elseif _val isa _M.FigureAxisPlot\n"
+        "        _val.figure\n"
+        "    elseif _val isa Tuple && length(_val) >= 1 && _val[1] isa _M.Figure\n"
+        "        _val[1]\n"
+        "    else\n"
+        "        _M.current_figure()\n"
+        "    end\n"
+        "    _fig === nothing && error(\n"
+        '        "plot_julia: the code did not produce a Makie figure. Return a Figure, "  *\n'
+        '        "or call a plotter that builds one."\n'
+        "    )\n"
+        f'    Main.__JUTUL_WEB_FIGS__[raw"{route}"] = _fig\n'
+        f'    Bonito.route!(Main.__JUTUL_WEB_SERVER__, raw"{route}" => Bonito.App(() ->\n'
+        f'        Bonito.DOM.div(Main.__JUTUL_WEB_FIGS__[raw"{route}"];\n'
+        '            style = "width:100%; height:100%;")))\n'
+        "    try\n"
+        "        CairoMakie.activate!()\n"
+        f'        CairoMakie.save(raw"{png_path.as_posix()}", _fig)\n'
+        "    catch\n"
+        "    finally\n"
+        "        WGLMakie.activate!(resize_to = :parent)\n"
+        "    end\n"
+        '    "ok"\n'
+        "end"
+    )
+
+
 def _encode_view_image(png_path: Path, max_edge: int = _VIEW_MAX_EDGE) -> str:
     """Downscale png_path to max_edge on its longest side and return base64 PNG."""
     from PIL import Image
@@ -276,40 +364,50 @@ def _finalize_web(
     session: Session,
     *,
     png_abs: Path,
+    png_rel: str,
     html_rel: str,
     caption: str,
     tool_call_id: str,
     slot: str | None,
     source_code: str,
     view: bool,
+    live_url: str | None = None,
 ) -> str | list[dict[str, Any]]:
-    """Record the interactive HTML artifact and build the reply.
+    """Record the interactive plot artifact and build the reply.
 
-    The HTML artifact is what the server forwards to the browser as a ``viz``; the
-    PNG saved alongside is for ``view`` (so the agent can see the plot) and the
-    static record. When ``view``, the downscaled PNG is returned too.
+    The artifact becomes the browser ``viz``: when ``live_url`` is set the figure
+    is served live from the session's Bonito server (its widgets work) and the
+    durable record is the PNG; otherwise the self-contained HTML export is the
+    record and what's embedded. The PNG is also the poster/thumbnail and ``view``.
     """
 
-    # A CairoMakie PNG is saved alongside the HTML when the figure is 2D; expose
-    # it as a poster for a lightweight inline thumbnail. A GL-only 3D scene yields
-    # no PNG, and the interactive HTML still carries the view.
-    poster_rel = html_rel[:-5] + ".png"
-    has_poster = (session.output_dir / poster_rel).exists()
+    # A CairoMakie PNG is saved when the figure renders under Cairo (2D, and most
+    # 3D scenes); it is the poster/thumbnail and the durable record. A GL-only
+    # scene may yield none, and the interactive view still carries the figure.
+    has_poster = png_abs.exists()
+    # Live plots are served from the Bonito server, so the durable artifact is the
+    # PNG; static plots record their self-contained HTML export.
+    rec_path, mime, fmt = (
+        (png_rel, "image/png", "png") if live_url else (html_rel, "text/html", "html")
+    )
     session.trace.append(
         "artifact",
         {
-            "path": html_rel,
-            "mime": "text/html",
-            "caption": caption or slot or html_rel.rsplit("/", 1)[-1],
+            "path": rec_path,
+            "mime": mime,
+            "caption": caption or slot or rec_path.rsplit("/", 1)[-1],
             "tool_call_id": tool_call_id,
-            "format": "html",
+            "format": fmt,
             "kind": "plot",
-            "poster": poster_rel if has_poster else None,
+            "poster": png_rel if has_poster else None,
             "slot": slot,
+            "live_url": live_url,
             "source_code": source_code,
         },
     )
-    summary = f"rendered an interactive plot ({html_rel})"
+    summary = ("served a live interactive plot" if live_url else "rendered an interactive plot") + (
+        f" ({rec_path})"
+    )
     if slot:
         summary += f"; slot={slot}"
     if view and png_abs.exists():
@@ -329,16 +427,33 @@ def make_plot_julia_tool(session: Session, *, surface: str = "tui"):
     adapter = session.simulator
     web = surface == "web"
     ready: list[bool] = []  # one-shot memo: the backend loads once per session
+    live_base: list[str] = []  # the session's Bonito base URL once it's serving
 
     async def ensure_ready() -> str | None:
-        """Load the backend on first use; return an error string if it can't load."""
+        """Load the backend on first use; return an error string if it can't load.
+
+        On the web surface this also starts the session's Bonito server, so plots
+        are served live (their in-figure widgets work). If the server can't start,
+        plots still render via the static export (a warning, not an error)."""
         if ready:
             return None
         loader = _load_web_plot_backend if web else _load_plot_backend
         err = await loader(session, adapter)
-        if err is None:
-            ready.append(True)
-        return err
+        if err is not None:
+            return err
+        if web:
+            port = _free_port()
+            started = await session.julia.eval(_build_web_server_start(port))
+            if started.error:
+                print(
+                    f"warning: live plot serving unavailable ({_truncate(started.error, 200)}); "
+                    "falling back to static interactive exports.",
+                    file=sys.stderr,
+                )
+            else:
+                live_base.append(f"http://127.0.0.1:{port}")
+        ready.append(True)
+        return None
 
     @tool
     async def plot_julia(
@@ -403,16 +518,25 @@ def make_plot_julia_tool(session: Session, *, surface: str = "tui"):
 
         if web:
             html_rel = rel_path[:-4] + ".html"
-            html_abs = session.output_dir / html_rel
-            result = await session.julia.eval(
-                _build_web_render_call(user_code=code, png_path=abs_path, html_path=html_abs)
-            )
+            # Serve live (in-figure widgets work) when the session's Bonito server
+            # is up; otherwise fall back to a self-contained static export.
+            if live_base:
+                route = f"/viz/{plot_id}"
+                call = _build_web_live_call(user_code=code, png_path=abs_path, route=route)
+                live_url = f"{live_base[0]}{route}"
+            else:
+                html_abs = session.output_dir / html_rel
+                call = _build_web_render_call(user_code=code, png_path=abs_path, html_path=html_abs)
+                live_url = None
+            result = await session.julia.eval(call)
             if result.error:
                 return f"ERROR: {result.error}"
             return _finalize_web(
                 session,
                 png_abs=abs_path,
+                png_rel=rel_path,
                 html_rel=html_rel,
+                live_url=live_url,
                 caption=caption,
                 tool_call_id=tool_call_id,
                 slot=safe_slot,

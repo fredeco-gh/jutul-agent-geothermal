@@ -190,6 +190,34 @@ def test_artifact_wire_events_png_and_html() -> None:
     }
 
 
+def test_artifact_wire_events_live_plot_uses_live_url() -> None:
+    # A live-served plot carries a live_url (the session's Bonito server); the viz
+    # points there instead of the static export, but the poster is still served
+    # as a session artifact.
+    # A live plot's durable record is the PNG (mime image/png); the live_url is
+    # where the figure is actually served, so the viz points there, not at the PNG.
+    payloads = [
+        {
+            "path": "artifacts/reservoir.png",
+            "mime": "image/png",
+            "caption": "Reservoir",
+            "kind": "plot",
+            "poster": "artifacts/reservoir.png",
+            "slot": "reservoir",
+            "live_url": "http://127.0.0.1:9123/viz/reservoir",
+        },
+    ]
+    (event,) = artifact_wire_events(payloads, "sid")
+    assert event == {
+        "type": "viz",
+        "url": "http://127.0.0.1:9123/viz/reservoir",
+        "title": "Reservoir",
+        "kind": "plot",
+        "poster": "/sessions/sid/artifacts/reservoir.png",
+        "slot": "reservoir",
+    }
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

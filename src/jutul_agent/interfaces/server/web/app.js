@@ -13,6 +13,7 @@ const canvasBody = document.getElementById("canvas-body");
 const canvasTabs = document.getElementById("canvas-tabs");
 const viewsBtn = document.getElementById("views-btn");
 const viewsCount = document.getElementById("views-count");
+const simSelect = document.getElementById("sim-select");
 
 let ws = null;
 let sessionId = null;
@@ -55,23 +56,54 @@ function scrollDown() {
 async function init() {
   const sims = await fetch("/simulators").then((r) => r.json()).catch(() => ({}));
   const models = await fetch("/models").then((r) => r.json()).catch(() => ({}));
-  sim = sims.default || (sims.simulators && sims.simulators[0]) || "jutuldarcy";
+  const names = sims.simulators || [];
+  sim = sims.default || names[0] || "jutuldarcy";
   model = models.default || null;
+  populateSims(names);
   await startSession();
 }
 
+// Offer a simulator picker when more than one is installed. Switching starts a
+// fresh session for that simulator; the first session for a simulator may pause
+// while its Julia environment is prepared.
+function populateSims(names) {
+  if (!names || names.length < 2) return;
+  simSelect.innerHTML = "";
+  for (const name of names) {
+    const opt = el("option", null, name);
+    opt.value = name;
+    simSelect.appendChild(opt);
+  }
+  simSelect.value = sim;
+  simSelect.hidden = false;
+  simSelect.onchange = () => switchSim(simSelect.value);
+}
+
+async function switchSim(name) {
+  if (name === sim || busy) {
+    simSelect.value = sim;
+    return;
+  }
+  sim = name;
+  await newChat();
+}
+
 async function startSession() {
+  // Preparing a simulator's Julia environment can take a while the first time.
+  metaEl.textContent = `starting ${sim}…`;
+  if (simSelect) simSelect.disabled = true;
   const resp = await fetch("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sim }),
-  });
-  if (!resp.ok) {
+  }).catch(() => null);
+  if (simSelect) simSelect.disabled = false;
+  if (!resp || !resp.ok) {
     metaEl.textContent = "could not start a session";
     return;
   }
   sessionId = (await resp.json()).session_id;
-  metaEl.innerHTML = `<span class="chip">${sim}</span> · ${model || "no model"} · ${sessionId.slice(0, 13)}`;
+  metaEl.innerHTML = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/sessions/${sessionId}/stream`);
   ws.onmessage = (e) => handle(JSON.parse(e.data));

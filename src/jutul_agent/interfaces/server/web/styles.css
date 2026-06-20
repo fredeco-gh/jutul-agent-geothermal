@@ -80,6 +80,19 @@ html, body {
   border-radius: 4px;
   background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, #22d3ee));
 }
+.sim-select {
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+}
+.sim-select[hidden] { display: none; }
+.sim-select:hover { border-color: color-mix(in srgb, var(--border) 60%, var(--accent)); }
 .meta {
   flex: 1;
   color: var(--muted);

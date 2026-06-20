@@ -106,6 +106,25 @@ def create_app(
 
         return {"simulators": registry.names(), "default": default_sim}
 
+    def _workspace_for(sim: str, requested: str | None) -> Path | None:
+        """The workspace a session for ``sim`` should run in.
+
+        An explicit request wins. The launched (default) simulator uses the
+        server's own workspace (the cwd, or whatever ``set_workspace_root`` set),
+        preserving single-simulator behaviour. Any other simulator picked at
+        runtime gets its own cached environment under the state home, so switching
+        simulators doesn't rebuild the one shared workspace each time.
+        """
+        if requested:
+            return Path(requested)
+        if default_sim is None or sim == default_sim:
+            return None  # SessionHost.start falls back to workspace_root()
+        from jutul_agent.paths import state_home
+
+        ws = state_home() / "web-workspaces" / sim
+        ws.mkdir(parents=True, exist_ok=True)
+        return ws
+
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
         try:
@@ -113,7 +132,7 @@ def create_app(
                 sim=req.sim,
                 model=req.model,
                 approval_mode=req.approval_mode,
-                workspace=req.workspace,
+                workspace=_workspace_for(req.sim, req.workspace),
                 extensions=_request_extensions(req.tools),
             )
         except KeyError as exc:  # unknown simulator
@@ -132,7 +151,7 @@ def create_app(
                 sim=req.sim,
                 model=req.model,
                 approval_mode=req.approval_mode,
-                workspace=req.workspace,
+                workspace=_workspace_for(req.sim, req.workspace),
             )
         except (KeyError, FileNotFoundError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -181,11 +200,16 @@ def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> lis
     events: list[dict[str, Any]] = []
     for payload in payloads:
         url = _artifact_url(session_id, str(payload.get("path") or ""))
-        if payload.get("mime") == "text/html":
-            poster = payload.get("poster")
+        # A live plot is served from the session's Bonito server (its widgets work),
+        # so it carries a live_url and its recorded file is the PNG poster. A static
+        # plot or report is an HTML artifact embedded at its own URL. Everything else
+        # (a saved image, a file) is a plain artifact.
+        live_url = payload.get("live_url")
+        poster = payload.get("poster")
+        if live_url or payload.get("mime") == "text/html":
             events.append(
                 protocol.viz_to_wire(
-                    url,
+                    str(live_url) if live_url else url,
                     title=payload.get("caption"),
                     kind=str(payload.get("kind") or "plot"),
                     poster=_artifact_url(session_id, str(poster)) if poster else None,

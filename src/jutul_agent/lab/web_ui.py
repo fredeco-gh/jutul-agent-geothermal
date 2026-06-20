@@ -219,9 +219,7 @@ def render(script, out, *, width=1440, height=900, settle=500, color_scheme="lig
 
 _SID = "demo-session-0001"
 _ART = f"/sessions/{_SID}/artifacts"
-_META = {
-    "_meta": '<span class="chip">jutuldarcy</span> &middot; claude-opus-4-8 &middot; demo-session'
-}
+_META = {"_meta": "claude-opus-4-8 &middot; demo-session"}
 
 
 @dataclass(frozen=True)

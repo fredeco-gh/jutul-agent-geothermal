@@ -158,10 +158,12 @@ has to change.
 ## Visualization
 
 The terminal shows plots as images. A webapp can do better. A figure is rendered
-with WebGL (WGLMakie) and exported to a self-contained HTML file, which the server
-serves as an artifact and the front end embeds in a frame. The user can then
-rotate, zoom, and pan it in the browser. Because the file is self-contained it
-needs no live plotting server, only a place to fetch it from.
+with WebGL (WGLMakie) and served live from a small Bonito server that runs inside
+the session's Julia process, which the front end embeds in a frame. The user can
+rotate, zoom, and pan it in the browser, and because the figure stays live in the
+session its in-figure widgets — a timestep slider, a field selector — run their
+Julia callbacks and update the view. A self-contained static HTML export is also
+written as the durable record and the fallback when the live server cannot start.
 
 The server announces such a view with a `viz` message. Besides its URL it carries
 a `kind` (`plot` or `report`), a stable `slot`, and an optional `poster` image
@@ -185,10 +187,10 @@ so the web session loads GLMakie for those methods while WGLMakie does the actua
 browser rendering. Loading GLMakie needs a GL context, which the server provides
 with an Xvfb on a headless box and which is already present on a workstation with
 a display. A native plotter is asked to return its figure rather than open a
-desktop window (`new_window = false`). Camera control (rotate, zoom, pan) is
-handled in the browser; the in-figure widgets (a timestep slider, a field
-selector) drive Julia callbacks and so are fully live only when the figure is
-served from the running session rather than exported as a static file.
+desktop window (`new_window = false`). Camera control (rotate, zoom, pan) runs in
+the browser, and the in-figure widgets (a timestep slider, a field selector) drive
+Julia callbacks over the live server's WebSocket; on the static fallback the camera
+still works but those widgets are inert.
 
 The image form is kept as well. It is the record written to the session's history
 and report, the fallback when an interactive view is not available, and what
