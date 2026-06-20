@@ -89,8 +89,9 @@ async function switchSim(name) {
 }
 
 async function startSession() {
-  // Preparing a simulator's Julia environment can take a while the first time.
-  metaEl.textContent = `starting ${sim}…`;
+  // The first session for a simulator builds its Julia environment, which can
+  // take a few minutes; say so rather than looking hung.
+  metaEl.textContent = `starting ${sim}… (first run builds its environment, this can take a few minutes)`;
   if (simSelect) simSelect.disabled = true;
   const resp = await fetch("/sessions", {
     method: "POST",

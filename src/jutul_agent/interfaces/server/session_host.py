@@ -117,8 +117,16 @@ class SessionHost:
         project = julia_project or resolve_julia_project(ws)
         # A caller can supply a pre-provisioned env (and skip preparation); the
         # default path prepares the workspace env from the simulator template.
+        # Run it off the event loop: the first session for a simulator can spend
+        # minutes precompiling, and a blocking call here would freeze the whole
+        # server (it serves every session from one event loop) so even the page
+        # would stop loading. Threaded, the server stays responsive while the
+        # creating request waits.
         if prepare_env:
-            prepare_workspace_env(
+            import asyncio as _asyncio
+
+            await _asyncio.to_thread(
+                prepare_workspace_env,
                 simulator,
                 workspace=ws,
                 julia_project=project,
