@@ -312,12 +312,106 @@ def _convo() -> list:
     ]
 
 
+def _tool(tid, name, label, args, content):
+    return {
+        "type": "tool",
+        "event": "finished",
+        "tool_call_id": tid,
+        "name": name,
+        "label": label,
+        "args": args,
+        "content": content,
+    }
+
+
+def _tools_steps() -> list:
+    """Every tool kind, to check each card renders well (checklist, diff, code, …)."""
+    return [
+        _META,
+        {"_user": "Read the model, edit it, run it, search, plan, and remember a note."},
+        _tool(
+            "p",
+            "write_todos",
+            "Plan",
+            {
+                "todos": [
+                    {"content": "Read and edit the model", "status": "completed"},
+                    {"content": "Re-run the simulation", "status": "in_progress"},
+                    {"content": "Plot and report", "status": "pending"},
+                ]
+            },
+            "Updated the plan.",
+        ),
+        _tool(
+            "r", "read_file", "Read", {"file_path": "model.jl"}, "1  perm = 1e-13\n2  poro = 0.2"
+        ),
+        _tool(
+            "e",
+            "edit_file",
+            "Edit",
+            {"file_path": "model.jl", "old_string": "perm = 1e-13", "new_string": "perm = 5e-13"},
+            "Edited model.jl (1 replacement).",
+        ),
+        _tool(
+            "w",
+            "write_file",
+            "Write",
+            {"file_path": "results/notes.md", "content": "# Notes\n- bumped permeability\n"},
+            "Wrote results/notes.md.",
+        ),
+        _tool("sh", "execute", "Shell", {"command": "ls results/"}, "notes.md\nsaturation.csv"),
+        _tool("g", "grep", "Search", {"pattern": "poro"}, "model.jl:2: poro = 0.2"),
+        _tool(
+            "j",
+            "run_julia",
+            "Julia",
+            {"code": "result = simulate_reservoir(state0, model, dt)"},
+            "Step 10/10 converged. 3.1 s.",
+        ),
+        _tool(
+            "d",
+            "task",
+            "Delegate",
+            {"description": "Check solver convergence", "subagent_type": "general-purpose"},
+            "Subagent: all steps converged; no stalls.",
+        ),
+        _tool("m", "remember", "Remember", {"content": "User prefers SI units."}, "Saved."),
+        {
+            "type": "artifact",
+            "url": f"{_ART}/data.csv",
+            "mime": "text/csv",
+            "caption": "well_rates.csv",
+        },
+        {"type": "ui", "action": "set_parameter", "payload": {"name": "perm", "value": 5e-13}},
+        {"type": "text", "text": "Done — see the plan, edit diff, and outputs above."},
+        {
+            "type": "usage",
+            "input_tokens": 32100,
+            "output_tokens": 980,
+            "total_tokens": 33080,
+            "model_calls": 6,
+        },
+        {"type": "turn_end", "text": ""},
+        {"_eval": "document.getElementById('conversation').scrollTop = 0"},
+        {"_sleep": 300},
+    ]
+
+
 def _scenarios() -> dict:
     convo = _convo()
     plot_focus = [{"_eval": "window.jutulDebug.openView('slot:reservoir')"}, {"_sleep": 300}]
     closed = [{"_eval": "window.jutulDebug.closeCanvas()"}, {"_sleep": 200}]
+    slash = [_META, {"_eval": "window.jutulDebug.setPrompt('/')"}, {"_sleep": 250}]
     scns = [
         WebScenario("welcome", "Empty welcome screen.", []),
+        WebScenario(
+            "tools",
+            "Every tool kind: plan/checklist, edit diff, file, shell, "
+            "search, delegate, remember, csv, ui note.",
+            _tools_steps(),
+            height=1500,
+        ),
+        WebScenario("slash", "Slash-command autocomplete menu.", slash, height=820),
         WebScenario(
             "canvas",
             "Conversation with a plot + report pinned in the canvas (report active).",

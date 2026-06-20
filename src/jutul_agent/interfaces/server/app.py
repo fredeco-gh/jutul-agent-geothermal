@@ -267,8 +267,39 @@ class _StreamState:
             await self.cancel_turn()
         elif kind == "ui_event":
             self._host.session.trace.append("ui_event", {"payload": message.get("payload")})
+        elif kind == "command":
+            await self._handle_command(message)
         else:
             await _safe_send(self._ws, {"type": "error", "message": f"unknown message {kind!r}"})
+
+    async def _handle_command(self, message: dict[str, Any]) -> None:
+        """Apply a session setting (model, approval policy) mid-conversation.
+
+        Rebuilds the agent in place — the kernel, the conversation history, and the
+        live Julia state all survive — so a front end can offer these as commands.
+        """
+        if self._busy():
+            await _safe_send(
+                self._ws,
+                {"type": "error", "message": "finish the current turn before changing settings"},
+            )
+            return
+        command = message.get("command")
+        arg = str(message.get("arg") or "")
+        try:
+            if command == "set_model":
+                self._host.reconfigure(model=arg)
+            elif command == "set_approval":
+                self._host.reconfigure(approval_mode=arg)
+            else:
+                await _safe_send(
+                    self._ws, {"type": "error", "message": f"unknown command {command!r}"}
+                )
+                return
+        except Exception as exc:  # surface a bad model/mode, keep the session alive
+            await _safe_send(
+                self._ws, {"type": "error", "message": f"could not apply {command}: {exc}"}
+            )
 
     async def _start_prompt(self, text: str) -> None:
         if self._busy():

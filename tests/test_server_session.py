@@ -218,6 +218,25 @@ def test_artifact_wire_events_live_plot_uses_live_url() -> None:
     }
 
 
+def test_command_reconfigures_session(tmp_path: Path) -> None:
+    # A `command` message rebuilds the agent in place (model / approval policy).
+    # reconfigure is stubbed here (the real one rebuilds a provider-backed agent);
+    # a following unknown command, whose error we read, proves the first was
+    # processed in order.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        calls: list[dict] = []
+        manager.get(sid).reconfigure = lambda **kw: calls.append(kw)  # type: ignore[method-assign]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "command", "command": "set_model", "arg": "anthropic:c"})
+            ws.send_json({"type": "command", "command": "set_approval", "arg": "auto"})
+            ws.send_json({"type": "command", "command": "bogus"})
+            err = ws.receive_json()
+    assert calls == [{"model": "anthropic:c"}, {"approval_mode": "auto"}]
+    assert err["type"] == "error" and "bogus" in err["message"]
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

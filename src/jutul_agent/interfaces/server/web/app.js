@@ -22,6 +22,7 @@ let model = null;
 let assistant = null; // { el, raw } for the in-progress assistant message
 const toolCards = new Map(); // tool_call_id -> { details, body, chip }
 let busy = false;
+let pendingInterrupt = null; // { card } while an approval awaits a decision
 
 const ICONS = {
   plot: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>',
@@ -117,6 +118,8 @@ async function newChat() {
   thread.innerHTML = "";
   toolCards.clear();
   assistant = null;
+  pendingInterrupt = null;
+  promptEl.placeholder = "Message jutul-agent…";
   resetCanvas();
   const w = el("div", "welcome");
   w.innerHTML = "<h1>What would you like to explore?</h1>";
@@ -150,8 +153,24 @@ function handle(msg) {
     case "interrupt": return onInterrupt(msg);
     case "usage": return onUsage(msg);
     case "turn_end": return onTurnEnd();
+    case "ui": return onUi(msg);
     case "error": return onError(msg.message);
   }
+}
+
+// A tool drove the application's interface. The action vocabulary belongs to the
+// host app (see docs/server-interface.md); a real app applies it to its own
+// controls. This reference UI has none, so it surfaces the action transparently
+// — both honest and useful when building/​debugging a host app. Host apps can
+// override window.jutulDebug.onUi to apply actions to their interface.
+function onUi(msg) {
+  if (window.onJutulUi && window.onJutulUi(msg) === true) return; // host-app hook
+  finalizeAssistant();
+  const note = add(el("div", "ui-note"));
+  note.appendChild(el("span", "ui-gear", "⚙"));
+  note.appendChild(el("span", "ui-action", msg.action || "ui"));
+  const payload = msg.payload && Object.keys(msg.payload).length ? JSON.stringify(msg.payload) : "";
+  if (payload) note.appendChild(el("span", "ui-payload", payload));
 }
 
 function ensureAssistant() {
@@ -206,6 +225,60 @@ function codeArg(args) {
   return null;
 }
 
+// Render a tool card's body, specialized per tool so each reads well: a plan as
+// a checklist, an edit as a diff, a written file as its content, code-bearing
+// tools as a code block, and anything else as a compact key/value list.
+function fillToolBody(body, msg) {
+  const name = msg.name;
+  const args = msg.args || {};
+  if (name === "write_todos" && Array.isArray(args.todos)) {
+    body.appendChild(renderTodos(args.todos));
+    return;
+  }
+  if (name === "edit_file" && (args.old_string != null || args.new_string != null)) {
+    if (args.file_path) body.appendChild(el("div", "tool-path", args.file_path));
+    body.appendChild(renderDiff(String(args.old_string || ""), String(args.new_string || "")));
+    return;
+  }
+  if (name === "write_file" && args.content != null) {
+    if (args.file_path) body.appendChild(el("div", "tool-path", args.file_path));
+    const pre = el("pre", "tool-code");
+    pre.appendChild(el("code", null, String(args.content)));
+    body.appendChild(pre);
+    return;
+  }
+  const code = codeArg(args);
+  if (code) {
+    const pre = el("pre", "tool-code");
+    pre.appendChild(el("code", null, code));
+    body.appendChild(pre);
+    return;
+  }
+  if (Object.keys(args).length) {
+    body.appendChild(el("div", "tool-args", summarizeArgs(args)));
+  }
+}
+
+const TODO_MARK = { completed: "✓", in_progress: "▸", pending: "○" };
+function renderTodos(todos) {
+  const ul = el("ul", "todos");
+  for (const t of todos) {
+    const status = t.status || "pending";
+    const li = el("li", `todo ${status}`);
+    li.appendChild(el("span", "todo-mark", TODO_MARK[status] || "○"));
+    li.appendChild(el("span", "todo-text", t.content || t.activeForm || ""));
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function renderDiff(oldStr, newStr) {
+  const pre = el("pre", "tool-diff");
+  if (oldStr) for (const line of oldStr.split("\n")) pre.appendChild(el("div", "del", "- " + line));
+  if (newStr) for (const line of newStr.split("\n")) pre.appendChild(el("div", "add", "+ " + line));
+  return pre;
+}
+
 function onTool(msg) {
   let card = toolCards.get(msg.tool_call_id);
   if (!card) {
@@ -219,14 +292,7 @@ function onTool(msg) {
     chip.innerHTML = '<span class="spinner"></span>';
     sum.appendChild(chip);
     const body = el("div", "body");
-    const code = codeArg(msg.args);
-    if (code) {
-      const pre = el("pre", "tool-code");
-      pre.appendChild(el("code", null, code));
-      body.appendChild(pre);
-    } else if (msg.args && Object.keys(msg.args).length) {
-      body.appendChild(el("div", "tool-args", summarizeArgs(msg.args)));
-    }
+    fillToolBody(body, msg);
     const out = el("pre", "tool-output");
     out.hidden = true;
     body.appendChild(out);
@@ -469,21 +535,48 @@ function updateViewsButton() {
 
 function onInterrupt(msg) {
   finalizeAssistant();
+  clearWorking();
   const card = add(el("div", "approval"));
+  pendingInterrupt = { card };
   const names = msg.actions.map((a) => a.label || a.name).join(", ");
-  card.appendChild(el("div", "title", `Approve: ${names}?`));
+  card.appendChild(el("div", "title", `Approve ${names}?`));
+  // Show what each action will actually do (the command, file, etc.).
+  for (const a of msg.actions) {
+    const detail = argPreview(a.args) || a.description;
+    if (detail) card.appendChild(el("pre", "approval-detail", detail));
+  }
   const buttons = el("div", "buttons");
-  for (const decision of msg.allowed_decisions) {
+  // approve/reject resolve immediately; "respond" is sent by typing a reply.
+  for (const decision of msg.allowed_decisions.filter((d) => d !== "respond")) {
     const btn = el("button", decision === "approve" ? "btn primary" : "btn", decision);
-    btn.onclick = () => {
-      ws.send(JSON.stringify({ type: "decision", decision }));
-      card.remove();
-      setBusy(true);
-      showWorking();
-    };
+    btn.onclick = () => sendDecision(decision);
     buttons.appendChild(btn);
   }
   card.appendChild(buttons);
+  if (msg.allowed_decisions.includes("respond")) {
+    card.appendChild(el("div", "approval-hint", "…or type a reply below to send feedback."));
+    promptEl.placeholder = "Reply to the agent…";
+  }
+  // The turn is paused on the user, so free the composer (it is not "working").
+  setBusy(false);
+}
+
+function sendDecision(decision, message) {
+  if (!ws || !pendingInterrupt) return;
+  const payload = { type: "decision", decision };
+  if (message) payload.message = message;
+  ws.send(JSON.stringify(payload));
+  clearInterrupt();
+  setBusy(true);
+  showWorking();
+}
+
+function clearInterrupt() {
+  if (pendingInterrupt) {
+    pendingInterrupt.card.remove();
+    pendingInterrupt = null;
+  }
+  promptEl.placeholder = "Message jutul-agent…";
 }
 
 function onTurnEnd() {
@@ -547,13 +640,28 @@ function addUserBubble(text) {
 
 function send() {
   const text = promptEl.value.trim();
-  if (!text || busy || !ws) return;
+  if (!text || !ws) return;
+  slashMenu.hidden = true;
+  // A slash command is an instruction to the interface, not a turn.
+  if (text.startsWith("/")) {
+    dispatchSlash(text);
+    promptEl.value = "";
+    resize();
+    return;
+  }
+  if (busy) return;
   addUserBubble(text);
-  ws.send(JSON.stringify({ type: "prompt", text }));
+  // A reply while an approval is pending is feedback to the agent (respond),
+  // not a new turn.
+  if (pendingInterrupt) {
+    sendDecision("respond", text);
+  } else {
+    ws.send(JSON.stringify({ type: "prompt", text }));
+    setBusy(true);
+    showWorking();
+  }
   promptEl.value = "";
   resize();
-  setBusy(true);
-  showWorking();
 }
 
 function resize() {
@@ -561,14 +669,154 @@ function resize() {
   promptEl.style.height = Math.min(promptEl.scrollHeight, 200) + "px";
 }
 
-promptEl.addEventListener("input", resize);
+// --- slash commands -------------------------------------------------------
+
+const SLASH = [
+  { name: "/help", desc: "show available commands", run: showHelp },
+  { name: "/clear", desc: "clear the visible conversation", run: clearThread },
+  { name: "/new", desc: "start a new chat", run: newChat },
+  { name: "/copy", desc: "copy the last assistant message", run: copyLast },
+  { name: "/context", desc: "show how much context the last turn used", run: showContext },
+  { name: "/model", hint: "[provider:model]", desc: "switch the model (keeps the session)", run: cmdModel },
+  { name: "/approval-mode", hint: "[ask|workspace|auto]", desc: "set the approval policy", run: cmdApproval },
+];
+
+function addSystemNote(text, kind) {
+  finalizeAssistant();
+  const n = add(el("div", "sys-note" + (kind ? " " + kind : "")));
+  n.textContent = text;
+  return n;
+}
+
+function dispatchSlash(text) {
+  const name = text.split(/\s+/)[0];
+  const arg = text.slice(name.length).trim();
+  const cmd = SLASH.find((c) => c.name === name);
+  if (!cmd) return addSystemNote(`Unknown command ${name}. Type /help for the list.`, "warn");
+  cmd.run(arg);
+}
+
+function showHelp() {
+  finalizeAssistant();
+  const card = add(el("div", "help-card"));
+  card.appendChild(el("div", "help-title", "Commands"));
+  for (const c of SLASH) {
+    const row = el("div", "help-row");
+    row.appendChild(el("span", "help-name", c.name + (c.hint ? " " + c.hint : "")));
+    row.appendChild(el("span", "help-desc", c.desc));
+    card.appendChild(row);
+  }
+}
+
+function clearThread() {
+  thread.innerHTML = "";
+  const w = el("div", "welcome");
+  w.innerHTML = "<h1>What would you like to explore?</h1>";
+  thread.appendChild(w);
+}
+
+function copyLast() {
+  const blocks = thread.querySelectorAll(".msg.assistant .markdown");
+  const last = blocks[blocks.length - 1];
+  if (!last) return addSystemNote("No assistant message to copy yet.");
+  navigator.clipboard.writeText(last.textContent || "").then(
+    () => addSystemNote("Copied the last reply to the clipboard."),
+    () => addSystemNote("Could not access the clipboard.", "warn"),
+  );
+}
+
+function showContext() {
+  const tok = lastInputTokens ? formatTokens(lastInputTokens) : "—";
+  addSystemNote(`Context: ~${tok} input tokens on the last turn · model ${model || "default"}.`);
+}
+
+function cmdModel(arg) {
+  if (!arg) return addSystemNote(`Current model: ${model || "default"}. Usage: /model <provider:model>.`);
+  model = arg;
+  metaEl.innerHTML = `${model} · ${(sessionId || "").slice(0, 13)}`;
+  sendCommand("set_model", arg, `Switched the model to ${arg}.`);
+}
+
+function cmdApproval(arg) {
+  const modes = ["ask", "workspace", "auto"];
+  if (!modes.includes(arg)) return addSystemNote(`Usage: /approval-mode ${modes.join(" | ")}.`);
+  sendCommand("set_approval", arg, `Approval policy set to ${arg}.`);
+}
+
+function sendCommand(command, arg, note) {
+  if (!ws) return;
+  ws.send(JSON.stringify({ type: "command", command, arg }));
+  if (note) addSystemNote(note);
+}
+
+// Autocomplete menu above the composer.
+const slashMenu = el("div", "slash-menu");
+slashMenu.hidden = true;
+document.querySelector(".composer-wrap").prepend(slashMenu);
+let slashItems = [];
+let slashIndex = 0;
+
+function updateSlashMenu() {
+  const v = promptEl.value;
+  slashItems = v.startsWith("/") && !/\s/.test(v) ? SLASH.filter((c) => c.name.startsWith(v)) : [];
+  if (!slashItems.length) {
+    slashMenu.hidden = true;
+    return;
+  }
+  slashIndex = Math.min(slashIndex, slashItems.length - 1);
+  slashMenu.innerHTML = "";
+  slashItems.forEach((c, i) => {
+    const item = el("div", "slash-item" + (i === slashIndex ? " active" : ""));
+    item.appendChild(el("span", "slash-name", c.name + (c.hint ? " " + c.hint : "")));
+    item.appendChild(el("span", "slash-desc", c.desc));
+    item.onclick = () => completeSlash(c);
+    slashMenu.appendChild(item);
+  });
+  slashMenu.hidden = false;
+}
+
+function completeSlash(cmd) {
+  promptEl.value = cmd.name + (cmd.hint ? " " : "");
+  slashMenu.hidden = true;
+  promptEl.focus();
+  resize();
+}
+
+promptEl.addEventListener("input", () => {
+  resize();
+  slashIndex = 0;
+  updateSlashMenu();
+});
 promptEl.addEventListener("keydown", (e) => {
+  if (!slashMenu.hidden && slashItems.length) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      slashIndex = (slashIndex + 1) % slashItems.length;
+      return updateSlashMenu();
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      slashIndex = (slashIndex - 1 + slashItems.length) % slashItems.length;
+      return updateSlashMenu();
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      return completeSlash(slashItems[slashIndex]);
+    }
+    if (e.key === "Escape") {
+      slashMenu.hidden = true;
+      return;
+    }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     send();
   }
 });
-sendEl.onclick = () => (busy ? stop() : send());
+sendEl.onclick = () => {
+  if (busy && !promptEl.value.trim().startsWith("/")) return stop();
+  send();
+};
 document.getElementById("new-chat").onclick = newChat;
 document.getElementById("canvas-close").onclick = closeCanvas;
 viewsBtn.onclick = () => { if (activeView) openView(activeView); };
@@ -610,6 +858,8 @@ window.jutulDebug = {
   openView,
   closeCanvas,
   views,
+  dispatchSlash,
+  setPrompt: (v) => { promptEl.value = v; updateSlashMenu(); },
 };
 
 init();

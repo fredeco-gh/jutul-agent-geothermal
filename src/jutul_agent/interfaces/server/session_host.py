@@ -38,12 +38,47 @@ class SessionHost:
         agent: Any,
         backend: Any | None = None,
         exit_stack: AsyncExitStack | None = None,
+        checkpointer: Any | None = None,
+        model: str | None = None,
+        approval_mode: str | None = None,
+        surface: str = "web",
+        extensions: Sequence[Capability] = (),
     ) -> None:
         self.session = session
         self.agent = agent
         self.backend = backend
         self._exit_stack = exit_stack
         self._runner: TurnRunner | None = None
+        # Kept so the agent can be rebuilt in place (e.g. /model, /approval-mode)
+        # without restarting the kernel — the same checkpointer keeps the history
+        # and the same session keeps the live Julia state.
+        self._checkpointer = checkpointer
+        self._model = model
+        self._approval_mode = approval_mode
+        self._surface = surface
+        self._extensions = list(extensions)
+
+    def reconfigure(self, *, model: str | None = None, approval_mode: str | None = None) -> None:
+        """Rebuild the agent in place with a new model and/or approval policy.
+
+        The kernel, checkpointer, and session are untouched, so conversation
+        history and the live Julia REPL survive the switch; only the agent graph
+        and its turn runner are replaced."""
+        from jutul_agent.agent.builder import build_agent
+
+        if model is not None:
+            self._model = model
+        if approval_mode is not None:
+            self._approval_mode = approval_mode
+        self.agent, self.backend = build_agent(
+            self.session,
+            model=self._model,
+            checkpointer=self._checkpointer,
+            approval_mode=self._approval_mode,
+            surface=self._surface,
+            extensions=self._extensions,
+        )
+        self._runner = None  # rebuilt lazily against the new agent
 
     @property
     def session_id(self) -> str:
@@ -187,19 +222,30 @@ class SessionHost:
             checkpointer = await stack.enter_async_context(
                 AsyncSqliteSaver.from_conn_string(str(ckpt_path))
             )
+            all_extensions = [*discover_extensions(), *extensions]
             agent, backend = build_agent(
                 session,
                 model=model,
                 checkpointer=checkpointer,
                 approval_mode=approval_mode,
                 surface=surface,
-                extensions=[*discover_extensions(), *extensions],
+                extensions=all_extensions,
             )
         except BaseException:
             await stack.aclose()
             raise
 
-        return cls(session=session, agent=agent, backend=backend, exit_stack=stack)
+        return cls(
+            session=session,
+            agent=agent,
+            backend=backend,
+            exit_stack=stack,
+            checkpointer=checkpointer,
+            model=model,
+            approval_mode=approval_mode,
+            surface=surface,
+            extensions=all_extensions,
+        )
 
 
 def _add_headless_display(stack: AsyncExitStack, env: dict[str, str]) -> None:

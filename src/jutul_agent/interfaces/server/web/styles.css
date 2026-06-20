@@ -251,6 +251,41 @@ details.block .body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* A file path heading above an edit diff or written file. */
+.tool-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+/* Plan / todo list (write_todos) */
+.todos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.todo { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.85rem; }
+.todo-mark { flex: none; width: 1rem; text-align: center; font-weight: 700; }
+.todo.completed .todo-mark { color: #16a34a; }
+.todo.completed .todo-text { color: var(--muted); text-decoration: line-through; }
+.todo.in_progress .todo-mark { color: var(--accent); }
+.todo.in_progress .todo-text { color: var(--text); font-weight: 600; }
+.todo.pending .todo-mark { color: var(--muted); }
+.todo.pending .todo-text { color: var(--text); }
+/* Edit diff (edit_file) */
+.tool-diff {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.tool-diff .del { color: #b91c1c; background: #ef44441a; }
+.tool-diff .add { color: #15803d; background: #16a34a1a; }
+@media (prefers-color-scheme: dark) {
+  .tool-diff .del { color: #fca5a5; }
+  .tool-diff .add { color: #86efac; }
+}
 .reasoning .body {
   font-family: var(--font);
   font-size: 0.85rem;
@@ -336,7 +371,24 @@ details.block .body {
   padding: 0.75rem 0.9rem;
 }
 .approval .title { font-weight: 600; margin-bottom: 0.5rem; }
+.approval-detail {
+  margin: 0 0 0.5rem; padding: 0.5rem 0.6rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  font-family: var(--mono); font-size: 0.78rem; color: var(--text);
+  white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+}
 .approval .buttons { display: flex; gap: 0.5rem; }
+.approval-hint { margin-top: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+
+/* A host-app interface update (ui message) — transparency note in the thread. */
+.ui-note {
+  display: flex; align-items: center; gap: 0.5rem; align-self: center;
+  font-size: 0.78rem; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0.25rem 0.7rem;
+}
+.ui-note .ui-action { font-weight: 600; color: var(--text); }
+.ui-note .ui-payload { font-family: var(--mono); font-size: 0.72rem; opacity: 0.85; }
 .btn {
   border: 1px solid var(--border); background: var(--surface); color: var(--text);
   padding: 0.4rem 0.8rem; border-radius: 9px;
@@ -344,11 +396,47 @@ details.block .body {
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn:hover { filter: brightness(1.05); }
 
+/* System notes (slash-command feedback) and the help card */
+.sys-note {
+  align-self: center; max-width: var(--maxw);
+  font-size: 0.8rem; color: var(--muted);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0.3rem 0.85rem;
+}
+.sys-note.warn { color: #b45309; background: #f59e0b1a; border-color: #f59e0b55; }
+.help-card {
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 12px; padding: 0.7rem 0.9rem; box-shadow: var(--shadow);
+}
+.help-title { font-weight: 650; margin-bottom: 0.4rem; }
+.help-row { display: flex; gap: 0.8rem; font-size: 0.85rem; padding: 0.12rem 0; }
+.help-name { flex: none; min-width: 13rem; font-family: var(--mono); font-size: 0.8rem; color: var(--accent); }
+.help-desc { color: var(--muted); }
+
 /* Composer */
 .composer-wrap {
   padding: 0.6rem 1.1rem 0.9rem;
   background: linear-gradient(to top, var(--bg) 60%, transparent);
+  position: relative;
 }
+/* Slash-command autocomplete */
+.slash-menu {
+  max-width: var(--maxw);
+  margin: 0 auto 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.slash-menu[hidden] { display: none; }
+.slash-item {
+  display: flex; gap: 0.8rem; align-items: baseline;
+  padding: 0.4rem 0.8rem; cursor: pointer;
+}
+.slash-item.active, .slash-item:hover { background: var(--surface-2); }
+.slash-item .slash-name { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); min-width: 13rem; }
+.slash-item .slash-desc { color: var(--muted); font-size: 0.82rem; }
 .composer {
   max-width: var(--maxw);
   margin: 0 auto;
