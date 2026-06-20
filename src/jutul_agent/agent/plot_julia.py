@@ -135,9 +135,20 @@ async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) ->
     loaded = await session.julia.eval("import CairoMakie, WGLMakie, Bonito")
     if loaded.error:
         return (
-            f"ERROR: interactive web plots need WGLMakie + Bonito (and CairoMakie) in the "
-            f"{adapter.name} Julia environment, which did not load. Add them to the env's "
-            f"Project.toml and rebuild. Julia said: {_truncate(loaded.error, 300)}"
+            f"ERROR: interactive web plots need WGLMakie + Bonito (the web overlay env) "
+            f"alongside the {adapter.name} env, which did not load. Julia said: "
+            f"{_truncate(loaded.error, 300)}"
+        )
+    # The base env and the stacked overlay must share one Makie, or backend
+    # interop (figure built under one, rendered by the other) breaks. Guard it
+    # once with a clear, actionable message instead of a cryptic later failure.
+    consistent = await session.julia.eval("CairoMakie.Makie === WGLMakie.Makie")
+    if consistent.error or "true" not in consistent.output:
+        return (
+            "ERROR: the web-plotting overlay and the workspace env resolved different "
+            "Makie versions, so interactive plots can't render. Rebuild the overlay: "
+            "delete the 'web-overlay' directory under the jutul-agent state home and "
+            "restart the server."
         )
     return None
 
@@ -145,17 +156,18 @@ async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) ->
 def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -> str:
     """Julia to evaluate the user code and export the figure for the browser.
 
-    CairoMakie is active while the user code runs (so native 2D plotters have a
-    backend) and writes a PNG for the record. WGLMakie then exports the same figure
-    to a self-contained, responsive HTML file the web UI embeds. The PNG save is
-    guarded so a figure CairoMakie cannot render still yields the interactive HTML.
+    WGLMakie is active while the user code runs, so native plotters (including 3D
+    reservoir views) build WebGL scenes; Bonito exports the figure to a
+    self-contained, responsive HTML file the web UI embeds. A CairoMakie PNG is
+    then saved best-effort for the record and the agent's ``view`` (it succeeds for
+    2D figures; a GL-only 3D scene simply yields no PNG, and the HTML still works).
     """
 
     return (
         "begin\n"
         "    import CairoMakie, WGLMakie, Bonito\n"
-        "    CairoMakie.activate!()\n"
-        "    local _M = CairoMakie.Makie\n"
+        "    WGLMakie.activate!(resize_to = :parent)\n"
+        "    local _M = WGLMakie.Makie\n"
         "    local _val = begin\n"
         f"{user_code}\n"
         "    end\n"
@@ -172,10 +184,13 @@ def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -
         '        "plot_julia: the code did not produce a Makie figure. Return a Figure, "  *\n'
         '        "or call a plotter that builds one."\n'
         "    )\n"
-        f'    try; CairoMakie.save(raw"{png_path.as_posix()}", _fig); catch; end\n'
-        "    WGLMakie.activate!(resize_to = :parent)\n"
         f'    Bonito.export_static(raw"{html_path.as_posix()}",\n'
         '        Bonito.App(() -> Bonito.DOM.div(_fig; style = "width:100%; height:100%;")))\n'
+        "    try\n"
+        "        CairoMakie.activate!()\n"
+        f'        CairoMakie.save(raw"{png_path.as_posix()}", _fig)\n'
+        "    catch\n"
+        "    end\n"
         '    "ok"\n'
         "end"
     )

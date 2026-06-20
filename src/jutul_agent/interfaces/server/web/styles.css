@@ -84,7 +84,8 @@ html, body {
   text-overflow: ellipsis;
 }
 .meta .chip { color: var(--text); }
-.actions { display: flex; gap: 0.5rem; }
+.actions { display: flex; gap: 0.5rem; align-items: center; }
+.usage { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 button { font-family: inherit; font-size: 0.85rem; cursor: pointer; }
 .ghost {
@@ -182,14 +183,57 @@ details.block > summary::before {
 details.block[open] > summary::before { transform: rotate(90deg); }
 details.block .body {
   padding: 0 0.85rem 0.75rem 1.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.tool-name { font-weight: 600; color: var(--text); flex: none; }
+.tool-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+/* Code the agent ran (run_julia / execute / plot), and the captured output. */
+.tool-code {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.tool-code code { font-family: inherit; }
+.tool-output {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-args {
+  font-family: var(--mono);
+  font-size: 0.78rem;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
 }
-.tool-name { font-weight: 600; color: var(--text); }
-.reasoning summary { font-style: italic; }
+.reasoning .body {
+  font-family: var(--font);
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .chip-status {
   margin-left: auto;
@@ -273,6 +317,10 @@ details.block .body {
 .send:hover { filter: brightness(1.06); }
 .send:active { transform: scale(0.96); }
 .send:disabled { opacity: 0.4; cursor: default; }
+/* While a turn runs the send button is a stop button. */
+.send.stop { background: var(--muted); }
+.send.stop svg { display: none; }
+.send.stop::after { content: ""; width: 11px; height: 11px; border-radius: 2px; background: #fff; }
 .hint { max-width: var(--maxw); margin: 0.35rem auto 0; color: var(--muted); font-size: 0.75rem; text-align: center; }
 
 /* Working indicator */

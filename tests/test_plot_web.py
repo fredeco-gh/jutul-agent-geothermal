@@ -25,6 +25,8 @@ async def test_web_surface_exports_interactive_html(tmp_path: Path) -> None:
 
     async def fake_eval(code: str) -> EvalResult:
         seen.append(code)
+        if code.strip() == "CairoMakie.Makie === WGLMakie.Makie":
+            return EvalResult(output="true")
         return EvalResult(output="")
 
     session = _session(tmp_path, FakeJulia(eval_handler=fake_eval))
@@ -57,6 +59,19 @@ async def test_web_surface_reports_missing_backend(tmp_path: Path) -> None:
 
     result = await _call(tool, {"code": "lines(1:3, 1:3)"})
     assert "WGLMakie" in result and "Bonito" in result
+
+
+async def test_web_surface_reports_makie_mismatch(tmp_path: Path) -> None:
+    async def fake_eval(code: str) -> EvalResult:
+        if code.strip() == "CairoMakie.Makie === WGLMakie.Makie":
+            return EvalResult(output="false")
+        return EvalResult(output="")
+
+    session = _session(tmp_path, FakeJulia(eval_handler=fake_eval))
+    tool = make_plot_julia_tool(session, surface="web")
+
+    result = await _call(tool, {"code": "lines(1:3, 1:3)"})
+    assert "Makie" in result and "overlay" in result
 
 
 async def test_tui_surface_still_uses_glmakie(tmp_path: Path) -> None:

@@ -1,5 +1,4 @@
 [deps]
-Bonito = "824d6782-a2ef-11e9-3a09-e5662e0c26f8"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
@@ -14,7 +13,6 @@ JutulAgent = "79b12aa6-73c9-4fa8-9c54-e97745f42687"
 JutulAgentJutulDarcy = "69df87d8-8b4b-4157-81d2-8b93ff139141"
 JutulDarcy = "82210473-ab04-4dce-b31b-11573c4f8e0a"
 MultiComponentFlash = "35e5bd01-9722-4017-9deb-64a5d32478ff"
-WGLMakie = "276b4fcb-3e11-5398-bf8b-a0c2d153d008"
 
 # Floor at the release the skills are written against, so a stale env can't drift
 # behind them (it fails to resolve and the drift check prompts a rebuild). 0.3.8

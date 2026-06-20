@@ -13,6 +13,7 @@ The constructor takes a ready-made session and agent so tests can wrap fakes;
 from __future__ import annotations
 
 import contextlib
+import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -133,6 +134,24 @@ class SessionHost:
             **blas_thread_env(compute_threads),
             HYPRE_THREADS_ENV_VAR: str(resolve_hypre_threads()),
         }
+        # The web surface stacks the WGLMakie/Bonito overlay on top of the
+        # workspace env so interactive plots work without putting those heavy
+        # packages in the base (TUI/CLI) env. Best-effort: if the overlay can't be
+        # prepared (e.g. offline), the session still runs with static PNG plots.
+        if surface == "web":
+            import asyncio as _asyncio
+
+            from jutul_agent.interfaces.server.web_overlay import (
+                WebOverlayError,
+                ensure_web_overlay,
+                load_path_for,
+            )
+
+            try:
+                overlay = await _asyncio.to_thread(ensure_web_overlay)
+                env["JULIA_LOAD_PATH"] = load_path_for(project, overlay)
+            except WebOverlayError as exc:
+                print(f"warning: {exc}", file=sys.stderr)
         kernel_config = KernelConfig(
             julia_project=project,
             stderr_file=sdir / "julia-startup.log",
