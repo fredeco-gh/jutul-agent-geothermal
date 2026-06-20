@@ -42,8 +42,14 @@ jutul-agent serve --sim jutuldarcy
 
 Open <http://127.0.0.1:8742>. Type a task and watch the agent stream its reply,
 run tools, and return plots, with the same session core behind it as every other
-front end. The page is plain static files the server hosts, so it also serves as
-a reference for building a custom front end.
+front end.
+
+The bundled UI is plain static files (HTML, CSS, vanilla JavaScript) with no build
+step, so it ships inside the Python package, is served directly, and is trivial to
+read and fork. It is a reference, not a framework commitment: a production
+application brings its own front-end stack and codes against the protocol below.
+That is the deliberate split here, the protocol is the stable product and the UI
+is one consumer of it.
 
 ## Running a session
 
