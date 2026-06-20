@@ -96,8 +96,17 @@ Messages from the server to the front end:
 | `ui` | A command for the front end to apply to its interface |
 
 Messages from the front end to the server are a prompt to start a turn, a
-decision to answer an approval request, a cancel to stop a running turn, and a
-user-interface event, described next.
+decision to answer an approval request (`approve`, `reject`, or `respond` with a
+message), a cancel to stop a running turn, a command to change a session setting
+(`set_model`, `set_approval`), and a user-interface event, described next. A
+command rebuilds the agent in place, so the model or approval policy can change
+mid-session without losing the conversation or the live Julia state.
+
+The bundled UI exposes these as slash commands in the composer (`/model`,
+`/approval-mode`, plus client-side `/help`, `/clear`, `/copy`, `/context`), and
+renders each tool call in a form that fits it — a plan as a checklist, a file
+edit as a diff, and so on. None of that is part of the contract; it is how one
+front end chooses to present the same stream.
 
 ### Driving the user interface
 
