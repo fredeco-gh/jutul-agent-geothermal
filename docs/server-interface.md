@@ -44,6 +44,16 @@ Open <http://127.0.0.1:8742>. Type a task and watch the agent stream its reply,
 run tools, and return plots, with the same session core behind it as every other
 front end.
 
+The server is bound to **one folder and one simulator**, the same way the
+command line is: the folder is its launch directory (or `--workspace`), and the
+simulator comes from `--sim`, the folder's saved `[workspace] simulator`, or
+auto-detection — and is then remembered for next time. Every session in that
+folder shares one simulator and one Julia environment; the UI does not switch
+simulators in place. To work with a different simulator, serve from a different
+folder. (A future central launcher that opens sessions across folders is a
+deliberate later step; the create/resume API already accepts a folder and a
+simulator per request, so it can grow into that without a protocol change.)
+
 The bundled UI is plain static files (HTML, CSS, vanilla JavaScript) with no build
 step, so it ships inside the Python package, is served directly, and is trivial to
 read and fork. It is a reference, not a framework commitment: a production
@@ -54,8 +64,8 @@ is one consumer of it.
 ## Running a session
 
 A front end starts by creating a session over REST. Creating a session chooses
-the simulator, the model, and the approval policy (see
-[approval and safety](approval.md)), and returns a session id. An earlier
+the model and the approval policy (see [approval and safety](approval.md)) — the
+simulator is the server's bound one — and returns a session id. An earlier
 session can be reopened by id, because conversation state is kept per session;
 `/sessions/{id}/messages` then replays the whole conversation — text, reasoning,
 tool cards and their results, and views — so a reopened chat is reconstructed
@@ -85,7 +95,7 @@ turn.
 | `GET` | `/sessions/{id}/memory` | The session's workspace memory, as a page |
 | `POST` | `/sessions/{id}/upload` | Add a file to the session workspace (`uploads/<name>`) |
 | `GET` | `/models` | List the models that can be selected |
-| `GET` | `/simulators` | List the simulators that can be selected, each with its display name and starter prompts |
+| `GET` | `/simulators` | List installed simulators (the server is bound to one, returned as `default`), each with its display name and starter prompts |
 
 ## The wire protocol
 

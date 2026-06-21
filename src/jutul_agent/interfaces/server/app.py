@@ -43,7 +43,9 @@ class HttpToolSpecModel(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    sim: str
+    # Optional: a server bound to a simulator (the serve case) uses its own; a
+    # request may still name one, which must match the bound simulator.
+    sim: str | None = None
     model: str | None = None
     approval_mode: str | None = None
     workspace: str | None = None
@@ -51,7 +53,7 @@ class CreateSessionRequest(BaseModel):
 
 
 class ResumeSessionRequest(BaseModel):
-    sim: str
+    sim: str | None = None
     model: str | None = None
     approval_mode: str | None = None
     workspace: str | None = None
@@ -115,24 +117,39 @@ def create_app(
             }
         return {"simulators": names, "default": default_sim, "details": details}
 
-    def _workspace_for(sim: str, requested: str | None) -> Path | None:
-        """The workspace a session for ``sim`` should run in.
+    def _bound_sim(requested: str | None) -> str:
+        """The simulator a new/resumed session must use.
 
-        An explicit request wins. The launched (default) simulator uses the
-        server's own workspace (the cwd, or whatever ``set_workspace_root`` set),
-        preserving single-simulator behaviour. Any other simulator picked at
-        runtime gets its own cached environment under the state home, so switching
-        simulators doesn't rebuild the one shared workspace each time.
+        The server is bound to one folder, and a folder is bound to one simulator
+        (chosen at ``serve`` time), so every session here uses that one — the web UI
+        does not switch simulators in place. A request for a different simulator is
+        refused. Without a bound simulator (tests, or a future multi-folder
+        launcher) the caller's choice is honoured.
         """
-        if requested:
-            return Path(requested)
-        if default_sim is None or sim == default_sim:
-            return None  # SessionHost.start falls back to workspace_root()
-        from jutul_agent.paths import state_home
+        if default_sim is None:
+            if not requested:
+                raise HTTPException(status_code=400, detail="no simulator specified")
+            return requested
+        if requested and requested != default_sim:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"this server is bound to simulator '{default_sim}'; serve from "
+                    "another folder to use a different simulator"
+                ),
+            )
+        return default_sim
 
-        ws = state_home() / "web-workspaces" / sim
-        ws.mkdir(parents=True, exist_ok=True)
-        return ws
+    def _workspace_for(requested: str | None) -> Path | None:
+        """The folder a session runs in: an explicit request, else the server's folder.
+
+        The server runs in one folder (its launch directory, where the bound
+        simulator's Julia environment lives), so a normal session runs there
+        (``None`` lets ``SessionHost.start`` fall back to ``workspace_root()``).
+        The ``requested`` override is retained for a future launcher that opens a
+        session in a chosen folder.
+        """
+        return Path(requested) if requested else None
 
     @app.get("/sessions/history")
     def session_history(limit: int = 40) -> dict[str, Any]:
@@ -212,12 +229,13 @@ def create_app(
 
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
+        sim = _bound_sim(req.sim)
         try:
             host = await manager.create(
-                sim=req.sim,
+                sim=sim,
                 model=req.model,
                 approval_mode=req.approval_mode,
-                workspace=_workspace_for(req.sim, req.workspace),
+                workspace=_workspace_for(req.workspace),
                 extensions=_request_extensions(req.tools),
             )
         except KeyError as exc:  # unknown simulator
@@ -233,10 +251,10 @@ def create_app(
         try:
             host = await manager.resume(
                 session_id,
-                sim=req.sim,
+                sim=_bound_sim(req.sim),
                 model=req.model,
                 approval_mode=req.approval_mode,
-                workspace=_workspace_for(req.sim, req.workspace),
+                workspace=_workspace_for(req.workspace),
             )
         except (KeyError, FileNotFoundError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

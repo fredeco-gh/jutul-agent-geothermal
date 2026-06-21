@@ -12,7 +12,7 @@ const canvasBody = document.getElementById("canvas-body");
 const canvasTabs = document.getElementById("canvas-tabs");
 const viewsBtn = document.getElementById("views-btn");
 const viewsCount = document.getElementById("views-count");
-const simSelect = document.getElementById("sim-select");
+const simLabel = document.getElementById("sim-label");
 
 let ws = null;
 let sessionId = null;
@@ -93,52 +93,33 @@ async function init() {
   const models = await fetch("/models").then((r) => r.json()).catch(() => ({}));
   const names = sims.simulators || [];
   simDetails = sims.details || {};
-  const saved = localStorage.getItem("ja_sim");
-  sim = saved && names.includes(saved) ? saved : sims.default || names[0] || "jutuldarcy";
+  // The server is bound to one simulator (this folder's); the UI does not switch.
+  sim = sims.default || names[0] || "jutuldarcy";
   model = models.default || null;
-  populateSims(names);
+  setSimLabel();
   showWelcome();
   refreshHistory();
   await startSession();
 }
 
-// Offer a simulator picker when more than one is installed. Switching starts a
-// fresh session for that simulator; the first session for a simulator may pause
-// while its Julia environment is prepared.
-function populateSims(names) {
-  if (!names || names.length < 2) return;
-  simSelect.innerHTML = "";
-  for (const name of names) {
-    const opt = el("option", null, name);
-    opt.value = name;
-    simSelect.appendChild(opt);
-  }
-  simSelect.value = sim;
-  simSelect.hidden = false;
-  simSelect.onchange = () => switchSim(simSelect.value);
-}
-
-async function switchSim(name) {
-  if (name === sim || busy) {
-    simSelect.value = sim;
-    return;
-  }
-  sim = name;
-  localStorage.setItem("ja_sim", name);
-  await newChat();
+// Show the bound simulator as a static chip (a folder is bound to one simulator).
+function setSimLabel() {
+  const d = simDetails[sim];
+  const name = (d && d.display_name) || sim;
+  if (!name) return;
+  simLabel.textContent = name;
+  simLabel.hidden = false;
 }
 
 async function startSession() {
-  // The first session for a simulator builds its Julia environment, which can
-  // take a few minutes; say so rather than looking hung.
+  // The first session in a folder builds its Julia environment, which can take a
+  // few minutes; say so rather than looking hung.
   metaEl.textContent = `starting ${sim}… (first run builds its environment, this can take a few minutes)`;
-  if (simSelect) simSelect.disabled = true;
   const resp = await fetch("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sim }),
   }).catch(() => null);
-  if (simSelect) simSelect.disabled = false;
   if (!resp || !resp.ok) {
     metaEl.textContent = "could not start a session";
     return;
@@ -167,7 +148,7 @@ async function resumeSession(id, sessSim) {
   resetCanvas();
   if (sessSim) {
     sim = sessSim;
-    if (simSelect) simSelect.value = sim;
+    setSimLabel();
   }
   metaEl.textContent = `resuming ${sim}…`;
   const resp = await fetch(`/sessions/${id}/resume`, {

@@ -80,19 +80,18 @@ html, body {
   border-radius: 4px;
   background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, #22d3ee));
 }
-.sim-select {
-  font-family: inherit;
-  font-size: 0.8rem;
+/* This folder's simulator, shown as a static chip (one folder = one simulator). */
+.sim-chip {
+  font-size: 0.76rem;
   font-weight: 600;
-  color: var(--text);
-  background: var(--surface);
+  color: var(--muted);
+  background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 9px;
-  padding: 0.3rem 0.5rem;
-  cursor: pointer;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  white-space: nowrap;
 }
-.sim-select[hidden] { display: none; }
-.sim-select:hover { border-color: color-mix(in srgb, var(--border) 60%, var(--accent)); }
+.sim-chip[hidden] { display: none; }
 .meta {
   flex: 1;
   color: var(--muted);

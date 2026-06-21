@@ -219,9 +219,9 @@ _HISTORY = {
         },
         {
             "id": "2026-06-20-1715-9f3c",
-            "title": "BattMo Chen2020 discharge",
+            "title": "CO2 injection inventory",
             "started": "2026-06-20T17:15:00",
-            "sim": "battmo",
+            "sim": "jutuldarcy",
         },
     ]
 }

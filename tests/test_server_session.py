@@ -74,6 +74,26 @@ def test_simulators_endpoint(tmp_path: Path) -> None:
     assert detail["examples"] and all(isinstance(e, str) for e in detail["examples"])
 
 
+def test_bound_simulator_uses_one_and_rejects_mismatch(tmp_path: Path) -> None:
+    # A server bound to a simulator (the `serve` case) uses it for every session
+    # and refuses a request for a different one — one folder, one simulator, no
+    # in-place switching. Without a bound simulator the caller's choice is honoured.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager, default_sim="jutuldarcy")) as client:
+        assert client.get("/simulators").json()["default"] == "jutuldarcy"
+        assert client.post("/sessions", json={"sim": "jutuldarcy"}).status_code == 200
+        assert client.post("/sessions", json={}).status_code == 200  # omitted → the bound one
+        mismatch = client.post("/sessions", json={"sim": "battmo"})
+        assert mismatch.status_code == 409 and "bound" in mismatch.json()["detail"]
+
+
+def test_unbound_server_requires_a_simulator(tmp_path: Path) -> None:
+    # No bound simulator (tests / a future multi-folder launcher): the caller must
+    # name one, and an omitted simulator is a clear 400 rather than a crash.
+    with _client(echo_agent, tmp_path) as client:
+        assert client.post("/sessions", json={}).status_code == 400
+
+
 def test_web_ui_is_served(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         root = client.get("/")
