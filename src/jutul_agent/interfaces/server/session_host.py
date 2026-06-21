@@ -119,11 +119,14 @@ class SessionHost:
     async def compact(self) -> str:
         """Summarize older turns to free context; return a human-readable result."""
         from jutul_agent.agent.summarization import MANUAL_KEEP_MESSAGES, compact_thread
+        from jutul_agent.models import DEFAULT_MODEL
 
+        # The summarizer needs a concrete model spec; ``_model`` is None when the
+        # session uses the default, so fall back to it (else compact hits a None).
         result = await compact_thread(
             self.agent,
             thread_id=self.session.session_id,
-            model=self._model,
+            model=self._model or DEFAULT_MODEL,
             backend=self.backend,
             trace=self.session.trace,
         )

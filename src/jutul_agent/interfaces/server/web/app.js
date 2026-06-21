@@ -19,6 +19,8 @@ let sessionId = null;
 let sim = null;
 let simDetails = {}; // name -> { display_name, examples } from /simulators
 let model = null;
+let allModels = []; // [{id, label, provider}] for the model picker
+let contextWindow = null; // active model's token window, for the % indicator
 let assistant = null; // { el, raw } for the in-progress assistant message
 const toolCards = new Map(); // tool_call_id -> { details, body, chip }
 let busy = false;
@@ -106,10 +108,22 @@ async function init() {
   // The server is bound to one simulator (this folder's); the UI does not switch.
   sim = sims.default || names[0] || "jutuldarcy";
   model = models.default || null;
+  allModels = models.models || [];
   setSimLabel();
   showWelcome();
   refreshHistory();
+  refreshContextWindow();
   await startSession();
+}
+
+// The active model's token window (for the % context indicator). Fetched lazily
+// because the server instantiates the model to read it.
+async function refreshContextWindow() {
+  const data = await fetch(`/models/window?model=${encodeURIComponent(model || "")}`)
+    .then((r) => r.json())
+    .catch(() => ({}));
+  contextWindow = data.window || null;
+  if (lastInputTokens) onUsage(lastUsage || { input_tokens: lastInputTokens });
 }
 
 // Show the bound simulator as a static chip (a folder is bound to one simulator).
@@ -144,6 +158,14 @@ function openSocket() {
   ws = new WebSocket(`${proto}://${location.host}/sessions/${sessionId}/stream`);
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => setBusy(false);
+  setWarming(true); // the kernel warms in the background until the first turn lands
+}
+
+// The "warming up Julia" hint: the kernel loads the simulator + plotting stack on
+// a fresh/resumed session, so the first run can be slow; clear it once a turn lands.
+function setWarming(on) {
+  const w = document.getElementById("warming");
+  if (w) w.hidden = !on;
 }
 
 // Reopen an earlier session: resume it server-side (history is restored, the
@@ -963,6 +985,7 @@ function onTurnEnd() {
     if (label) label.textContent = "Reasoning";
   }
   setBusy(false);
+  setWarming(false); // a turn completed, so the kernel is warm
   refreshHistory(); // the session now has a title (and may be newly added)
   notifyDone("The agent finished your turn.");
 }
@@ -999,12 +1022,16 @@ function onError(message) {
 let lastInputTokens = 0;
 let lastUsage = null;
 function onUsage(msg) {
-  // Show the latest turn's input size as a rough "context used" figure.
+  // Show the latest turn's input size as context used — a percentage of the
+  // model's window when known, else the absolute token count.
   lastInputTokens = msg.input_tokens || lastInputTokens;
-  lastUsage = msg;
+  lastUsage = msg.input_tokens ? msg : lastUsage;
   const usage = document.getElementById("usage");
   if (usage && lastInputTokens) {
-    usage.textContent = `${formatTokens(lastInputTokens)} ctx`;
+    usage.textContent = contextWindow
+      ? `${Math.round((lastInputTokens / contextWindow) * 100)}% ctx`
+      : `${formatTokens(lastInputTokens)} ctx`;
+    usage.title = `${formatTokens(lastInputTokens)}${contextWindow ? " / " + formatTokens(contextWindow) : ""} context tokens`;
   }
 }
 
@@ -1172,23 +1199,60 @@ function copyLast() {
 }
 
 function showContext() {
+  const m = model || "default";
+  const win = contextWindow ? `${formatTokens(contextWindow)} tokens` : "unknown";
   if (!lastUsage) {
-    return addSystemNote(`Model ${model || "default"} · ${sim}. Send a message to see context usage.`);
+    return addSystemNote(
+      `Context\n  model:   ${m}\n  window:  ${win}\n  used:    nothing yet — send a message`,
+    );
   }
   const u = lastUsage;
+  const held = u.input_tokens || 0;
+  const pct = contextWindow ? ` (${Math.round((held / contextWindow) * 100)}% of window)` : "";
   const calls = u.model_calls || 1;
   addSystemNote(
-    `Context · model ${model || "default"} · last turn: ${formatTokens(u.input_tokens || 0)} in, ` +
-      `${formatTokens(u.output_tokens || 0)} out, ${formatTokens(u.total_tokens || 0)} total ` +
-      `over ${calls} model call${calls === 1 ? "" : "s"}.`,
+    `Context\n  model:    ${m}\n  window:   ${win}\n` +
+      `  in use:   ${formatTokens(held)} tokens${pct}\n` +
+      `  last turn: ${formatTokens(u.input_tokens || 0)} in · ${formatTokens(u.output_tokens || 0)} out · ` +
+      `${formatTokens(u.total_tokens || 0)} total over ${calls} model call${calls === 1 ? "" : "s"}`,
   );
 }
 
 function cmdModel(arg) {
-  if (!arg) return addSystemNote(`Current model: ${model || "default"}. Usage: /model <provider:model>.`);
-  model = arg;
-  metaEl.innerHTML = `${model} · ${(sessionId || "").slice(0, 13)}`;
-  sendCommand("set_model", arg, `Switched the model to ${arg}.`);
+  if (arg) {
+    model = arg;
+    metaEl.innerHTML = `${model} · ${(sessionId || "").slice(0, 13)}`;
+    sendCommand("set_model", arg, `Switched the model to ${arg}.`);
+    refreshContextWindow();
+    return;
+  }
+  showModelMenu();
+}
+
+// Floating picker (like the slash menu) listing the selectable models, grouped by
+// provider; clicking one switches the session to it.
+function showModelMenu() {
+  if (!allModels.length) {
+    return addSystemNote("No selectable models found. Usage: /model <provider:model>.");
+  }
+  modelMenu.innerHTML = "";
+  modelMenu.appendChild(el("div", "slash-head", "Switch model"));
+  let provider = null;
+  for (const m of allModels) {
+    if (m.provider !== provider) {
+      modelMenu.appendChild(el("div", "model-provider", m.provider));
+      provider = m.provider;
+    }
+    const item = el("div", "slash-item" + (m.id === model ? " active" : ""));
+    item.appendChild(el("span", "slash-name", m.label));
+    item.appendChild(el("span", "slash-desc", m.id));
+    item.onclick = () => {
+      modelMenu.hidden = true;
+      cmdModel(m.id);
+    };
+    modelMenu.appendChild(item);
+  }
+  modelMenu.hidden = false;
 }
 
 function cmdApproval(arg) {
@@ -1241,6 +1305,15 @@ function cmdAddDir(arg) {
 const slashMenu = el("div", "slash-menu");
 slashMenu.hidden = true;
 document.querySelector(".composer-wrap").prepend(slashMenu);
+
+// The model picker (shown by `/model` with no argument); dismissed on outside click.
+const modelMenu = el("div", "slash-menu model-menu");
+modelMenu.hidden = true;
+document.querySelector(".composer-wrap").prepend(modelMenu);
+document.addEventListener("click", (e) => {
+  if (!modelMenu.hidden && !modelMenu.contains(e.target)) modelMenu.hidden = true;
+});
+
 let slashItems = [];
 let slashIndex = 0;
 

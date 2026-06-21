@@ -455,9 +455,17 @@ pre:hover .copy-btn { opacity: 1; }
   align-self: center; max-width: var(--maxw);
   font-size: 0.8rem; color: var(--muted);
   background: var(--surface-2); border: 1px solid var(--border);
-  border-radius: 999px; padding: 0.3rem 0.85rem;
+  border-radius: 14px; padding: 0.3rem 0.85rem;
+  white-space: pre-line; /* multi-line notes (e.g. /context) keep their line breaks */
 }
 .sys-note.warn { color: #b45309; background: #f59e0b1a; border-color: #f59e0b55; }
+/* "warming up Julia" hint in the top bar */
+.warming { font-size: 0.74rem; color: var(--muted); display: inline-flex; align-items: center; gap: 0.35rem; }
+.warming[hidden] { display: none; }
+.warming::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); animation: blink 1.2s infinite;
+}
 .help-card {
   border: 1px solid var(--border); background: var(--surface);
   border-radius: 12px; padding: 0.7rem 0.9rem; box-shadow: var(--shadow);
@@ -491,6 +499,16 @@ pre:hover .copy-btn { opacity: 1; }
 .slash-item.active, .slash-item:hover { background: var(--surface-2); }
 .slash-item .slash-name { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); min-width: 13rem; }
 .slash-item .slash-desc { color: var(--muted); font-size: 0.82rem; }
+.slash-head {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); padding: 0.45rem 0.8rem 0.2rem;
+}
+/* The model picker can be long, so let it scroll. */
+.model-menu { max-height: min(60vh, 28rem); overflow-y: auto; }
+.model-provider {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+  padding: 0.35rem 0.8rem 0.1rem; text-transform: capitalize;
+}
 
 /* Session history: a collapsible left sidebar spanning the full height. */
 .sidebar {

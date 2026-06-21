@@ -99,9 +99,27 @@ def create_app(
 
     @app.get("/models")
     def list_models() -> dict[str, Any]:
-        from jutul_agent.models import DEFAULT_MODEL, PROVIDERS
+        from jutul_agent.models import DEFAULT_MODEL, PROVIDERS, discover_models
 
-        return {"default": DEFAULT_MODEL, "providers": sorted(PROVIDERS)}
+        # The selectable models for the UI's model picker (provider profile data,
+        # no model instantiation), grouped flat with their provider.
+        models = [
+            {"id": info.id, "label": info.label, "provider": provider, "note": info.note}
+            for provider, infos in discover_models().items()
+            for info in infos
+        ]
+        return {"default": DEFAULT_MODEL, "providers": sorted(PROVIDERS), "models": models}
+
+    @app.get("/models/window")
+    def model_window(model: str | None = None) -> dict[str, Any]:
+        """The context window for a model (for the % indicator), or null if unknown.
+
+        Separate from ``/models`` because it instantiates the model to read its
+        profile, so the UI asks for just the active model, lazily.
+        """
+        from jutul_agent.models import DEFAULT_MODEL, context_window
+
+        return {"model": model or DEFAULT_MODEL, "window": context_window(model or DEFAULT_MODEL)}
 
     @app.get("/simulators")
     def list_simulators() -> dict[str, Any]:

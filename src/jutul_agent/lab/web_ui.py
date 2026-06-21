@@ -28,7 +28,17 @@ from pathlib import Path
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "interfaces" / "server" / "web"
 
-_MODELS = {"default": "claude-opus-4-8", "providers": ["anthropic", "google", "openai"]}
+_MODELS = {
+    "default": "openai:gpt-5.4-mini",
+    "providers": ["anthropic", "google", "openai"],
+    "models": [
+        {"id": "anthropic:claude-opus-4-8", "label": "claude-opus-4-8", "provider": "anthropic"},
+        {"id": "anthropic:claude-sonnet-4-6", "label": "sonnet-4-6", "provider": "anthropic"},
+        {"id": "google:gemini-3.5-flash", "label": "gemini-3.5-flash", "provider": "google"},
+        {"id": "openai:gpt-5.4", "label": "gpt-5.4", "provider": "openai"},
+        {"id": "openai:gpt-5.4-mini", "label": "gpt-5.4-mini", "provider": "openai"},
+    ],
+}
 _SIMS = {
     "simulators": ["jutuldarcy", "battmo", "fimbul"],
     "default": "jutuldarcy",
@@ -181,6 +191,10 @@ def _install_routes(page):
     page.route(
         "**/simulators",
         lambda r: r.fulfill(content_type="application/json", body=json.dumps(_SIMS)),
+    )
+    page.route(
+        "**/models/window*",
+        lambda r: r.fulfill(content_type="application/json", body=json.dumps({"window": 400000})),
     )
     page.route(
         "**/models",
@@ -554,6 +568,29 @@ def _scenarios() -> dict:
             height=1500,
         ),
         WebScenario("slash", "Slash-command autocomplete menu.", slash, height=820),
+        WebScenario(
+            "model",
+            "The model picker (/model with no argument) + the warming-up chip.",
+            [_META, {"_eval": "window.jutulDebug.dispatchSlash('/model')"}, {"_sleep": 300}],
+            height=620,
+        ),
+        WebScenario(
+            "context",
+            "The /context breakdown and the percentage context chip.",
+            [
+                _META,
+                {
+                    "type": "usage",
+                    "input_tokens": 45000,
+                    "output_tokens": 132,
+                    "total_tokens": 46000,
+                    "model_calls": 32,
+                },
+                {"_eval": "window.jutulDebug.dispatchSlash('/context')"},
+                {"_sleep": 200},
+            ],
+            height=520,
+        ),
         WebScenario(
             "history",
             "Left history sidebar (full height) with past chats and per-sim examples.",
