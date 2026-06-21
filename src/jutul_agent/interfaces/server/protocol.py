@@ -29,6 +29,7 @@ from jutul_agent.trace.messages import content_to_str
 __all__ = [
     "artifact_to_wire",
     "interrupt_to_wire",
+    "notice_to_wire",
     "to_wire",
     "turn_end_to_wire",
     "ui_command",
@@ -155,6 +156,12 @@ def viz_to_wire(
     """
 
     return {"type": "viz", "url": url, "title": title, "kind": kind, "poster": poster, "slot": slot}
+
+
+def notice_to_wire(text: str) -> dict[str, Any]:
+    """A server-originated system note (a command's result, e.g. /compact, /add-dir)."""
+
+    return {"type": "notice", "text": text}
 
 
 def ui_command(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

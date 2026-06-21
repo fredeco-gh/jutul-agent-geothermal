@@ -81,6 +81,52 @@ class SessionHost:
         self._runner = None  # rebuilt lazily against the new agent
 
     @property
+    def memory_dir(self):
+        """The workspace memory directory for this session (created if needed)."""
+        from jutul_agent.agent.memory import ensure_memory_dir
+        from jutul_agent.paths import workspace_memory_dir
+
+        return ensure_memory_dir(self.session.memory_dir(workspace_memory=workspace_memory_dir()))
+
+    async def compact(self) -> str:
+        """Summarize older turns to free context; return a human-readable result."""
+        from jutul_agent.agent.summarization import MANUAL_KEEP_MESSAGES, compact_thread
+
+        result = await compact_thread(
+            self.agent,
+            thread_id=self.session.session_id,
+            model=self._model,
+            backend=self.backend,
+            trace=self.session.trace,
+        )
+        if result is None:
+            return (
+                f"Nothing to compact yet — the conversation is within the newest "
+                f"{MANUAL_KEEP_MESSAGES} messages."
+            )
+        extra = " The summarized turns were saved and can be reopened." if result.offloaded else ""
+        return (
+            f"Compacted: summarized {result.messages_summarized} older messages and kept the "
+            f"{result.messages_kept} most recent.{extra}"
+        )
+
+    def add_dir(self, path: str) -> str:
+        """Give the agent read/write access to another folder; return a result note."""
+        from jutul_agent.agent.added_dirs import AddDirError, add_dir, added_dirs
+        from jutul_agent.paths import workspace_root
+
+        if not path:
+            dirs = added_dirs(self.backend)
+            if not dirs:
+                return "Usage: /add-dir <path>. Adds a folder the agent can read and edit."
+            return "Added folders:\n" + "\n".join(f"  {e.path}" for e in dirs)
+        try:
+            entry = add_dir(self.backend, path, workspace=workspace_root())
+        except AddDirError as exc:
+            return f"Could not add folder: {exc}"
+        return f"Added folder: {entry.path}. The agent can read and edit it from its next turn."
+
+    @property
     def session_id(self) -> str:
         return self.session.session_id
 

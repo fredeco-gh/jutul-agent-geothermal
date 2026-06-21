@@ -154,8 +154,15 @@ function handle(msg) {
     case "usage": return onUsage(msg);
     case "turn_end": return onTurnEnd();
     case "ui": return onUi(msg);
+    case "notice": return onNotice(msg);
     case "error": return onError(msg.message);
   }
+}
+
+// A server-originated system note: the result of a command (/compact, /add-dir).
+function onNotice(msg) {
+  setBusy(false); // a command that set the working state (e.g. /compact) finished
+  addSystemNote(msg.text || "");
 }
 
 // A tool drove the application's interface. The action vocabulary belongs to the
@@ -684,6 +691,10 @@ const SLASH = [
   { name: "/context", desc: "show how much context the last turn used", run: showContext },
   { name: "/model", hint: "[provider:model]", desc: "switch the model (keeps the session)", run: cmdModel },
   { name: "/approval-mode", hint: "[ask|workspace|auto]", desc: "set the approval policy", run: cmdApproval },
+  { name: "/transcript", hint: "[md]", desc: "open the transcript (md to download)", run: cmdTranscript },
+  { name: "/memory", desc: "view the workspace memory", run: cmdMemory },
+  { name: "/compact", desc: "summarize older turns to free context", run: cmdCompact },
+  { name: "/add-dir", hint: "<path>", desc: "give the agent another folder", run: cmdAddDir },
 ];
 
 function addSystemNote(text, kind) {
@@ -752,6 +763,37 @@ function sendCommand(command, arg, note) {
   if (!ws) return;
   ws.send(JSON.stringify({ type: "command", command, arg }));
   if (note) addSystemNote(note);
+}
+
+// Pin a server-rendered document (transcript, memory) into the canvas as a view.
+function pinDoc(url, title, slot) {
+  onViz({ url, title, kind: "report", slot });
+}
+
+function cmdTranscript(arg) {
+  if (!sessionId) return addSystemNote("No active session.");
+  if (arg === "md" || arg === "markdown") {
+    window.open(`/sessions/${sessionId}/transcript?format=md`, "_blank", "noopener");
+    return addSystemNote("Downloading the transcript (markdown).");
+  }
+  pinDoc(`/sessions/${sessionId}/transcript?format=html`, "Transcript", "transcript");
+}
+
+function cmdMemory() {
+  if (!sessionId) return addSystemNote("No active session.");
+  pinDoc(`/sessions/${sessionId}/memory`, "Workspace memory", "memory");
+}
+
+function cmdCompact() {
+  if (busy) return addSystemNote("Finish the current turn before compacting.");
+  addSystemNote("Compacting the conversation…");
+  setBusy(true);
+  showWorking();
+  sendCommand("compact", "");
+}
+
+function cmdAddDir(arg) {
+  sendCommand("add_dir", arg);
 }
 
 // Autocomplete menu above the composer.

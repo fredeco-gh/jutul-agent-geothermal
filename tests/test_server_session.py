@@ -237,6 +237,40 @@ def test_command_reconfigures_session(tmp_path: Path) -> None:
     assert err["type"] == "error" and "bogus" in err["message"]
 
 
+def test_command_compact_and_add_dir(tmp_path: Path) -> None:
+    # /compact and /add-dir reply with a `notice`; the host methods are stubbed
+    # (the real ones summarize via a model / mutate the backend).
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        host = manager.get(sid)
+        host.add_dir = lambda arg: f"added:{arg}"  # type: ignore[method-assign]
+
+        async def fake_compact() -> str:
+            return "compacted:ok"
+
+        host.compact = fake_compact  # type: ignore[method-assign]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "command", "command": "add_dir", "arg": "/data"})
+            n1 = ws.receive_json()
+            ws.send_json({"type": "command", "command": "compact"})
+            n2 = ws.receive_json()
+    assert n1 == {"type": "notice", "text": "added:/data"}
+    assert n2 == {"type": "notice", "text": "compacted:ok"}
+
+
+def test_transcript_and_memory_endpoints(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        html = client.get(f"/sessions/{sid}/transcript")
+        assert html.status_code == 200 and "text/html" in html.headers["content-type"]
+        md = client.get(f"/sessions/{sid}/transcript", params={"format": "md"})
+        assert md.status_code == 200 and "markdown" in md.headers["content-type"]
+        mem = client.get(f"/sessions/{sid}/memory")
+        assert mem.status_code == 200 and "Memory" in mem.text
+        assert client.get("/sessions/nope/transcript").status_code == 404
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

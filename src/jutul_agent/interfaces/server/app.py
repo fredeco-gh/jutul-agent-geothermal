@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -173,6 +173,37 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such artifact")
         return FileResponse(target)
 
+    @app.get("/sessions/{session_id}/transcript")
+    def get_transcript(session_id: str, format: str = "html") -> Response:
+        """The session transcript, as a page to view (html) or a file to save (md)."""
+        host = manager.get(session_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="no such session")
+        from jutul_agent.trace import TraceLog
+        from jutul_agent.transcript import render_html, render_markdown
+
+        with TraceLog(host.session.state_dir / "trace.sqlite") as log:
+            events = list(log.iter_events())
+        if format in ("md", "markdown"):
+            return PlainTextResponse(
+                render_markdown(events),
+                media_type="text/markdown",
+                headers={"Content-Disposition": "attachment; filename=transcript.md"},
+            )
+        return HTMLResponse(render_html(events))
+
+    @app.get("/sessions/{session_id}/memory")
+    def get_memory(session_id: str) -> Response:
+        """The session's workspace memory, rendered as a page for the canvas."""
+        host = manager.get(session_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="no such session")
+        from jutul_agent.agent.memory import render_memory_overview
+        from jutul_agent.transcript.markdown_html import render_markdown_html
+
+        body = render_markdown_html(render_memory_overview(host.memory_dir))
+        return HTMLResponse(_doc_page("Memory", body))
+
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
         await _serve_stream(websocket, manager.get(session_id))
@@ -219,6 +250,23 @@ def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> lis
         else:
             events.append(protocol.artifact_to_wire(payload, url=url))
     return events
+
+
+def _doc_page(title: str, body_html: str) -> str:
+    """Wrap rendered HTML in a minimal, self-contained page for the canvas iframe."""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><title>" + title + "</title><style>"
+        "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+        "color:#1f2328;background:#fff;line-height:1.6}"
+        ".page{max-width:760px;margin:0 auto;padding:2rem 1.6rem}"
+        "h1,h2,h3{line-height:1.3;letter-spacing:-0.01em}h1{font-size:1.5rem}"
+        "code{font-family:ui-monospace,Consolas,monospace;background:#f0f1ee;padding:.1em .35em;"
+        "border-radius:5px;font-size:.88em}"
+        "pre{background:#f0f1ee;border:1px solid #e3e3df;border-radius:10px;padding:.8rem;"
+        "overflow:auto}"
+        "pre code{background:none;padding:0}a{color:#0e7490}"
+        "</style></head><body><div class='page'>" + body_html + "</div></body></html>"
+    )
 
 
 def _resolve_artifact(host: SessionHost, path: str):
@@ -291,6 +339,10 @@ class _StreamState:
                 self._host.reconfigure(model=arg)
             elif command == "set_approval":
                 self._host.reconfigure(approval_mode=arg)
+            elif command == "add_dir":
+                await _safe_send(self._ws, protocol.notice_to_wire(self._host.add_dir(arg)))
+            elif command == "compact":
+                await _safe_send(self._ws, protocol.notice_to_wire(await self._host.compact()))
             else:
                 await _safe_send(
                     self._ws, {"type": "error", "message": f"unknown command {command!r}"}
