@@ -440,6 +440,10 @@ class _StreamState:
         if self._busy():
             await _safe_send(self._ws, {"type": "error", "message": "a turn is already running"})
             return
+        # Name the session from its first prompt, like the CLI/TUI do, so it reads
+        # well in the history list. Idempotent (only the first prompt sets it).
+        with contextlib.suppress(Exception):
+            self._host.session.adopt_title(text)
         runner = self._host.runner
         self._spawn(lambda: runner.run_prompt(text, on_message=self._on_message))
 
