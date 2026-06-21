@@ -62,6 +62,21 @@ class SessionHost:
         # Set once a content-aware (LLM) title has been generated for this session,
         # so the server only attempts it on the first turn.
         self.titled = False
+        # At most one live WebSocket drives a session at a time: two would run
+        # turns against the one kernel concurrently and corrupt its state. ``attach``
+        # claims the session for a connection; ``detach`` releases it on disconnect.
+        self._attached = False
+
+    def attach(self) -> bool:
+        """Claim this session for a connection; ``False`` if one already holds it."""
+        if self._attached:
+            return False
+        self._attached = True
+        return True
+
+    def detach(self) -> None:
+        """Release the session so a later connection can attach."""
+        self._attached = False
 
     @property
     def model(self) -> str | None:

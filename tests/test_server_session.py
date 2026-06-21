@@ -27,7 +27,9 @@ from jutul_agent.interfaces.server.session_host import SessionHost
 from jutul_agent.session import Session, default_session_id
 
 
-def _manager(agent_factory: Callable[[], Any], tmp_path: Path) -> SessionManager:
+def _manager(
+    agent_factory: Callable[[], Any], tmp_path: Path, *, max_live: int = 16
+) -> SessionManager:
     """A manager whose sessions wrap a fresh fake agent and a real (fake-kernel) Session."""
 
     async def host_factory(
@@ -40,7 +42,7 @@ def _manager(agent_factory: Callable[[], Any], tmp_path: Path) -> SessionManager
         )
         return SessionHost(session=session, agent=agent_factory())
 
-    return SessionManager(host_factory=host_factory)
+    return SessionManager(host_factory=host_factory, max_live=max_live)
 
 
 def _client(agent_factory: Callable[[], Any], tmp_path: Path) -> TestClient:
@@ -92,6 +94,35 @@ def test_unbound_server_requires_a_simulator(tmp_path: Path) -> None:
     # name one, and an omitted simulator is a clear 400 rather than a crash.
     with _client(echo_agent, tmp_path) as client:
         assert client.post("/sessions", json={}).status_code == 400
+
+
+def test_manager_caps_live_sessions(tmp_path: Path) -> None:
+    # Each live session pins a Julia kernel, so the manager keeps only the most
+    # recent ``max_live`` and closes the rest (they stay resumable on disk).
+    manager = _manager(echo_agent, tmp_path, max_live=2)
+    with TestClient(create_app(manager)) as client:
+        ids = [
+            client.post("/sessions", json={"sim": "demo"}).json()["session_id"] for _ in range(3)
+        ]
+        live = client.get("/sessions").json()["sessions"]
+    assert set(live) == {ids[1], ids[2]}  # the oldest was evicted
+
+
+def test_second_connection_to_a_session_is_refused(tmp_path: Path) -> None:
+    # Two live sockets on one session would run turns on one kernel concurrently;
+    # the second is refused, and once the first closes a new one can attach.
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with (
+            client.websocket_connect(f"/sessions/{sid}/stream"),  # first holds the session
+            client.websocket_connect(f"/sessions/{sid}/stream") as ws2,
+        ):
+            refused = ws2.receive_json()
+        assert refused["type"] == "error" and "another window" in refused["message"]
+        # The first socket has closed, so a fresh connection attaches and runs.
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws3:
+            ws3.send_json({"type": "prompt", "text": "hi"})
+            assert _drain_turn(ws3)[-1]["type"] == "turn_end"
 
 
 def test_web_ui_is_served(tmp_path: Path) -> None:

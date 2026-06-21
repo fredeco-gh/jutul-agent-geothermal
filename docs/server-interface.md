@@ -116,6 +116,8 @@ Messages from the server to the front end:
 | `usage` | The token usage for the turn |
 | `turn_end` | The turn has finished |
 | `ui` | A command for the front end to apply to its interface |
+| `notice` | A system note from a command's result (e.g. `/compact`, `/add-dir`) |
+| `error` | Something went wrong (a bad command, a failed turn, an unknown session) |
 
 Messages from the front end to the server are a prompt to start a turn, a
 decision to answer an approval request (`approve`, `reject`, or `respond` with a

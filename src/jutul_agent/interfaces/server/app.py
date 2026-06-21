@@ -441,6 +441,15 @@ async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
         await _safe_send(websocket, {"type": "error", "message": "no such session"})
         await websocket.close()
         return
+    # One connection per session: a second (e.g. a duplicate browser tab) would run
+    # turns against the same kernel concurrently and corrupt it. Refuse it cleanly.
+    if not host.attach():
+        await _safe_send(
+            websocket,
+            {"type": "error", "message": "this session is already open in another window"},
+        )
+        await websocket.close()
+        return
 
     state = _StreamState(websocket, host)
     try:
@@ -451,6 +460,7 @@ async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
         pass
     finally:
         await state.cancel_turn()
+        host.detach()
 
 
 class _StreamState:

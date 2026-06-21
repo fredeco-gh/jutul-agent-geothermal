@@ -86,6 +86,30 @@ the simulator and the plotting stack), after which sessions start in
 seconds. If anything fails, `jutul-agent doctor` diagnoses the setup
 and prints a fix per finding.
 
+## Web interface
+
+Besides the terminal, jutul-agent has a browser UI: the same agent and session
+core behind a chat interface, with interactive plots and reports pinned beside
+the conversation. It ships in an optional `[server]` extra.
+
+```sh
+uv tool install "jutul-agent[server] @ git+https://github.com/SINTEF-agentlab/jutul-agent"
+# from a clone instead: uv sync --extra server
+```
+
+Serve a folder and open it in the browser:
+
+```sh
+cd my-battery-run            # a folder set up with `jutul-agent init`
+jutul-agent serve --sim battmo
+```
+
+Open <http://127.0.0.1:8742> and type a task. As on the command line, one folder
+is bound to one simulator and its Julia environment; serve from another folder to
+use another simulator. The server runs locally for a single trusted user — the
+[server interface guide](docs/server-interface.md) covers the HTTP/WebSocket
+protocol, embedding the agent in your own app, and the multi-user boundary.
+
 ## Documentation
 
 The full documentation lives at
