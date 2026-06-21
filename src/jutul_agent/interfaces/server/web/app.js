@@ -4,7 +4,6 @@
 
 const thread = document.getElementById("thread");
 const conversation = document.getElementById("conversation");
-const welcome = document.getElementById("welcome");
 const promptEl = document.getElementById("prompt");
 const sendEl = document.getElementById("send");
 const metaEl = document.getElementById("meta");
@@ -23,6 +22,7 @@ let assistant = null; // { el, raw } for the in-progress assistant message
 const toolCards = new Map(); // tool_call_id -> { details, body, chip }
 let busy = false;
 let pendingInterrupt = null; // { card } while an approval awaits a decision
+let lastPrompt = ""; // last submitted prompt, for ↑-recall and retry-on-error
 
 const ICONS = {
   plot: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>',
@@ -39,10 +39,38 @@ function el(tag, cls, text) {
 }
 
 function add(node) {
-  if (welcome) welcome.remove();
+  const w = thread.querySelector(".welcome");
+  if (w) w.remove();
   thread.appendChild(node);
   atBottom() && scrollDown();
   return node;
+}
+
+const EXAMPLES = [
+  "Set up a small 3D reservoir with one injector and one producer, run a short simulation, and show me the interactive result.",
+  "Plot the well results from the run.",
+  "Give me a quick tour of what this simulator can do.",
+];
+
+function showWelcome() {
+  thread.innerHTML = "";
+  const w = el("div", "welcome");
+  const h = el("h1", null, "What would you like to explore?");
+  const p = el("p", null,
+    "Ask a question or describe a task. The agent runs the simulator, writes and runs Julia, and shows results here.");
+  const ex = el("div", "examples");
+  for (const t of EXAMPLES) {
+    const btn = el("button", "example", t);
+    btn.onclick = () => {
+      if (busy || !ws) return;
+      promptEl.value = t;
+      resize();
+      send();
+    };
+    ex.appendChild(btn);
+  }
+  w.append(h, p, ex);
+  thread.appendChild(w);
 }
 
 function atBottom() {
@@ -58,9 +86,11 @@ async function init() {
   const sims = await fetch("/simulators").then((r) => r.json()).catch(() => ({}));
   const models = await fetch("/models").then((r) => r.json()).catch(() => ({}));
   const names = sims.simulators || [];
-  sim = sims.default || names[0] || "jutuldarcy";
+  const saved = localStorage.getItem("ja_sim");
+  sim = saved && names.includes(saved) ? saved : sims.default || names[0] || "jutuldarcy";
   model = models.default || null;
   populateSims(names);
+  showWelcome();
   await startSession();
 }
 
@@ -86,6 +116,7 @@ async function switchSim(name) {
     return;
   }
   sim = name;
+  localStorage.setItem("ja_sim", name);
   await newChat();
 }
 
@@ -180,9 +211,7 @@ async function newChat() {
   pendingInterrupt = null;
   promptEl.placeholder = "Message jutul-agent…";
   resetCanvas();
-  const w = el("div", "welcome");
-  w.innerHTML = "<h1>What would you like to explore?</h1>";
-  thread.appendChild(w);
+  showWelcome();
   await startSession();
 }
 
@@ -685,17 +714,44 @@ function onTurnEnd() {
     if (label) label.textContent = "Reasoning";
   }
   setBusy(false);
+  notifyDone("The agent finished your turn.");
+}
+
+function notifyDone(body) {
+  // Ping the user only when they've tabbed away from a (possibly long) turn.
+  if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification("jutul-agent", { body });
+    } catch {
+      /* notifications are best-effort */
+    }
+  }
 }
 
 function onError(message) {
-  add(el("div", "approval", message)).classList.add("title");
+  finalizeAssistant();
+  const card = add(el("div", "error-card"));
+  card.appendChild(el("div", "err-msg", message));
+  if (lastPrompt && !pendingInterrupt) {
+    const retry = el("button", "btn", "Retry");
+    retry.onclick = () => {
+      card.remove();
+      addUserBubble(lastPrompt);
+      ws.send(JSON.stringify({ type: "prompt", text: lastPrompt }));
+      setBusy(true);
+      showWorking();
+    };
+    card.appendChild(retry);
+  }
   setBusy(false);
 }
 
 let lastInputTokens = 0;
+let lastUsage = null;
 function onUsage(msg) {
   // Show the latest turn's input size as a rough "context used" figure.
   lastInputTokens = msg.input_tokens || lastInputTokens;
+  lastUsage = msg;
   const usage = document.getElementById("usage");
   if (usage && lastInputTokens) {
     usage.textContent = `${formatTokens(lastInputTokens)} ctx`;
@@ -749,12 +805,22 @@ function send() {
   if (pendingInterrupt) {
     sendDecision("respond", text);
   } else {
+    lastPrompt = text;
+    requestNotifyPermission();
     ws.send(JSON.stringify({ type: "prompt", text }));
     setBusy(true);
     showWorking();
   }
   promptEl.value = "";
   resize();
+}
+
+// Ask once, lazily, so a finished long turn can ping you when the tab is hidden.
+let notifyAsked = false;
+function requestNotifyPermission() {
+  if (notifyAsked || !("Notification" in window) || Notification.permission !== "default") return;
+  notifyAsked = true;
+  Notification.requestPermission().catch(() => {});
 }
 
 function resize() {
@@ -823,8 +889,16 @@ function copyLast() {
 }
 
 function showContext() {
-  const tok = lastInputTokens ? formatTokens(lastInputTokens) : "—";
-  addSystemNote(`Context: ~${tok} input tokens on the last turn · model ${model || "default"}.`);
+  if (!lastUsage) {
+    return addSystemNote(`Model ${model || "default"} · ${sim}. Send a message to see context usage.`);
+  }
+  const u = lastUsage;
+  const calls = u.model_calls || 1;
+  addSystemNote(
+    `Context · model ${model || "default"} · last turn: ${formatTokens(u.input_tokens || 0)} in, ` +
+      `${formatTokens(u.output_tokens || 0)} out, ${formatTokens(u.total_tokens || 0)} total ` +
+      `over ${calls} model call${calls === 1 ? "" : "s"}.`,
+  );
 }
 
 function cmdModel(arg) {
@@ -916,6 +990,10 @@ promptEl.addEventListener("input", () => {
   updateSlashMenu();
 });
 promptEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (!slashMenu.hidden) return (slashMenu.hidden = true);
+    if (busy) return stop(); // cancel a running turn
+  }
   if (!slashMenu.hidden && slashItems.length) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -931,10 +1009,11 @@ promptEl.addEventListener("keydown", (e) => {
       e.preventDefault();
       return completeSlash(slashItems[slashIndex]);
     }
-    if (e.key === "Escape") {
-      slashMenu.hidden = true;
-      return;
-    }
+  } else if (e.key === "ArrowUp" && !promptEl.value && lastPrompt) {
+    e.preventDefault(); // recall the last prompt into an empty composer
+    promptEl.value = lastPrompt;
+    resize();
+    return;
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -1032,6 +1111,7 @@ function renderHistory(sessions) {
   }
   for (const s of sessions) {
     const item = el("button", "history-item" + (s.id === sessionId ? " current" : ""));
+    item.dataset.id = s.id;
     item.appendChild(el("div", "h-title", s.title || "Untitled session"));
     const tag = s.id === sessionId ? " · current" : "";
     item.appendChild(el("div", "h-meta", `${s.sim} · ${timeAgo(s.started)}${tag}`));

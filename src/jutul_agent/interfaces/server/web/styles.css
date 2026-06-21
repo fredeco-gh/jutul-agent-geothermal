@@ -136,6 +136,13 @@ button { font-family: inherit; font-size: 0.85rem; cursor: pointer; }
 .welcome { margin: 14vh 0 0; text-align: center; color: var(--muted); }
 .welcome h1 { font-size: 1.7rem; font-weight: 600; color: var(--text); letter-spacing: -0.02em; margin: 0 0 0.5rem; }
 .welcome p { max-width: 30rem; margin: 0 auto; }
+.examples { display: flex; flex-direction: column; gap: 0.5rem; max-width: 30rem; margin: 1.4rem auto 0; }
+.example {
+  text-align: left; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); border-radius: 11px; padding: 0.6rem 0.8rem; font-size: 0.9rem;
+  cursor: pointer; transition: border-color 0.12s, background 0.12s;
+}
+.example:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--border) 50%, var(--accent)); }
 
 .msg { display: flex; flex-direction: column; }
 .msg.user { align-items: flex-end; }
@@ -395,6 +402,15 @@ pre:hover .copy-btn { opacity: 1; }
 }
 .approval .buttons { display: flex; gap: 0.5rem; }
 .approval-hint { margin-top: 0.5rem; font-size: 0.8rem; color: var(--muted); }
+
+/* Error card (a failed turn) with an optional retry */
+.error-card {
+  border: 1px solid color-mix(in srgb, var(--border) 45%, #ef4444);
+  background: #ef44440f; border-radius: 12px; padding: 0.7rem 0.9rem;
+  display: flex; align-items: center; gap: 0.8rem;
+}
+.error-card .err-msg { flex: 1; color: #b91c1c; font-size: 0.88rem; word-break: break-word; }
+@media (prefers-color-scheme: dark) { .error-card .err-msg { color: #fca5a5; } }
 
 /* A host-app interface update (ui message) — transparency note in the thread. */
 .ui-note {
