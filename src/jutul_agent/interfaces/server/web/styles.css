@@ -51,7 +51,7 @@ html, body {
 
 .app {
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 320px; /* never let the canvas squeeze the conversation away */
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -242,11 +242,20 @@ details.block .body {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
-  overflow-x: auto;
+  max-height: 340px;
+  overflow: auto;
   font-family: var(--mono);
   font-size: 0.78rem;
+  white-space: pre;
 }
 .tool-code code { font-family: inherit; }
+/* Julia syntax tokens (mid-tones that read on both light and dark surfaces). */
+.jl-kw { color: #a855f7; }
+.jl-str { color: #2f9e44; }
+.jl-num { color: #e8590c; }
+.jl-type { color: var(--accent); }
+.jl-mac { color: #d6336c; }
+.jl-com { color: var(--muted); font-style: italic; }
 /* Hover "Copy" button on code blocks */
 .copy-btn {
   position: absolute; top: 5px; right: 5px;
@@ -577,9 +586,9 @@ pre:hover .copy-btn { opacity: 1; }
 
 /* ---- Canvas: the persistent right-side view panel ---- */
 .canvas {
-  flex: 0 0 var(--canvas-w);
-  min-width: 380px;
-  max-width: 72%;
+  flex: 0 1 var(--canvas-w);
+  min-width: 360px;
+  max-width: 64%;
   height: 100vh;
   background: var(--surface);
   border-left: 1px solid var(--border);
@@ -648,11 +657,16 @@ pre:hover .copy-btn { opacity: 1; }
 }
 .canvas-loading.on { display: flex; }
 
-/* Narrow screens: the canvas can't share the row, so it overlays full width. */
-@media (max-width: 880px) {
+/* Medium and narrow screens: three columns get cramped, so the canvas overlays
+   the conversation (full width on a phone, a wide panel on a laptop) instead of
+   squeezing it. The grip is hidden since there's nothing to resize against. */
+@media (max-width: 1024px) {
   .canvas {
-    position: fixed; inset: 0; width: 100%; max-width: none; min-width: 0;
-    z-index: 40; box-shadow: -8px 0 24px #0000001a;
+    position: fixed; inset: 0 0 0 auto; width: min(640px, 100%); max-width: 100%;
+    min-width: 0; z-index: 40; box-shadow: -8px 0 24px #0000001a;
   }
   .canvas-grip { display: none; }
+}
+@media (max-width: 680px) {
+  .canvas { width: 100%; }
 }

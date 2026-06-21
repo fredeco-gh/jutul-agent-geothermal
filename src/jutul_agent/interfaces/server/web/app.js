@@ -42,9 +42,19 @@ function el(tag, cls, text) {
 function add(node) {
   const w = thread.querySelector(".welcome");
   if (w) w.remove();
+  const stay = atBottom(); // capture BEFORE appending — afterwards we're never "at bottom"
   thread.appendChild(node);
-  atBottom() && scrollDown();
+  if (stay) scrollDown();
   return node;
+}
+
+// Run a DOM mutation and keep the view pinned to the bottom if it was already
+// there. The check must happen before the mutation, since adding content makes
+// the old scroll position no longer "at the bottom".
+function keepingBottom(mutate) {
+  const stay = atBottom();
+  mutate();
+  if (stay) scrollDown();
 }
 
 // Fallback suggestions when the active simulator declares no examples of its own.
@@ -284,6 +294,7 @@ function onUi(msg) {
 
 function ensureAssistant() {
   if (!assistant) {
+    finalizeReasoning(); // assistant prose starts a new segment after any reasoning
     const wrap = add(el("div", "msg assistant"));
     const md = el("div", "markdown");
     wrap.appendChild(md);
@@ -294,16 +305,17 @@ function ensureAssistant() {
 
 function onText(text) {
   const a = ensureAssistant();
-  a.raw += text;
-  a.el.innerHTML = window.renderMarkdown(a.raw);
-  if (atBottom()) scrollDown();
+  keepingBottom(() => {
+    a.raw += text;
+    a.el.innerHTML = window.renderMarkdown(a.raw);
+  });
 }
 
 function onReasoning(text) {
   let block = thread.querySelector(".reasoning[data-live]");
   if (!block) {
     block = el("details", "block reasoning");
-    block.open = true; // visible while streaming; collapsed at turn end
+    block.open = true; // visible while streaming; collapsed when the segment ends
     block.setAttribute("data-live", "1");
     const sum = el("summary");
     sum.appendChild(el("span", "tool-name", "Reasoning"));
@@ -311,8 +323,17 @@ function onReasoning(text) {
     block.append(sum, body);
     add(block);
   }
-  block.querySelector(".body").textContent += text;
-  if (atBottom()) scrollDown();
+  keepingBottom(() => (block.querySelector(".body").textContent += text));
+}
+
+// End the current (live) reasoning block so the next thought starts a fresh one —
+// the terminal UI shows separate reasoning between tool calls, not one long block.
+function finalizeReasoning() {
+  const live = thread.querySelector(".reasoning[data-live]");
+  if (live) {
+    live.removeAttribute("data-live");
+    live.open = false;
+  }
 }
 
 // Args worth previewing on the collapsed summary line, in priority order.
@@ -332,11 +353,48 @@ function argPreview(args, name) {
   return String(first).split("\n")[0];
 }
 
-function codeArg(args) {
-  if (!args) return null;
-  if (args.code) return String(args.code);
-  if (args.command) return String(args.command);
-  return null;
+const JULIA_KEYWORDS = new Set([
+  "function", "end", "if", "else", "elseif", "for", "while", "do", "return", "break",
+  "continue", "using", "import", "export", "struct", "mutable", "abstract", "primitive",
+  "const", "global", "local", "let", "begin", "module", "macro", "quote", "try", "catch",
+  "finally", "where", "in", "isa", "true", "false", "nothing", "missing",
+]);
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// A small, dependency-free Julia highlighter for code shown in tool cards. It
+// tokenizes comments/strings/macros/numbers/words so nothing is highlighted
+// inside a string or comment; good enough for display (not a real parser).
+function highlightJulia(code) {
+  const re =
+    /(#=[\s\S]*?=#|#[^\n]*)|("""[\s\S]*?"""|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])')|(@[A-Za-z_]\w*)|(\b\d+\.?\d*(?:[eE][+-]?\d+)?\b)|([A-Za-z_]\w*!?)/g;
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = re.exec(code))) {
+    out += escapeHtml(code.slice(last, m.index));
+    last = re.lastIndex;
+    if (m[1]) out += `<span class="jl-com">${escapeHtml(m[1])}</span>`;
+    else if (m[2]) out += `<span class="jl-str">${escapeHtml(m[2])}</span>`;
+    else if (m[3]) out += `<span class="jl-mac">${escapeHtml(m[3])}</span>`;
+    else if (m[4]) out += `<span class="jl-num">${escapeHtml(m[4])}</span>`;
+    else if (JULIA_KEYWORDS.has(m[5])) out += `<span class="jl-kw">${m[5]}</span>`;
+    else if (/^[A-Z]/.test(m[5])) out += `<span class="jl-type">${escapeHtml(m[5])}</span>`;
+    else out += escapeHtml(m[5]);
+  }
+  return out + escapeHtml(code.slice(last));
+}
+
+// A <pre><code> block; Julia code is syntax-highlighted, anything else is plain.
+function codeBlock(text, { julia = false } = {}) {
+  const pre = el("pre", "tool-code");
+  const code = el("code");
+  if (julia) code.innerHTML = highlightJulia(text);
+  else code.textContent = text;
+  pre.appendChild(code);
+  return pre;
 }
 
 // Render a tool card's body, specialized per tool so each reads well: a plan as
@@ -356,16 +414,15 @@ function fillToolBody(body, msg) {
   }
   if (name === "write_file" && args.content != null) {
     if (args.file_path) body.appendChild(el("div", "tool-path", args.file_path));
-    const pre = el("pre", "tool-code");
-    pre.appendChild(el("code", null, String(args.content)));
-    body.appendChild(pre);
+    body.appendChild(codeBlock(String(args.content), { julia: /\.jl$/.test(args.file_path || "") }));
     return;
   }
-  const code = codeArg(args);
-  if (code) {
-    const pre = el("pre", "tool-code");
-    pre.appendChild(el("code", null, code));
-    body.appendChild(pre);
+  if (args.code != null) {
+    body.appendChild(codeBlock(String(args.code), { julia: true }));
+    return;
+  }
+  if (args.command != null) {
+    body.appendChild(codeBlock(String(args.command))); // shell, not Julia
     return;
   }
   if (Object.keys(args).length) {
@@ -393,10 +450,15 @@ function renderDiff(oldStr, newStr) {
   return pre;
 }
 
+// Tools whose card body already shows the result (the checklist, the diff), so
+// the raw tool-result text would just be noise.
+const NO_RAW_OUTPUT = new Set(["write_todos"]);
+
 function onTool(msg) {
   let card = toolCards.get(msg.tool_call_id);
   if (!card) {
     finalizeAssistant();
+    finalizeReasoning();
     const details = el("details", "block tool");
     details.open = true; // show what ran; the user complained about all-collapsed
     const sum = el("summary");
@@ -419,11 +481,11 @@ function onTool(msg) {
   if (msg.event === "finished") {
     card.chip.textContent = "done";
     card.chip.className = "chip-status";
-    if (msg.content) setOutput(card, msg.content);
+    if (msg.content && !NO_RAW_OUTPUT.has(msg.name)) setOutput(card, msg.content, msg.name);
   } else if (msg.event === "error") {
     card.chip.textContent = "error";
     card.chip.className = "chip-status error";
-    if (msg.content) setOutput(card, msg.content);
+    if (msg.content) setOutput(card, msg.content, msg.name);
   }
 }
 
@@ -433,11 +495,24 @@ function summarizeArgs(args) {
     .join("\n");
 }
 
-function setOutput(card, content) {
-  card.out.hidden = false;
-  card.out.textContent = content;
-  addCopyButtons(card.out.parentElement);
-  if (atBottom()) scrollDown();
+// Keep tool output compact: cap very long results (a progress-bar spam or a
+// giant dump shouldn't flood the chat). The box is also height-limited in CSS.
+function clampOutput(text) {
+  const lines = text.split("\n");
+  if (lines.length > 60) {
+    const hidden = lines.length - 52;
+    return `${lines.slice(0, 40).join("\n")}\n  … ${hidden} more lines …\n${lines.slice(-12).join("\n")}`;
+  }
+  return text.length > 6000 ? text.slice(0, 6000) + "\n  … truncated …" : text;
+}
+
+function setOutput(card, content, name) {
+  const text = clampOutput(String(content));
+  keepingBottom(() => {
+    card.out.hidden = false;
+    card.out.textContent = text;
+    addCopyButtons(card.out.parentElement);
+  });
 }
 
 // Add a hover "Copy" button to code blocks (idempotent via data-copy).
@@ -1171,8 +1246,10 @@ document.getElementById("canvas-popout").onclick = () => {
   });
   window.addEventListener("mousemove", (e) => {
     if (!dragging) return;
-    const w = Math.min(Math.max(window.innerWidth - e.clientX, 320), window.innerWidth * 0.72);
-    document.documentElement.style.setProperty("--canvas-w", w + "px");
+    // Store the width as a fraction of the viewport, not pixels, so the split
+    // stays proportional when the window is resized or moved to another screen.
+    const frac = Math.min(Math.max((window.innerWidth - e.clientX) / window.innerWidth, 0.3), 0.62);
+    document.documentElement.style.setProperty("--canvas-w", (frac * 100).toFixed(1) + "%");
   });
   window.addEventListener("mouseup", () => {
     dragging = false;
