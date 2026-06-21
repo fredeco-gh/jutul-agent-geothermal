@@ -69,11 +69,17 @@ turn.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `POST` | `/sessions` | Create a session and return its id |
-| `GET` | `/sessions` | List sessions |
+| `GET` | `/sessions` | List live session ids |
+| `GET` | `/sessions/history` | List resumable sessions on disk (title, time, simulator) |
 | `POST` | `/sessions/{id}/resume` | Reopen an earlier session |
 | `DELETE` | `/sessions/{id}` | Close a session |
+| `GET` | `/sessions/{id}/messages` | The conversation, for replaying a resumed session |
 | `GET` | `/sessions/{id}/artifacts/{path}` | Fetch a file the session produced |
+| `GET` | `/sessions/{id}/transcript` | The transcript (`?format=html` or `md`) |
+| `GET` | `/sessions/{id}/memory` | The session's workspace memory, as a page |
+| `POST` | `/sessions/{id}/upload` | Add a file to the session workspace (`uploads/<name>`) |
 | `GET` | `/models` | List the models that can be selected |
+| `GET` | `/simulators` | List the simulators that can be selected |
 
 ## The wire protocol
 
