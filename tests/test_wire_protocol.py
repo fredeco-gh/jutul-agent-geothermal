@@ -87,7 +87,21 @@ def test_interrupt_wire() -> None:
             }
         ],
         "allowed_decisions": ["approve", "reject"],
+        "allowlist": [],  # shell approvals are one-off — no "always allow"
     }
+
+
+def test_interrupt_wire_offers_always_allow_for_file_edits() -> None:
+    # A file-edit interrupt carries its allowlist category, so a front end can offer
+    # "always allow" (shell does not — see test_interrupt_wire).
+    value = {
+        "action_requests": [{"name": "write_file", "args": {"file_path": "a.jl"}}],
+        "review_configs": [
+            {"action_name": "write_file", "allowed_decisions": ["approve", "reject"]}
+        ],
+    }
+    wire = protocol.interrupt_to_wire(TurnInterrupt(interrupt_id="i2", value=value))
+    assert wire["allowlist"] == ["file_edits"]
 
 
 def test_usage_wire_takes_last() -> None:

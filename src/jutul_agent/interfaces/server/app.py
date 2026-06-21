@@ -24,7 +24,12 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from jutul_agent.agent.approval import build_resume_payload
+from jutul_agent.agent.approval import (
+    ToolAllowlist,
+    build_resume_payload,
+    categories_for_interrupt,
+    interrupt_matches_allowlist,
+)
 from jutul_agent.interfaces.server import protocol
 from jutul_agent.interfaces.server.manager import SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
@@ -551,6 +556,12 @@ class _StreamState:
         self._turn: asyncio.Task[None] | None = None
         # Held so the fire-and-forget titling task isn't garbage-collected mid-run.
         self._title_task: asyncio.Task[None] | None = None
+        # High-water mark over trace event ids for side outputs (artifacts, ui),
+        # so each is forwarded exactly once whether flushed mid-turn or at the end.
+        self._side_output_id = 0
+        # Tool categories the user chose to "always allow" this session; future
+        # matching interrupts auto-approve without asking again (like the TUI).
+        self._allowlist = ToolAllowlist()
 
     async def handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -618,7 +629,15 @@ class _StreamState:
         if not self._pending:
             await _safe_send(self._ws, {"type": "error", "message": "no approval is pending"})
             return
-        decision: dict[str, str] = {"type": str(message.get("decision") or "approve")}
+        kind = str(message.get("decision") or "approve")
+        # "always_allow" is approve plus a session policy: remember this interrupt's
+        # categories so future matching ones auto-approve (see _run_turn's loop).
+        if kind == "always_allow":
+            for interrupt in self._pending:
+                for category in categories_for_interrupt(interrupt.value):
+                    self._allowlist.add(category)
+            kind = "approve"
+        decision: dict[str, str] = {"type": kind}
         if message.get("message"):
             decision["message"] = str(message["message"])
         payload = build_resume_payload(self._pending, decision)
@@ -633,18 +652,27 @@ class _StreamState:
         self._turn = asyncio.create_task(self._run_turn(factory))
 
     async def _run_turn(self, factory) -> None:
-        since_id = self._latest_event_id()
+        self._side_output_id = self._latest_event_id()
         try:
             result = await factory()
+            # Resume past any interrupts the user pre-allowed this session ("always
+            # allow"), without bothering them again, until the turn completes or hits
+            # an interrupt that still needs a decision.
+            while result.interrupts and all(
+                interrupt_matches_allowlist(i.value, self._allowlist) for i in result.interrupts
+            ):
+                payload = build_resume_payload(result.interrupts, {"type": "approve"})
+                result = await self._host.runner.resume(payload, on_message=self._on_message)
         except asyncio.CancelledError:
-            await self._emit_new_outputs(since_id)
+            await self._flush_side_outputs()
             await _safe_send(self._ws, {"type": "turn_end", "text": "", "cancelled": True})
             raise
         except Exception as exc:  # surface the failure, then end the turn
+            await self._flush_side_outputs()  # surface anything produced before it failed
             await _safe_send(self._ws, {"type": "error", "message": str(exc)})
             await _safe_send(self._ws, {"type": "turn_end", "text": ""})
             return
-        await self._emit_new_outputs(since_id)
+        await self._flush_side_outputs()
         self._pending = list(result.interrupts)
         if self._pending:
             # The turn paused for approval. Send the requests and wait for a
@@ -703,12 +731,15 @@ class _StreamState:
         events = self._host.session.trace.iter_events()
         return events[-1].id if events else 0
 
-    async def _emit_new_outputs(self, since_id: int) -> None:
-        """Forward the side outputs a turn produced: artifacts (plots, reports) and
-        UI commands a tool emitted. Keyed on trace event id so each is sent once."""
+    async def _flush_side_outputs(self) -> None:
+        """Forward side outputs produced since the last flush: artifacts (plots,
+        reports) and UI commands a tool emitted. Tracks a high-water mark over trace
+        event ids, so a plot or report appears inline the moment its tool finishes
+        (flushed from ``_on_message``) rather than all at once at turn end."""
         for event in self._host.session.trace.iter_events():
-            if event.id <= since_id:
+            if event.id <= self._side_output_id:
                 continue
+            self._side_output_id = event.id
             if event.kind == "artifact":
                 for wire in artifact_wire_events([event.payload], self._host.session_id):
                     await _safe_send(self._ws, wire)
@@ -719,8 +750,13 @@ class _StreamState:
 
     async def _on_message(self, event: Any) -> None:
         wire = protocol.to_wire(event)
-        if wire is not None:
-            await _safe_send(self._ws, wire)
+        if wire is None:
+            return
+        await _safe_send(self._ws, wire)
+        # A tool just finished: surface any artifacts/ui it produced right away, so a
+        # plot or report appears inline as it happens instead of all at turn end.
+        if wire.get("type") == "tool" and wire.get("event") in ("finished", "error"):
+            await self._flush_side_outputs()
 
     async def cancel_turn(self) -> None:
         if self._busy():

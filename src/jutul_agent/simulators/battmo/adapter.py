@@ -31,8 +31,9 @@ BATTMO = SimulatorAdapter(
     example_prompts=(
         "Run a constant-current discharge on the Chen 2020 lithium-ion cell and plot "
         "the voltage curve.",
-        "Compare discharge at 0.5C, 1C, and 2C on the same plot.",
-        "Work through the first beginner tutorial and explain each step.",
+        "Compare discharge at 0.5C, 1C, and 2C, then write a report on the usable "
+        "capacity at each rate.",
         "Show how cell voltage and current evolve over the discharge.",
+        "Work through the first beginner tutorial and explain each step.",
     ),
 )

@@ -109,6 +109,19 @@ def interrupt_matches_allowlist(value: Any, allowlist: ToolAllowlist) -> bool:
     return all(allowlist.contains(category) for category in categories)
 
 
+def always_allow_categories(value: Any) -> frozenset[str]:
+    """Categories a front end may offer to 'always allow' for this interrupt.
+
+    Mirrors the TUI's policy so every interface behaves the same: shell approvals
+    are deliberately one-off (a blanket 'always allow shell' is too broad), so a
+    shell-only interrupt offers nothing; file edits and other categories do.
+    """
+    categories = categories_for_interrupt(value)
+    if not categories or categories == {ALLOWLIST_SHELL}:
+        return frozenset()
+    return categories
+
+
 def parse_approval_mode(value: str | None) -> ApprovalMode:
     if not value:
         return ApprovalMode.ASK

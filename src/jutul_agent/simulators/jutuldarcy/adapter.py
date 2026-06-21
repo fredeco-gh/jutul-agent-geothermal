@@ -34,8 +34,8 @@ JUTULDARCY = SimulatorAdapter(
     example_prompts=(
         "Build a small 3D reservoir with one water injector and one producer, run a "
         "short immiscible simulation, and show the interactive 3D view.",
+        "Investigate how porosity changes the waterflood sweep, then write me a report.",
         "Plot the well rates and bottom-hole pressures from the last run.",
-        "Run the wells_intro example and explain what each well is doing.",
         "Set up a CO2 injection case and plot the CO2 inventory over time.",
     ),
 )

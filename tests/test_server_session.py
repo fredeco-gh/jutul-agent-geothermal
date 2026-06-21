@@ -194,6 +194,31 @@ def test_ws_interrupt_then_approve(tmp_path: Path) -> None:
     assert resumed[-1]["type"] == "turn_end"
 
 
+def test_ws_always_allow_auto_approves_future_interrupts(tmp_path: Path) -> None:
+    # "Always allow" approves now and remembers the category, so a later interrupt
+    # of the same kind auto-approves without asking the user again (like the TUI).
+    def agent() -> Any:
+        return interrupt_agent(tool_name="write_file", allowed_decisions=["approve", "reject"])
+
+    with _client(agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "edit a file"})
+            interrupt = _drain_turn(ws)[-1]
+            assert interrupt["type"] == "interrupt"
+            assert interrupt["allowlist"] == ["file_edits"]  # offered to the front end
+
+            ws.send_json({"type": "decision", "decision": "always_allow"})
+            assert _drain_turn(ws)[-1]["type"] == "turn_end"
+
+            # A second file-edit interrupt is now resolved automatically: the client
+            # sees the turn complete and is never asked to approve again.
+            ws.send_json({"type": "prompt", "text": "edit another file"})
+            second = _drain_turn(ws)
+            assert second[-1]["type"] == "turn_end"
+            assert not any(e["type"] == "interrupt" for e in second)
+
+
 def test_ws_unknown_session(tmp_path: Path) -> None:
     with (
         _client(echo_agent, tmp_path) as client,

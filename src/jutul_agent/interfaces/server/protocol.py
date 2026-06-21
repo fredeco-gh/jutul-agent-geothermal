@@ -21,7 +21,11 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from jutul_agent.agent.approval import SupportsInterrupt, allowed_decisions_for_interrupt
+from jutul_agent.agent.approval import (
+    SupportsInterrupt,
+    allowed_decisions_for_interrupt,
+    always_allow_categories,
+)
 from jutul_agent.agent.turns import TurnReasoningDelta, TurnToolEvent
 from jutul_agent.tool_labels import tool_label
 from jutul_agent.trace.messages import content_to_str
@@ -92,6 +96,9 @@ def interrupt_to_wire(interrupt: SupportsInterrupt) -> dict[str, Any]:
         "interrupt_id": interrupt.interrupt_id,
         "actions": actions,
         "allowed_decisions": sorted(allowed_decisions_for_interrupt(interrupt.value)),
+        # Categories a front end may offer to "always allow" this session (empty for
+        # one-off-only interrupts like shell). The client turns these into a button.
+        "allowlist": sorted(always_allow_categories(interrupt.value)),
     }
 
 

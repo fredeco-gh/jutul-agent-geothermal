@@ -253,25 +253,36 @@ def _free_port() -> int:
 
 
 def _build_web_server_start(port: int) -> str:
-    """Julia to start the session's Bonito server once (idempotent).
+    """Julia to start the session's Bonito server once (idempotent), returning the
+    actual port it is bound to.
 
     The server lives in the Julia process for the session's lifetime and holds
     the live figures, so their in-figure widgets (a timestep slider, a field
     selector) run their Julia callbacks over the WebSocket and update the view —
     interactivity a static export cannot provide.
+
+    It is created once and reused: if it already exists (e.g. the plot tool was
+    rebuilt mid-session by a model switch, which resets the Python-side memo), the
+    existing server stands and we return *its* port, not the freshly-requested one.
+    Returning the real port is what keeps the advertised live URL pointing at the
+    server the figures are actually routed on — a mismatch here is a dead "refused
+    to connect" embed.
     """
 
     # ``global`` (not ``Main.X = ``) so the assignment defines the Main global even
     # under Julia 1.12's stricter check, which rejects assigning to a qualified
-    # global that doesn't exist yet.
+    # global that doesn't exist yet. ``__JUTUL_WEB_PORT__`` records the port the
+    # server was actually bound to, so a later call returns it regardless of the
+    # port this call requested.
     return (
         "begin\n"
         "    import WGLMakie, Bonito\n"
         "    if !isdefined(Main, :__JUTUL_WEB_SERVER__)\n"
         f'        global __JUTUL_WEB_SERVER__ = Bonito.Server("127.0.0.1", {int(port)})\n'
         "        global __JUTUL_WEB_FIGS__ = Dict{String,Any}()\n"
+        f"        global __JUTUL_WEB_PORT__ = {int(port)}\n"
         "    end\n"
-        '    "ok"\n'
+        "    string(__JUTUL_WEB_PORT__)\n"
         "end"
     )
 
@@ -450,14 +461,17 @@ def make_plot_julia_tool(session: Session, *, surface: str = "tui"):
         if web:
             port = _free_port()
             started = await session.julia.eval(_build_web_server_start(port))
-            if started.error:
+            actual_port = (started.output or "").strip()
+            if started.error or not actual_port.isdigit():
                 print(
                     f"warning: live plot serving unavailable ({_truncate(started.error, 200)}); "
                     "falling back to static interactive exports.",
                     file=sys.stderr,
                 )
             else:
-                live_base.append(f"http://127.0.0.1:{port}")
+                # Use the server's real port (it may already exist on another port),
+                # so the live URL points at where the figures are actually served.
+                live_base.append(f"http://127.0.0.1:{actual_port}")
         ready.append(True)
         return None
 

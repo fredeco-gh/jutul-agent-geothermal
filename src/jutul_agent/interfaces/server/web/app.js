@@ -593,6 +593,7 @@ function onTool(msg) {
     // watches it stream, instead of waiting for the whole result at the end.
     if (msg.content && policy.rawOutput !== false) {
       card.raw += msg.content;
+      card.streamed = true;
       renderOutput(card);
     }
     return;
@@ -601,8 +602,11 @@ function onTool(msg) {
     card.chip.textContent = "done";
     card.chip.className = "chip-status";
     if (policy.note && msg.content) appendNote(card, policy.note(msg.content));
-    // The final result is canonical; replace any streamed deltas with it (clean + clamped).
-    if (msg.content && policy.rawOutput !== false) setOutput(card, msg.content);
+    // Keep the streamed output if we got it: the deltas carry the raw REPL output
+    // with its ANSI coloring, while the final result is the cleaned (decolored)
+    // capture, so replacing it would strip the color. Fall back to the final result
+    // only when nothing streamed (a non-streaming tool, or streaming unavailable).
+    if (msg.content && policy.rawOutput !== false && !card.streamed) setOutput(card, msg.content);
   } else if (msg.event === "error") {
     card.chip.textContent = "error";
     card.chip.className = "chip-status error";
@@ -657,7 +661,11 @@ const ANSI_FG = {
 // (errors red, types colored, …) instead of stripped or as escape soup. Text is
 // HTML-escaped; unbalanced spans (e.g. across a clamp) are closed at the end.
 function ansiToHtml(text) {
-  const re = /\x1b\[([0-9;]*)m/g;
+  // Drop OSC (window-title) sequences and any CSI that isn't an SGR (color) code:
+  // cursor moves and line clears from progress bars would otherwise render as
+  // literal "␛[A" junk in the output.
+  text = text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+  const re = /\x1b\[([0-9;?]*)([@-~])/g;
   let html = "";
   let last = 0;
   let open = 0;
@@ -665,6 +673,7 @@ function ansiToHtml(text) {
   while ((m = re.exec(text))) {
     html += escapeHtml(text.slice(last, m.index));
     last = re.lastIndex;
+    if (m[2] !== "m") continue; // non-SGR CSI (cursor move, clear): drop it
     const codes = m[1].split(";").filter((s) => s !== "").map(Number);
     if (codes.length === 0 || codes.includes(0)) {
       html += "</span>".repeat(open);
@@ -687,11 +696,16 @@ function ansiToHtml(text) {
 
 function renderOutput(card) {
   const text = clampOutput(applyCarriageReturns(card.raw));
+  // Tail the output box to its newest line (like a terminal), unless the user has
+  // scrolled up inside it to read earlier output.
+  const box = card.out;
+  const wasTailing = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
   keepingBottom(() => {
-    card.out.hidden = false;
-    card.out.innerHTML = ansiToHtml(text);
-    addCopyButtons(card.out.parentElement);
+    box.hidden = false;
+    box.innerHTML = ansiToHtml(text);
+    addCopyButtons(box.parentElement);
   });
+  if (wasTailing) box.scrollTop = box.scrollHeight;
 }
 
 function setOutput(card, content) {
@@ -946,6 +960,17 @@ function onInterrupt(msg) {
     btn.onclick = () => sendDecision(decision);
     buttons.appendChild(btn);
   }
+  // "Always allow" (when the action's category permits it): approve now and
+  // auto-approve matching actions for the rest of the session, like the TUI.
+  if (msg.allowed_decisions.includes("approve") && msg.allowlist && msg.allowlist.length) {
+    const label = msg.allowlist.length === 1 && msg.allowlist[0] === "file_edits"
+      ? "always allow edits"
+      : "always allow";
+    const btn = el("button", "btn", label);
+    btn.title = "Approve, and don't ask again for this kind of action this session";
+    btn.onclick = () => sendDecision("always_allow");
+    buttons.appendChild(btn);
+  }
   card.appendChild(buttons);
   if (msg.allowed_decisions.includes("respond")) {
     card.appendChild(el("div", "approval-hint", "…or type a reply below to send feedback."));
@@ -953,6 +978,9 @@ function onInterrupt(msg) {
   }
   // The turn is paused on the user, so free the composer (it is not "working").
   setBusy(false);
+  // An approval needs the user's attention, so bring the card into view even if
+  // they had scrolled up — otherwise it can land below the fold.
+  requestAnimationFrame(() => card.scrollIntoView({ behavior: "smooth", block: "center" }));
 }
 
 function sendDecision(decision, message) {

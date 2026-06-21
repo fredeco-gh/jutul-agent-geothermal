@@ -29,7 +29,9 @@ async def test_web_surface_serves_plot_live(tmp_path: Path) -> None:
         seen.append(code)
         if code.strip() == "CairoMakie.Makie === WGLMakie.Makie":
             return EvalResult(output="true")
-        return EvalResult(output="")  # server start + render both "succeed"
+        if "Bonito.Server" in code:  # server start returns the actual bound port
+            return EvalResult(output="51000")
+        return EvalResult(output="")  # render "succeeds"
 
     session = _session(tmp_path, FakeJulia(eval_handler=fake_eval))
     tool = make_plot_julia_tool(session, surface="web")
@@ -47,7 +49,9 @@ async def test_web_surface_serves_plot_live(tmp_path: Path) -> None:
         assert artifact.payload["mime"] == "image/png"
         assert artifact.payload["path"] == "artifacts/pres.png"
         assert artifact.payload["kind"] == "plot"
-        assert "/viz/" in (artifact.payload["live_url"] or "")
+        # The live URL uses the port the server reported (51000), not whatever the
+        # tool requested — so it points at where the figures are actually served.
+        assert "127.0.0.1:51000/viz/" in (artifact.payload["live_url"] or "")
     finally:
         log.close()
 
