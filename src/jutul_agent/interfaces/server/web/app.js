@@ -1198,24 +1198,19 @@ function copyLast() {
   );
 }
 
-function showContext() {
-  const m = model || "default";
-  const win = contextWindow ? `${formatTokens(contextWindow)} tokens` : "unknown";
-  if (!lastUsage) {
-    return addSystemNote(
-      `Context\n  model:   ${m}\n  window:  ${win}\n  used:    nothing yet — send a message`,
-    );
-  }
-  const u = lastUsage;
-  const held = u.input_tokens || 0;
-  const pct = contextWindow ? ` (${Math.round((held / contextWindow) * 100)}% of window)` : "";
-  const calls = u.model_calls || 1;
-  addSystemNote(
-    `Context\n  model:    ${m}\n  window:   ${win}\n` +
-      `  in use:   ${formatTokens(held)} tokens${pct}\n` +
-      `  last turn: ${formatTokens(u.input_tokens || 0)} in · ${formatTokens(u.output_tokens || 0)} out · ` +
-      `${formatTokens(u.total_tokens || 0)} total over ${calls} model call${calls === 1 ? "" : "s"}`,
-  );
+// Fetch the full context panel (rendered server-side, identical to the TUI) and
+// show it as a markdown card — the category breakdown, bar, and auto-compact
+// buffer the client can't compute on its own.
+async function showContext() {
+  if (!sessionId) return addSystemNote("No active session.");
+  const data = await fetch(`/sessions/${sessionId}/context`)
+    .then((r) => r.json())
+    .catch(() => ({}));
+  if (!data.markdown) return addSystemNote("Could not read context usage.", "warn");
+  finalizeAssistant();
+  const card = add(el("div", "context-card markdown"));
+  card.innerHTML = window.renderMarkdown(data.markdown);
+  scrollDown();
 }
 
 function cmdModel(arg) {

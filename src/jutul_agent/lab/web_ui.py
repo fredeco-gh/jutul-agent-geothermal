@@ -163,6 +163,29 @@ def sample_report_html() -> bytes:
 # --- the render harness ------------------------------------------------------
 
 
+def _context_markdown() -> str:
+    """A realistic /context panel for the stub, via the real renderer."""
+    from jutul_agent.interfaces.tui.context_panel import render_context_panel
+
+    return render_context_panel(
+        model_label="openai:gpt-5.4-mini",
+        usage={
+            "input_tokens": 45000,
+            "output_tokens": 1200,
+            "input_token_details": {"cache_read": 38000},
+            "output_token_details": {"reasoning": 600},
+        },
+        window=400000,
+        first_usage={"input_tokens": 18000},
+        model_calls=32,
+        system_prompt_tokens=5200,
+        memory_index_tokens=900,
+        memory_notes=6,
+        compact_trigger_tokens=340000,
+        clear_trigger_tokens=300000,
+    )
+
+
 def _route_static(route):
     path = route.request.url.split("://", 1)[-1].split("/", 1)[-1].split("?", 1)[0]
     f = WEB_DIR / ("index.html" if path in ("", "index.html") else path)
@@ -213,6 +236,12 @@ def _install_routes(page):
     page.route(
         "**/sessions/*/messages",
         lambda r: r.fulfill(content_type="application/json", body=json.dumps({"messages": []})),
+    )
+    page.route(
+        "**/sessions/*/context",
+        lambda r: r.fulfill(
+            content_type="application/json", body=json.dumps({"markdown": _context_markdown()})
+        ),
     )
     page.route_web_socket("**/stream", lambda ws: ws.on_message(lambda m: None))
 
@@ -576,20 +605,20 @@ def _scenarios() -> dict:
         ),
         WebScenario(
             "context",
-            "The /context breakdown and the percentage context chip.",
+            "The full /context panel (category breakdown, bar, auto-compact buffer).",
             [
                 _META,
                 {
                     "type": "usage",
                     "input_tokens": 45000,
-                    "output_tokens": 132,
-                    "total_tokens": 46000,
+                    "output_tokens": 1200,
+                    "total_tokens": 46200,
                     "model_calls": 32,
                 },
                 {"_eval": "window.jutulDebug.dispatchSlash('/context')"},
-                {"_sleep": 200},
+                {"_sleep": 300},
             ],
-            height=520,
+            height=640,
         ),
         WebScenario(
             "history",

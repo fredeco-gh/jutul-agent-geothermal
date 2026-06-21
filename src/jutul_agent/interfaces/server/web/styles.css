@@ -470,6 +470,16 @@ pre:hover .copy-btn { opacity: 1; }
   border: 1px solid var(--border); background: var(--surface);
   border-radius: 12px; padding: 0.7rem 0.9rem; box-shadow: var(--shadow);
 }
+/* The /context panel (server-rendered markdown, same as the TUI). */
+.context-card {
+  align-self: center; max-width: var(--maxw); width: 100%;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 12px; padding: 0.6rem 0.95rem; box-shadow: var(--shadow);
+  font-size: 0.84rem;
+}
+.context-card code { font-family: var(--mono); white-space: pre; }
+.context-card ul { margin: 0.3rem 0; padding-left: 1.1rem; }
+.context-card li { margin: 0.05rem 0; }
 .help-title { font-weight: 650; margin-bottom: 0.4rem; }
 .help-row { display: flex; gap: 0.8rem; font-size: 0.85rem; padding: 0.12rem 0; }
 .help-name { flex: none; min-width: 13rem; font-family: var(--mono); font-size: 0.8rem; color: var(--accent); }

@@ -327,6 +327,61 @@ def create_app(
         body = render_markdown_html(render_memory_overview(host.memory_dir))
         return HTMLResponse(_doc_page("Memory", body))
 
+    @app.get("/sessions/{session_id}/context")
+    def get_context(session_id: str) -> dict[str, Any]:
+        """The full context-usage panel (same render as the TUI), as markdown.
+
+        Usage figures come from the session's ``model_usage`` trace events (the
+        first/last call and the count); the system-prompt and memory-index sizes
+        are approximated the same way the TUI does. Rendered server-side so the web
+        UI and the terminal show identical detail.
+        """
+        host = manager.get(session_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="no such session")
+        from langchain_core.messages.utils import count_tokens_approximately
+
+        from jutul_agent.agent.context_editing import clear_tool_uses_trigger_tokens
+        from jutul_agent.agent.memory import MEMORY_INDEX_FILENAME, list_memory_notes
+        from jutul_agent.agent.prompts import assemble_session_prompt
+        from jutul_agent.agent.summarization import auto_compact_trigger_tokens
+        from jutul_agent.interfaces.tui.context_panel import render_context_panel
+        from jutul_agent.models import DEFAULT_MODEL, context_window
+
+        usages = [e.payload for e in host.session.trace.iter_events() if e.kind == "model_usage"]
+        model = host.model or DEFAULT_MODEL
+        window = context_window(model)
+
+        try:
+            prompt = assemble_session_prompt(
+                host.session.simulator,
+                open_windows=host.session.open_windows,
+                resumed=host.session.resumed,
+            )
+            system_tokens = int(count_tokens_approximately([prompt]))
+        except Exception:
+            system_tokens = None
+        memory_dir = host.memory_dir
+        try:
+            index = (memory_dir / MEMORY_INDEX_FILENAME).read_text(encoding="utf-8")
+            memory_tokens = int(count_tokens_approximately([index]))
+        except OSError:
+            memory_tokens = None
+
+        body = render_context_panel(
+            model_label=model,
+            usage=usages[-1] if usages else None,
+            window=window,
+            first_usage=usages[0] if usages else None,
+            model_calls=len(usages),
+            system_prompt_tokens=system_tokens,
+            memory_index_tokens=memory_tokens,
+            memory_notes=len(list_memory_notes(memory_dir)),
+            compact_trigger_tokens=auto_compact_trigger_tokens(window),
+            clear_trigger_tokens=clear_tool_uses_trigger_tokens(window),
+        )
+        return {"markdown": body}
+
     @app.post("/sessions/{session_id}/upload")
     async def upload_file(session_id: str, file: Annotated[UploadFile, File()]) -> dict[str, str]:
         """Save an uploaded file into the session workspace so the agent can use it.

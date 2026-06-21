@@ -52,7 +52,9 @@ function renderBlocks(segment) {
 
   const flushPara = () => {
     if (para.length) {
-      html += `<p>${inline(para.join(" "))}</p>`;
+      // Join wrapped lines with hard breaks (like the terminal UI), so a single
+      // newline shows as a line break rather than collapsing into a space.
+      html += `<p>${para.map((l) => inline(l)).join("<br>")}</p>`;
       para = [];
     }
   };
