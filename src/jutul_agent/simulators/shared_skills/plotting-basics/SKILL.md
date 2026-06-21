@@ -63,6 +63,9 @@ there's no separate "interactive" mode.
 - `view` is for **you**, not the user — it returns the image to you; it shows
   them nothing extra.
 - Pass `window=false` only to compute/inspect a plot without surfacing it.
+- Don't force a backend or window from a plotter's own kwargs (e.g. `gui=true`):
+  that opens a separate desktop window outside `plot_julia`. Just call the plotter
+  normally — the tool already shows the figure the right way for the interface.
 - If the user says they can't see a plot, you probably built it in `run_julia`
   (use `plot_julia`) or set `window=false` — fix that, don't just re-describe it.
 

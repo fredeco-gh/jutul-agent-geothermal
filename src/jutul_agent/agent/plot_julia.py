@@ -166,7 +166,9 @@ async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) ->
             "restart the server."
         )
     # Best-effort: enables native plotters when a GL context is available.
-    await session.julia.eval("try; @eval import GLMakie; catch; end")
+    await session.julia.eval(
+        "try; @eval import GLMakie; GLMakie.activate!(visible = false); catch; end"
+    )
     return None
 
 
@@ -183,7 +185,8 @@ def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -
     return (
         "begin\n"
         "    import CairoMakie, WGLMakie, Bonito\n"
-        "    try; @eval import GLMakie; catch; end  # native plotter methods (needs GL context)\n"
+        # Load native-plotter GLMakie methods, but offscreen so no desktop window pops.
+        "    try; @eval import GLMakie; GLMakie.activate!(visible = false); catch; end\n"
         "    WGLMakie.activate!(resize_to = :parent)\n"
         "    local _M = WGLMakie.Makie\n"
         "    local _val = begin\n"
@@ -259,7 +262,8 @@ def _build_web_live_call(*, user_code: str, png_path: Path, route: str) -> str:
     return (
         "begin\n"
         "    import CairoMakie, WGLMakie, Bonito\n"
-        "    try; @eval import GLMakie; catch; end  # native plotter methods (needs GL context)\n"
+        # Load native-plotter GLMakie methods, but offscreen so no desktop window pops.
+        "    try; @eval import GLMakie; GLMakie.activate!(visible = false); catch; end\n"
         "    WGLMakie.activate!(resize_to = :parent)\n"
         "    local _M = WGLMakie.Makie\n"
         "    local _val = begin\n"

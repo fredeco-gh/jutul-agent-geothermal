@@ -66,6 +66,9 @@ class SessionHost:
         # turns against the one kernel concurrently and corrupt its state. ``attach``
         # claims the session for a connection; ``detach`` releases it on disconnect.
         self._attached = False
+        # Background Julia warm-up (load warm package, set GLMakie offscreen); held
+        # so it can be cancelled on teardown. Set by ``start``.
+        self._warmup_task: Any | None = None
 
     def attach(self) -> bool:
         """Claim this session for a connection; ``False`` if one already holds it."""
@@ -168,6 +171,8 @@ class SessionHost:
 
     async def aclose(self) -> None:
         """Tear down the kernel and checkpointer, then close the session."""
+        if self._warmup_task is not None and not self._warmup_task.done():
+            self._warmup_task.cancel()
         if self._exit_stack is not None:
             await self._exit_stack.aclose()
             self._exit_stack = None
@@ -306,7 +311,7 @@ class SessionHost:
             await stack.aclose()
             raise
 
-        return cls(
+        host = cls(
             session=session,
             agent=agent,
             backend=backend,
@@ -318,6 +323,13 @@ class SessionHost:
             extensions=all_extensions,
             workspace=ws,
         )
+        # Warm the kernel in the background like the CLI does: load the warm package
+        # and set GLMakie offscreen so a native plotter can't pop an OS window on a
+        # machine with a display. Best-effort and cancelled on teardown.
+        from jutul_agent.simulators.warmup import start_warmup
+
+        host._warmup_task = start_warmup(julia, simulator.warm_package)
+        return host
 
 
 def _add_headless_display(stack: AsyncExitStack, env: dict[str, str]) -> None:

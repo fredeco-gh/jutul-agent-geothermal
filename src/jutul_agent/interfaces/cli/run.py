@@ -558,33 +558,10 @@ async def _run_with_backend(
 
 
 def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
-    """Background warm-up: load the agent's precompiled Julia runtime, then
-    initialise this session's GL context while the user reads the welcome card.
+    """Background warm-up; the logic is shared with the server in ``simulators.warmup``."""
+    from jutul_agent.simulators.warmup import start_warmup
 
-    The heavy compilation is already baked into the packages' precompile caches at
-    ``init``, so loading the shared ``JutulAgent`` and the env's per-simulator
-    ``warm_package`` here is just load latency; a tiny offscreen save then warms
-    GLMakie's GL context. Best-effort: every step is wrapped so a missing piece
-    never breaks startup, and the task is cancelled on session teardown.
-    """
-
-    from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP, HYPRE_THREADS_SETUP
-
-    loads = ["try; @eval using JutulAgent; catch; end"]
-    if warm_package:
-        loads.append(f"try; @eval using {warm_package}; catch; end")
-    bootstrap = "\n".join(loads)
-
-    async def _run_warmup() -> None:
-        with contextlib.suppress(Exception):
-            await julia.eval(bootstrap)
-        # After the warm packages load, set HYPRE's thread count before the first solve.
-        with contextlib.suppress(Exception):
-            await julia.eval(HYPRE_THREADS_SETUP)
-        with contextlib.suppress(Exception):
-            await julia.eval(GL_CONTEXT_WARMUP)
-
-    return asyncio.create_task(_run_warmup(), name="julia-warmup")
+    return start_warmup(julia, warm_package)
 
 
 async def _headless_turn(agent: Any, session: Any, prompt: str) -> int:
