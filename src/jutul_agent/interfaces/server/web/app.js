@@ -602,11 +602,21 @@ function onTool(msg) {
     card.chip.textContent = "done";
     card.chip.className = "chip-status";
     if (policy.note && msg.content) appendNote(card, policy.note(msg.content));
-    // Keep the streamed output if we got it: the deltas carry the raw REPL output
-    // with its ANSI coloring, while the final result is the cleaned (decolored)
-    // capture, so replacing it would strip the color. Fall back to the final result
-    // only when nothing streamed (a non-streaming tool, or streaming unavailable).
-    if (msg.content && policy.rawOutput !== false && !card.streamed) setOutput(card, msg.content);
+    if (msg.content && policy.rawOutput !== false) {
+      if (!card.streamed) {
+        setOutput(card, msg.content); // non-streaming tool: the result is all we have
+      } else {
+        // The deltas carry the raw REPL output *with* ANSI coloring; the final
+        // result is the cleaned (decolored) capture and also appends the value repr
+        // and any stderr, which are NOT streamed. Keep the colored streamed output
+        // and add just that trailing part, so the card stays colored yet complete.
+        const tail = tailBeyond(stripAnsi(applyCarriageReturns(card.raw)), String(msg.content));
+        if (tail) {
+          card.raw += (card.raw.endsWith("\n") ? "" : "\n") + tail;
+          renderOutput(card);
+        }
+      }
+    }
   } else if (msg.event === "error") {
     card.chip.textContent = "error";
     card.chip.className = "chip-status error";
@@ -692,6 +702,26 @@ function ansiToHtml(text) {
   }
   html += escapeHtml(text.slice(last)) + "</span>".repeat(open);
   return html;
+}
+
+// Strip every ANSI escape (colors, cursor moves, OSC) — used to compare the raw
+// streamed output against the kernel's cleaned final result.
+function stripAnsi(s) {
+  return String(s)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[@-~]/g, "");
+}
+
+// The part of the cleaned final result `full` that comes after the (de-ANSI'd)
+// streamed text `shown` — i.e. the value repr / stderr the kernel appends only to
+// the final result, never to the live stream. "" when the two don't align, in
+// which case the streamed output already stands on its own.
+function tailBeyond(shown, full) {
+  const head = shown.replace(/\s+$/, "");
+  if (head && full.length > head.length && full.startsWith(head)) {
+    return full.slice(head.length).replace(/^\n+/, "");
+  }
+  return "";
 }
 
 function renderOutput(card) {
