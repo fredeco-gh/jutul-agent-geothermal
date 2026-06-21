@@ -9,8 +9,8 @@ file needs editing to add one:
 - **Installed**: any installed package that publishes a ``SimulatorAdapter``
   under the ``jutul_agent.simulators`` entry-point group. This is how a separate
   project adds its own simulator without forking jutul-agent (see
-  docs/server-interface.md). An installed adapter overrides a bundled one of the
-  same name.
+  docs/extending-for-your-application.md). An installed adapter overrides a
+  bundled one of the same name.
 """
 
 from __future__ import annotations

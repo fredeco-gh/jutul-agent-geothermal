@@ -509,7 +509,7 @@ async def _run_with_backend(
                     agent, backend = None, None
                     print(
                         f"note: {model_label} needs {env_var}, which isn't set. "
-                        "Starting without a model- Open the selector with `/model` "
+                        "Starting without a model. Open the selector with `/model` "
                         "to enter the key or pick a local Ollama model.",
                         file=sys.stderr,
                     )

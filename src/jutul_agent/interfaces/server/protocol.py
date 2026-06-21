@@ -12,7 +12,7 @@ end-of-turn events (interrupts, usage, final text) are built from the
 out of band by the server and capability tools.
 
 Import-light on purpose (no FastAPI): the schema can be used and tested without
-the optional ``[server]`` dependency.
+loading the web server stack.
 """
 
 from __future__ import annotations

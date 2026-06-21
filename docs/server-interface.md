@@ -123,9 +123,10 @@ Messages from the server to the front end:
 Messages from the front end to the server are a prompt to start a turn, a
 decision to answer an approval request (`approve`, `reject`, or `respond` with a
 message), a cancel to stop a running turn, a command to change a session setting
-(`set_model`, `set_approval`), and a user-interface event, described next. A
-command rebuilds the agent in place, so the model or approval policy can change
-mid-session without losing the conversation or the live Julia state.
+or run a session action (`set_model`, `set_approval`, `add_dir`, `compact`), and a
+user-interface event, described next. A setting command rebuilds the agent in
+place, so the model or approval policy can change mid-session without losing the
+conversation or the live Julia state.
 
 The bundled UI exposes these as slash commands in the composer (`/model`,
 `/approval-mode`, `/add-dir`, `/compact`, plus client-side `/transcript`,

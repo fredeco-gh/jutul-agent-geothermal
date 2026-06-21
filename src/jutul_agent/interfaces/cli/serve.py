@@ -1,7 +1,8 @@
 """``jutul-agent serve`` subcommand: run the HTTP + WebSocket server.
 
 Front ends talk to this server to drive sessions; the wire contract is in
-docs/server-interface.md. The server needs the ``[server]`` extra installed.
+docs/server-interface.md. The web stack (FastAPI + uvicorn) ships in the core
+install, so there is nothing extra to add.
 """
 
 from __future__ import annotations
