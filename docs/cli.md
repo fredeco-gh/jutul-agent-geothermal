@@ -71,14 +71,16 @@ approval that headless mode cannot ask for.
 
 ## jutul-agent init (alias: setup)
 
-Bootstrap the workspace: write `.jutul-agent/config.toml` and copy the
-simulator's Julia env template.
+Bootstrap the workspace: write `.jutul-agent/config.toml`, copy the simulator's
+Julia env template, and (by default) precompile the env and the web-plotting
+overlay so the first session in any interface is fast.
 
 | Option | Meaning |
 |---|---|
 | `--sim <name>` | Simulator to bootstrap (omit to auto-detect) |
 | `--source-path <path>` | `Pkg.develop` a local checkout of the simulator package (persisted to the workspace config) |
-| `--precompile` (synonym `--instantiate`) | `Pkg.instantiate` + precompile, including the GL plotting bake (slow the first time) |
+| `--no-precompile` | Skip the bake — bootstrap config + env only; the first session builds the rest |
+| `--precompile` (synonym `--instantiate`) | Precompile the env + plotting stacks (the default; the flag is kept for explicitness) |
 | `--force` | Replace an existing workspace env with a fresh template copy (after upgrading jutul-agent) |
 
 ## jutul-agent doctor

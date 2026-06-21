@@ -72,8 +72,12 @@ folder, then pick an interface.
 
 ```sh
 mkdir my-battery-run && cd my-battery-run
-jutul-agent init --sim battmo --precompile
+jutul-agent init --sim battmo
 ```
+
+`init` precompiles the Julia env and the web-plotting stack up front (one-time, a
+few minutes), so the first session in any interface starts in seconds. Pass
+`--no-precompile` for a quick bootstrap that bakes lazily on first use instead.
 
 `jutul-agent` has three interfaces — choose one explicitly (bare `jutul-agent`
 just lists them):
@@ -90,10 +94,8 @@ the chat. It is the same agent and session core as the terminal, so anything in
 one works in the other.
 
 `--sim` takes any simulator from the table above, and the workflow is the same
-for all of them. The first `--precompile` takes a while (Julia compiles the
-simulator and the plotting stack), after which sessions start in seconds. If
-anything fails, `jutul-agent doctor` diagnoses the setup and prints a fix per
-finding.
+for all of them. If anything fails, `jutul-agent doctor` diagnoses the setup and
+prints a fix per finding.
 
 One folder is bound to one simulator and its Julia environment; use another
 simulator from another folder. The web interface runs locally for a single

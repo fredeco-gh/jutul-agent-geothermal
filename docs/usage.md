@@ -39,25 +39,30 @@ Initialise once per folder:
 
 ```sh
 mkdir my-reservoir-study && cd my-reservoir-study
-jutul-agent init --sim jutuldarcy --precompile
+jutul-agent init --sim jutuldarcy
 ```
 
-`init` writes `.jutul-agent/config.toml` and copies the simulator's Julia env
-template. `--precompile` instantiates the env and warms the precompile caches
-up front. The first time can take a while (Julia compiles the simulator and
-the plotting stack), after which sessions start in seconds. Useful variants:
+`init` writes `.jutul-agent/config.toml`, copies the simulator's Julia env
+template, and **precompiles by default**: it instantiates the env, warms the
+precompile caches, and bakes the web-plotting overlay (WGLMakie + Bonito, a
+one-time global build). The first time can take a while (Julia compiles the
+simulator and the plotting stacks), after which the first session in any
+interface starts in seconds. Useful variants:
 
 ```sh
+jutul-agent init --sim jutuldarcy --no-precompile                      # quick bootstrap, bake later
 jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
-jutul-agent init --sim jutuldarcy --force --precompile
+jutul-agent init --sim jutuldarcy --force                              # rebuild env from the template
 ```
 
-`--source-path` dev-links the simulator to a local checkout the agent can read
-and edit at its real path (a dev checkout, so it is writable, unlike a
-registry install in the shared depot). `--force` rebuilds the env from the
-template, the standard fix after upgrading jutul-agent. `setup` is an alias
-for `init`. If you skip `init` entirely, the first run bootstraps the
-workspace and auto-detects the simulator from a `Project.toml` when it can.
+`--no-precompile` skips the bake for a fast bootstrap — the first session then
+builds what's missing (the ~minutes wait moves to first use). `--source-path`
+dev-links the simulator to a local checkout the agent can read and edit at its
+real path (a dev checkout, so it is writable, unlike a registry install in the
+shared depot). `--force` rebuilds the env from the template, the standard fix
+after upgrading jutul-agent. `setup` is an alias for `init`. If you skip `init`
+entirely, the first run bootstraps the workspace and auto-detects the simulator
+from a `Project.toml` when it can.
 
 One simulator per workspace. Different simulators have incompatible Julia
 dependencies, so use a separate folder for each. Pointing an existing
