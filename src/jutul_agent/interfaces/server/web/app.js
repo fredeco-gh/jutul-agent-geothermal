@@ -421,9 +421,50 @@ const TOOL_POLICY = {
   read_file: { collapsed: true, body: "path", rawOutput: false, note: (c) => unitNote(c, "line") },
   grep: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "match", "matches") },
   glob: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "file") },
+  ls: { collapsed: true, body: "none", rawOutput: false, note: listingNote }, // directory listing
   plot_julia: { collapsed: true, rawOutput: false }, // the figure is pinned in the canvas
   write_report: { collapsed: true, body: "none", rawOutput: false }, // the report is in the canvas
+  record_attempt: { rawOutput: false }, // a structured body (rationale + metrics) below
 };
+
+// Parse a value that may be a dict or a JSON string into an object, else null.
+function asObject(v) {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const o = JSON.parse(v);
+      return o && typeof o === "object" && !Array.isArray(o) ? o : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// Round long floats to a few significant digits so a metrics grid stays readable.
+function fmtNum(v) {
+  return typeof v === "number" && Number.isFinite(v) ? String(Number(v.toPrecision(4))) : String(v);
+}
+
+// A compact two-column key/value grid (metrics, changed parameters).
+function renderKV(obj, label) {
+  const wrap = el("div", "tool-kv");
+  if (label) wrap.appendChild(el("div", "kv-label", label));
+  const grid = el("div", "kv-grid");
+  for (const [k, v] of Object.entries(obj)) {
+    grid.appendChild(el("span", "kv-key", k));
+    grid.appendChild(el("span", "kv-val", Array.isArray(v) ? v.map(fmtNum).join(", ") : fmtNum(v)));
+  }
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+// ls returns a single-line Python list repr (['a/', 'b/', …]); count the quoted
+// entries rather than the (one) line.
+function listingNote(content) {
+  const n = (String(content || "").match(/'/g) || []).length >> 1;
+  return `${n} ${n === 1 ? "entry" : "entries"}`;
+}
 
 function unitNote(content, singular, plural) {
   const n = String(content || "").split("\n").filter((l) => l.trim()).length;
@@ -453,6 +494,15 @@ function fillToolBody(body, msg, policy) {
   if (name === "write_file" && args.content != null) {
     if (args.file_path) body.appendChild(el("div", "tool-path", args.file_path));
     body.appendChild(codeBlock(String(args.content), { julia: /\.jl$/.test(args.file_path || "") }));
+    return;
+  }
+  if (name === "record_attempt") {
+    if (args.rationale) body.appendChild(el("div", "attempt-rationale", String(args.rationale)));
+    const metrics = asObject(args.metrics);
+    const params = asObject(args.parameters_changed);
+    if (params) body.appendChild(renderKV(params, "changed"));
+    if (metrics) body.appendChild(renderKV(metrics, "metrics"));
+    if (args.notes) body.appendChild(el("div", "attempt-notes", String(args.notes)));
     return;
   }
   if (args.code != null) {
@@ -560,12 +610,10 @@ function clampOutput(text) {
   return text.length > 6000 ? text.slice(0, 6000) + "\n  … truncated …" : text;
 }
 
-// Kernel output arrives as raw terminal text: ANSI color codes and carriage
-// returns (progress bars overwrite their line with \r). Strip the escapes and
-// apply each line's last \r, so a <pre> shows clean output, not escape soup.
-function cleanOutput(raw) {
+// Kernel output is raw terminal text. Apply each line's last carriage return
+// (progress bars overwrite their line with \r) so a <pre> shows the final state.
+function applyCarriageReturns(raw) {
   return String(raw)
-    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
     .split("\n")
     .map((line) => {
       const cr = line.lastIndexOf("\r");
@@ -574,10 +622,50 @@ function cleanOutput(raw) {
     .join("\n");
 }
 
+// Standard ANSI SGR foreground colors, tuned to read on the output background.
+const ANSI_FG = {
+  30: "#3b4252", 31: "#c0392b", 32: "#2f9e44", 33: "#b8860b", 34: "#1f6feb",
+  35: "#a626a4", 36: "#0b7285", 37: "#9aa0a8", 90: "#7a828e", 91: "#e05561",
+  92: "#37b24d", 93: "#d6a200", 94: "#4098ff", 95: "#c678dd", 96: "#56b6c2", 97: "#cfd3da",
+};
+
+// Render ANSI color codes as spans so run_julia output looks like a Julia REPL
+// (errors red, types colored, …) instead of stripped or as escape soup. Text is
+// HTML-escaped; unbalanced spans (e.g. across a clamp) are closed at the end.
+function ansiToHtml(text) {
+  const re = /\x1b\[([0-9;]*)m/g;
+  let html = "";
+  let last = 0;
+  let open = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    html += escapeHtml(text.slice(last, m.index));
+    last = re.lastIndex;
+    const codes = m[1].split(";").filter((s) => s !== "").map(Number);
+    if (codes.length === 0 || codes.includes(0)) {
+      html += "</span>".repeat(open);
+      open = 0;
+      continue;
+    }
+    const styles = [];
+    for (const c of codes) {
+      if (c === 1) styles.push("font-weight:600");
+      else if (ANSI_FG[c]) styles.push("color:" + ANSI_FG[c]);
+    }
+    if (styles.length) {
+      html += `<span style="${styles.join(";")}">`;
+      open++;
+    }
+  }
+  html += escapeHtml(text.slice(last)) + "</span>".repeat(open);
+  return html;
+}
+
 function renderOutput(card) {
+  const text = clampOutput(applyCarriageReturns(card.raw));
   keepingBottom(() => {
     card.out.hidden = false;
-    card.out.textContent = clampOutput(cleanOutput(card.raw));
+    card.out.innerHTML = ansiToHtml(text);
     addCopyButtons(card.out.parentElement);
   });
 }
@@ -968,6 +1056,7 @@ function send() {
     sendDecision("respond", text);
   } else {
     lastPrompt = text;
+    pushHistory(text);
     requestNotifyPermission();
     ws.send(JSON.stringify({ type: "prompt", text }));
     setBusy(true);
@@ -975,6 +1064,38 @@ function send() {
   }
   promptEl.value = "";
   resize();
+}
+
+// Submitted-prompt history, navigable with ↑/↓ like a shell.
+const promptHistory = [];
+let historyPos = -1; // -1 = the live draft; 0..n-1 = a past prompt
+let historyDraft = "";
+
+function pushHistory(text) {
+  if (promptHistory[promptHistory.length - 1] !== text) promptHistory.push(text);
+  historyPos = -1;
+}
+
+function recallHistory(dir) {
+  if (!promptHistory.length) return false;
+  if (historyPos === -1) {
+    if (dir > 0) return false; // already at the draft; nothing newer
+    historyDraft = promptEl.value;
+    historyPos = promptHistory.length - 1;
+  } else {
+    historyPos += dir < 0 ? -1 : 1;
+  }
+  if (historyPos < 0) historyPos = 0; // clamp at the oldest
+  if (historyPos >= promptHistory.length) {
+    historyPos = -1;
+    promptEl.value = historyDraft;
+  } else {
+    promptEl.value = promptHistory[historyPos];
+  }
+  resize();
+  const end = promptEl.value.length;
+  promptEl.setSelectionRange(end, end);
+  return true;
 }
 
 // Ask once, lazily, so a finished long turn can ping you when the tab is hidden.
@@ -1170,21 +1291,28 @@ promptEl.addEventListener("keydown", (e) => {
       slashIndex = (slashIndex - 1 + slashItems.length) % slashItems.length;
       return updateSlashMenu();
     }
-    if (e.key === "Tab") {
+    if (e.key === "Tab" || e.key === "Enter") {
+      // Both complete the highlighted command; the next Enter sends/dispatches it.
       e.preventDefault();
       return completeSlash(slashItems[slashIndex]);
     }
-  } else if (e.key === "ArrowUp" && !promptEl.value && lastPrompt) {
-    e.preventDefault(); // recall the last prompt into an empty composer
-    promptEl.value = lastPrompt;
-    resize();
-    return;
+  } else if (e.key === "ArrowUp" && atComposerStart()) {
+    e.preventDefault(); // walk back through past prompts
+    if (recallHistory(-1)) return;
+  } else if (e.key === "ArrowDown" && historyPos !== -1) {
+    e.preventDefault(); // walk forward toward the draft
+    if (recallHistory(1)) return;
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     send();
   }
 });
+
+// The caret is at the very start (so ↑ should recall history, not move a line up).
+function atComposerStart() {
+  return promptEl.selectionStart === 0 && promptEl.selectionEnd === 0;
+}
 sendEl.onclick = () => {
   if (busy && !promptEl.value.trim().startsWith("/")) return stop();
   send();

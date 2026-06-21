@@ -289,6 +289,20 @@ pre:hover .copy-btn { opacity: 1; }
   color: var(--muted);
   word-break: break-all;
 }
+/* record_attempt: rationale + a compact metrics/params grid + notes. */
+.attempt-rationale { font-size: 0.86rem; color: var(--text); margin-bottom: 0.4rem; }
+.attempt-notes { font-size: 0.82rem; color: var(--muted); margin-top: 0.4rem; }
+.tool-kv { margin: 0.35rem 0; }
+.kv-label {
+  font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); margin-bottom: 0.15rem;
+}
+.kv-grid {
+  display: grid; grid-template-columns: max-content 1fr; gap: 0.1rem 0.7rem;
+  font-family: var(--mono); font-size: 0.78rem;
+}
+.kv-key { color: var(--muted); }
+.kv-val { color: var(--text); font-variant-numeric: tabular-nums; word-break: break-word; }
 /* Plan / todo list (write_todos) */
 .todos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 .todo { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.85rem; }
