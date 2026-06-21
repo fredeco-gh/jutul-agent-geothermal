@@ -319,11 +319,24 @@ function onReasoning(text) {
     block.setAttribute("data-live", "1");
     const sum = el("summary");
     sum.appendChild(el("span", "tool-name", "Reasoning"));
+    sum.appendChild(el("span", "tool-preview")); // a snippet, so the collapsed block still hints its content
     const body = el("div", "body");
     block.append(sum, body);
     add(block);
   }
-  keepingBottom(() => (block.querySelector(".body").textContent += text));
+  const body = block.querySelector(".body");
+  keepingBottom(() => {
+    body.textContent += text;
+    block.querySelector(".tool-preview").textContent = reasoningSnippet(body.textContent);
+  });
+}
+
+// The first non-empty reasoning line, markdown-stripped and truncated — shown on
+// the summary so a collapsed reasoning block still says what it was about.
+function reasoningSnippet(text) {
+  const first = text.split("\n").map((l) => l.trim()).find((l) => l) || "";
+  const clean = first.replace(/[*#`>_]/g, "").trim();
+  return clean.length > 90 ? clean.slice(0, 90).replace(/\s+\S*$/, "") + "…" : clean;
 }
 
 // End the current (live) reasoning block so the next thought starts a fresh one —
@@ -337,7 +350,7 @@ function finalizeReasoning() {
 }
 
 // Args worth previewing on the collapsed summary line, in priority order.
-const PREVIEW_KEYS = ["code", "command", "caption", "file_path", "path", "query", "slot"];
+const PREVIEW_KEYS = ["title", "caption", "code", "command", "file_path", "path", "pattern", "query", "slot"];
 
 function argPreview(args, name) {
   if (!args) return "";
@@ -397,12 +410,37 @@ function codeBlock(text, { julia = false } = {}) {
   return pre;
 }
 
-// Render a tool card's body, specialized per tool so each reads well: a plan as
-// a checklist, an edit as a diff, a written file as its content, code-bearing
-// tools as a code block, and anything else as a compact key/value list.
-function fillToolBody(body, msg) {
+// Per-tool card policy. Unlisted tools default to: open, with the args/code body
+// and the raw text output shown. Listed tools get a compact, web-native rendering.
+//   collapsed  – start collapsed (a quiet, read-only step)
+//   body       – "none" (summary only) or "path" (just the file path)
+//   rawOutput  – false: don't dump the text result (it's noise, or lives in the canvas)
+//   note(text) – a short result summary appended to the summary line ("42 lines")
+const TOOL_POLICY = {
+  write_todos: { rawOutput: false }, // the checklist is the body
+  read_file: { collapsed: true, body: "path", rawOutput: false, note: (c) => unitNote(c, "line") },
+  grep: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "match", "matches") },
+  glob: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "file") },
+  plot_julia: { collapsed: true, rawOutput: false }, // the figure is pinned in the canvas
+  write_report: { collapsed: true, body: "none", rawOutput: false }, // the report is in the canvas
+};
+
+function unitNote(content, singular, plural) {
+  const n = String(content || "").split("\n").filter((l) => l.trim()).length;
+  return `${n} ${n === 1 ? singular : plural || singular + "s"}`;
+}
+
+// Render a tool card's body per tool so each reads well: a plan as a checklist,
+// an edit as a diff, code highlighted, and a read/search as just what it queried.
+function fillToolBody(body, msg, policy) {
   const name = msg.name;
   const args = msg.args || {};
+  if (policy.body === "none") return;
+  if (policy.body === "path") {
+    const p = args.file_path || args.path;
+    if (p) body.appendChild(el("div", "tool-path", String(p)));
+    return;
+  }
   if (name === "write_todos" && Array.isArray(args.todos)) {
     body.appendChild(renderTodos(args.todos));
     return;
@@ -450,43 +488,49 @@ function renderDiff(oldStr, newStr) {
   return pre;
 }
 
-// Tools whose card body already shows the result (the checklist, the diff), so
-// the raw tool-result text would just be noise.
-const NO_RAW_OUTPUT = new Set(["write_todos"]);
-
 function onTool(msg) {
   let card = toolCards.get(msg.tool_call_id);
+  const policy = TOOL_POLICY[msg.name] || {};
   if (!card) {
     finalizeAssistant();
     finalizeReasoning();
     const details = el("details", "block tool");
-    details.open = true; // show what ran; the user complained about all-collapsed
+    details.open = !policy.collapsed; // quiet read-only steps start collapsed
     const sum = el("summary");
     sum.appendChild(el("span", "tool-name", msg.label || msg.name));
-    sum.appendChild(el("span", "tool-preview", argPreview(msg.args, msg.name)));
+    const preview = el("span", "tool-preview", argPreview(msg.args, msg.name));
+    sum.appendChild(preview);
     const chip = el("span", "chip-status running");
     chip.innerHTML = '<span class="spinner"></span>';
     sum.appendChild(chip);
     const body = el("div", "body");
-    fillToolBody(body, msg);
+    fillToolBody(body, msg, policy);
     addCopyButtons(body);
     const out = el("pre", "tool-output");
     out.hidden = true;
     body.appendChild(out);
     details.append(sum, body);
     add(details);
-    card = { details, body, chip, out };
+    card = { details, body, chip, out, preview };
     toolCards.set(msg.tool_call_id, card);
   }
   if (msg.event === "finished") {
     card.chip.textContent = "done";
     card.chip.className = "chip-status";
-    if (msg.content && !NO_RAW_OUTPUT.has(msg.name)) setOutput(card, msg.content, msg.name);
+    if (policy.note && msg.content) appendNote(card, policy.note(msg.content));
+    if (msg.content && policy.rawOutput !== false) setOutput(card, msg.content, msg.name);
   } else if (msg.event === "error") {
     card.chip.textContent = "error";
     card.chip.className = "chip-status error";
-    if (msg.content) setOutput(card, msg.content, msg.name);
+    if (msg.content) setOutput(card, msg.content, msg.name); // always surface errors
   }
+}
+
+// Append a short result summary to a card's preview line (e.g. "model.jl · 42 lines").
+function appendNote(card, note) {
+  if (!card.preview) return;
+  const base = card.preview.textContent;
+  card.preview.textContent = base ? `${base} · ${note}` : note;
 }
 
 function summarizeArgs(args) {
