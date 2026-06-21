@@ -326,6 +326,25 @@ def test_transcript_and_memory_endpoints(tmp_path: Path) -> None:
         assert client.get("/sessions/nope/transcript").status_code == 404
 
 
+def test_context_endpoint_renders_panel(tmp_path: Path) -> None:
+    # /context renders the same panel as the TUI. It reads the trace from a fresh
+    # connection because the endpoint runs in a threadpool and the session's own
+    # SQLite connection is bound to the thread it was created on — a regression
+    # guard for the cross-thread error that returned a 500.
+    from jutul_agent.trace import TraceLog
+
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
+        with TraceLog(state_dir / "trace.sqlite") as log:  # own connection (test thread)
+            log.append("model_usage", {"input_tokens": 1200, "output_tokens": 80})
+        resp = client.get(f"/sessions/{sid}/context")
+        assert resp.status_code == 200
+        assert resp.json()["markdown"].strip()
+        assert client.get("/sessions/nope/context").status_code == 404
+
+
 def test_history_endpoint_shape(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         body = client.get("/sessions/history").json()

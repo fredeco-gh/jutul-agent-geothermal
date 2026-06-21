@@ -347,8 +347,13 @@ def create_app(
         from jutul_agent.agent.summarization import auto_compact_trigger_tokens
         from jutul_agent.interfaces.tui.context_panel import render_context_panel
         from jutul_agent.models import DEFAULT_MODEL, context_window
+        from jutul_agent.trace import TraceLog
 
-        usages = [e.payload for e in host.session.trace.iter_events() if e.kind == "model_usage"]
+        # Read usage from a fresh connection on the trace file: this endpoint runs in
+        # a threadpool, and the session's own SQLite connection is bound to the thread
+        # it was created on (the event loop), so reusing it here raises.
+        with TraceLog(host.session.state_dir / "trace.sqlite") as log:
+            usages = [e.payload for e in log.iter_events() if e.kind == "model_usage"]
         model = host.model or DEFAULT_MODEL
         window = context_window(model)
 

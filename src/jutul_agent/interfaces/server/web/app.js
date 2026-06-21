@@ -275,6 +275,7 @@ function clearWorking() {
 
 function handle(msg) {
   if (msg.type !== "usage") clearWorking();
+  setWarming(false); // any message means the kernel responded, so it's warm
   switch (msg.type) {
     case "text": return onText(msg.text);
     case "reasoning": return onReasoning(msg.text);
@@ -441,8 +442,9 @@ function codeBlock(text, { julia = false } = {}) {
 const TOOL_POLICY = {
   write_todos: { rawOutput: false }, // the checklist is the body
   read_file: { collapsed: true, body: "path", rawOutput: false, note: (c) => unitNote(c, "line") },
-  grep: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "match", "matches") },
-  glob: { collapsed: true, body: "none", rawOutput: false, note: (c) => unitNote(c, "file") },
+  // Search: collapsed with a match count, but the matches themselves show on expand.
+  grep: { collapsed: true, body: "none", note: (c) => unitNote(c, "match", "matches") },
+  glob: { collapsed: true, body: "none", note: (c) => unitNote(c, "file") },
   ls: { collapsed: true, body: "none", rawOutput: false, note: listingNote }, // directory listing
   plot_julia: { collapsed: true, rawOutput: false }, // the figure is pinned in the canvas
   write_report: { collapsed: true, body: "none", rawOutput: false }, // the report is in the canvas
@@ -1225,29 +1227,47 @@ function cmdModel(arg) {
 }
 
 // Floating picker (like the slash menu) listing the selectable models, grouped by
-// provider; clicking one switches the session to it.
+// provider; click one — or arrow to it and press Enter — to switch the session.
+let modelItems = []; // { id, el } in display order, for ↑/↓ navigation
+let modelIndex = 0;
 function showModelMenu() {
   if (!allModels.length) {
     return addSystemNote("No selectable models found. Usage: /model <provider:model>.");
   }
   modelMenu.innerHTML = "";
   modelMenu.appendChild(el("div", "slash-head", "Switch model"));
+  modelItems = [];
   let provider = null;
-  for (const m of allModels) {
+  allModels.forEach((m) => {
     if (m.provider !== provider) {
       modelMenu.appendChild(el("div", "model-provider", m.provider));
       provider = m.provider;
     }
-    const item = el("div", "slash-item" + (m.id === model ? " active" : ""));
+    const item = el("div", "slash-item");
     item.appendChild(el("span", "slash-name", m.label));
     item.appendChild(el("span", "slash-desc", m.id));
-    item.onclick = () => {
-      modelMenu.hidden = true;
-      cmdModel(m.id);
-    };
+    item.onclick = () => chooseModel(m.id);
     modelMenu.appendChild(item);
-  }
+    modelItems.push({ id: m.id, el: item });
+  });
+  // Start on the active model so ↑/↓ moves from where you are.
+  modelIndex = Math.max(0, modelItems.findIndex((it) => it.id === model));
+  highlightModel();
   modelMenu.hidden = false;
+  promptEl.focus(); // keep keystrokes on the composer so ↑/↓/Enter drive the menu
+}
+
+function highlightModel() {
+  modelItems.forEach((it, i) => {
+    const on = i === modelIndex;
+    it.el.classList.toggle("active", on);
+    if (on) it.el.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function chooseModel(id) {
+  modelMenu.hidden = true;
+  cmdModel(id);
 }
 
 function cmdApproval(arg) {
@@ -1345,8 +1365,26 @@ promptEl.addEventListener("input", () => {
 });
 promptEl.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (!modelMenu.hidden) return (modelMenu.hidden = true);
     if (!slashMenu.hidden) return (slashMenu.hidden = true);
     if (busy) return stop(); // cancel a running turn
+  }
+  // The model picker grabs the arrow keys and Enter while it's open.
+  if (!modelMenu.hidden && modelItems.length) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      modelIndex = (modelIndex + 1) % modelItems.length;
+      return highlightModel();
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      modelIndex = (modelIndex - 1 + modelItems.length) % modelItems.length;
+      return highlightModel();
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      return chooseModel(modelItems[modelIndex].id);
+    }
   }
   if (!slashMenu.hidden && slashItems.length) {
     if (e.key === "ArrowDown") {

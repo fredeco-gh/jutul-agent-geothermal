@@ -5,6 +5,9 @@
   --border: #e3e3df;
   --text: #1f2328;
   --muted: #6b7280;
+  /* REPL/terminal output panel (run_julia/execute) */
+  --term-bg: #fbfaf7;
+  --term-fg: #2b2f36;
   --accent: #0e7490;
   --accent-soft: #0e74901a;
   --user-bg: #0e7490;
@@ -26,6 +29,8 @@
     --border: #34363d;
     --text: #e6e7ea;
     --muted: #9aa0a8;
+    --term-bg: #1b1d22;
+    --term-fg: #cfd3da;
     --accent: #38bdf8;
     --accent-soft: #38bdf81f;
     --user-bg: #0e7490;
@@ -265,13 +270,21 @@ details.block .body {
 }
 pre:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { color: var(--text); border-color: color-mix(in srgb, var(--border) 50%, var(--accent)); }
+/* Captured kernel output, styled like a Julia REPL: its own terminal-ish panel so
+   ANSI colors (errors red, types colored) read with full contrast, not washed out
+   on the card surface. */
 .tool-output {
   margin: 0;
-  max-height: 240px;
+  max-height: 260px;
   overflow: auto;
+  background: var(--term-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
   font-family: var(--mono);
   font-size: 0.78rem;
-  color: var(--muted);
+  line-height: 1.45;
+  color: var(--term-fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
