@@ -126,6 +126,43 @@ def create_app(
         ws.mkdir(parents=True, exist_ok=True)
         return ws
 
+    @app.get("/sessions/history")
+    def session_history(limit: int = 40) -> dict[str, Any]:
+        """Resumable sessions on disk, newest first, with a title and simulator."""
+        from jutul_agent.session import list_sessions
+
+        sessions = [
+            {
+                "id": info.session_id,
+                "title": info.title,
+                "started": info.started.isoformat(),
+                "sim": _session_sim(info.state_dir) or default_sim,
+            }
+            for info in list_sessions()[: max(0, limit)]
+        ]
+        return {"sessions": sessions}
+
+    @app.get("/sessions/{session_id}/messages")
+    def session_messages(session_id: str) -> dict[str, Any]:
+        """The session's conversation (user/assistant text and views) for replay on resume."""
+        host = manager.get(session_id)
+        state_dir = host.session.state_dir if host else _session_state_dir(session_id)
+        if state_dir is None:
+            raise HTTPException(status_code=404, detail="no such session")
+        from jutul_agent.trace import TraceLog
+
+        items: list[dict[str, Any]] = []
+        with TraceLog(state_dir / "trace.sqlite") as log:
+            for ev in log.iter_events():
+                if ev.kind in ("message_user", "message_assistant"):
+                    text = str(ev.payload.get("content", "")).strip()
+                    if text:
+                        role = "user" if ev.kind == "message_user" else "assistant"
+                        items.append({"type": role, "text": text})
+                elif ev.kind == "artifact":
+                    items.extend(artifact_wire_events([ev.payload], session_id))
+        return {"messages": items}
+
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
         try:
@@ -274,6 +311,28 @@ def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> lis
         else:
             events.append(protocol.artifact_to_wire(payload, url=url))
     return events
+
+
+def _session_sim(state_dir: Path) -> str | None:
+    """The simulator a persisted session was created with (from its trace)."""
+    from jutul_agent.trace import TraceLog
+
+    try:
+        with TraceLog(state_dir / "trace.sqlite") as log:
+            for ev in log.iter_events():
+                if ev.kind == "session_start":
+                    return ev.payload.get("simulator")
+    except Exception:
+        return None
+    return None
+
+
+def _session_state_dir(session_id: str) -> Path | None:
+    """The on-disk state dir for a (possibly not-loaded) session, if it exists."""
+    from jutul_agent.session import sessions_root
+
+    candidate = sessions_root() / session_id
+    return candidate if (candidate / "trace.sqlite").exists() else None
 
 
 def _doc_page(title: str, body_html: str) -> str:

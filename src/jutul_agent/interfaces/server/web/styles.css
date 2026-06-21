@@ -453,6 +453,30 @@ pre:hover .copy-btn { opacity: 1; }
 .slash-item.active, .slash-item:hover { background: var(--surface-2); }
 .slash-item .slash-name { font-family: var(--mono); font-size: 0.82rem; color: var(--accent); min-width: 13rem; }
 .slash-item .slash-desc { color: var(--muted); font-size: 0.82rem; }
+
+/* Session history dropdown */
+.history-menu {
+  position: fixed; z-index: 60; width: min(340px, 84vw); max-height: 70vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow); padding: 0.3rem;
+}
+.history-menu[hidden] { display: none; }
+.history-head {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); padding: 0.4rem 0.6rem 0.25rem;
+}
+.history-empty { color: var(--muted); font-size: 0.85rem; padding: 0.6rem; }
+.history-item {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent;
+  border-radius: 9px; padding: 0.45rem 0.6rem; cursor: pointer;
+}
+.history-item:hover { background: var(--surface-2); }
+.history-item.current { background: var(--accent-soft); }
+.h-title {
+  font-size: 0.88rem; color: var(--text); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h-meta { font-size: 0.74rem; color: var(--muted); }
 .composer {
   max-width: var(--maxw);
   margin: 0 auto;

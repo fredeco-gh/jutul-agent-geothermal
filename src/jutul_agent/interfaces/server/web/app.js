@@ -106,10 +106,69 @@ async function startSession() {
   }
   sessionId = (await resp.json()).session_id;
   metaEl.innerHTML = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
+  openSocket();
+}
+
+function openSocket() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/sessions/${sessionId}/stream`);
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => setBusy(false);
+}
+
+// Reopen an earlier session: resume it server-side (history is restored, the
+// Julia REPL restarts) and replay the prior conversation into the thread.
+async function resumeSession(id, sessSim) {
+  if (ws) ws.close();
+  thread.innerHTML = "";
+  toolCards.clear();
+  assistant = null;
+  pendingInterrupt = null;
+  promptEl.placeholder = "Message jutul-agent…";
+  resetCanvas();
+  if (sessSim) {
+    sim = sessSim;
+    if (simSelect) simSelect.value = sim;
+  }
+  metaEl.textContent = `resuming ${sim}…`;
+  const resp = await fetch(`/sessions/${id}/resume`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sim, model }),
+  }).catch(() => null);
+  if (!resp || !resp.ok) {
+    metaEl.textContent = "could not resume";
+    addSystemNote("Could not resume that session.", "warn");
+    return;
+  }
+  sessionId = (await resp.json()).session_id;
+  metaEl.innerHTML = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
+  openSocket();
+  const data = await fetch(`/sessions/${id}/messages`).then((r) => r.json()).catch(() => ({}));
+  replaySession(data.messages || []);
+  addSystemNote(
+    "Resumed this session. The chat is restored, but the Julia REPL restarted — " +
+      "earlier files and artifacts are intact; re-run setup to rebuild in-memory state.",
+  );
+}
+
+function replaySession(msgs) {
+  for (const m of msgs) {
+    if (m.type === "user") addUserBubble(m.text);
+    else if (m.type === "assistant") addAssistantText(m.text);
+    else if (m.type === "viz") onViz(m);
+    else if (m.type === "artifact") onArtifact(m);
+  }
+  addCopyButtons(thread);
+  scrollDown();
+}
+
+function addAssistantText(text) {
+  finalizeAssistant();
+  const wrap = add(el("div", "msg assistant"));
+  const md = el("div", "markdown");
+  md.innerHTML = window.renderMarkdown(text);
+  wrap.appendChild(md);
 }
 
 async function newChat() {
@@ -940,6 +999,63 @@ dropPane.addEventListener("drop", (e) => {
   dragDepth = 0;
   dropPane.classList.remove("dropping");
   for (const f of e.dataTransfer.files) uploadFile(f);
+});
+
+// --- session history ------------------------------------------------------
+
+const historyBtn = document.getElementById("history-btn");
+const historyMenu = el("div", "history-menu");
+historyMenu.hidden = true;
+document.body.appendChild(historyMenu);
+
+historyBtn.onclick = async (e) => {
+  e.stopPropagation();
+  if (!historyMenu.hidden) {
+    historyMenu.hidden = true;
+    return;
+  }
+  const r = historyBtn.getBoundingClientRect();
+  historyMenu.style.top = `${r.bottom + 6}px`;
+  historyMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  historyMenu.innerHTML = "<div class='history-empty'>Loading…</div>";
+  historyMenu.hidden = false;
+  const data = await fetch("/sessions/history").then((r) => r.json()).catch(() => ({}));
+  renderHistory(data.sessions || []);
+};
+
+function renderHistory(sessions) {
+  historyMenu.innerHTML = "";
+  historyMenu.appendChild(el("div", "history-head", "Past sessions"));
+  if (!sessions.length) {
+    historyMenu.appendChild(el("div", "history-empty", "No past sessions yet."));
+    return;
+  }
+  for (const s of sessions) {
+    const item = el("button", "history-item" + (s.id === sessionId ? " current" : ""));
+    item.appendChild(el("div", "h-title", s.title || "Untitled session"));
+    const tag = s.id === sessionId ? " · current" : "";
+    item.appendChild(el("div", "h-meta", `${s.sim} · ${timeAgo(s.started)}${tag}`));
+    item.onclick = () => {
+      historyMenu.hidden = true;
+      if (s.id !== sessionId) resumeSession(s.id, s.sim);
+    };
+    historyMenu.appendChild(item);
+  }
+}
+
+function timeAgo(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+document.addEventListener("click", (e) => {
+  if (!historyMenu.hidden && !historyMenu.contains(e.target) && e.target !== historyBtn) {
+    historyMenu.hidden = true;
+  }
 });
 document.getElementById("canvas-close").onclick = closeCanvas;
 viewsBtn.onclick = () => { if (activeView) openView(activeView); };

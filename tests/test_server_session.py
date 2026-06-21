@@ -271,6 +271,29 @@ def test_transcript_and_memory_endpoints(tmp_path: Path) -> None:
         assert client.get("/sessions/nope/transcript").status_code == 404
 
 
+def test_history_endpoint_shape(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/sessions/history").json()
+    assert isinstance(body.get("sessions"), list)
+    for s in body["sessions"]:
+        assert {"id", "title", "started", "sim"} <= set(s)
+
+
+def test_messages_endpoint_replays_conversation(tmp_path: Path) -> None:
+    from jutul_agent.trace import TraceLog
+
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
+        with TraceLog(state_dir / "trace.sqlite") as log:  # own connection (test thread)
+            log.append("message_user", {"content": "set up a reservoir"})
+            log.append("message_assistant", {"content": "done — here it is"})
+        msgs = client.get(f"/sessions/{sid}/messages").json()["messages"]
+    assert {"type": "user", "text": "set up a reservoir"} in msgs
+    assert {"type": "assistant", "text": "done — here it is"} in msgs
+
+
 def test_upload_writes_to_workspace(tmp_path: Path) -> None:
     manager = _manager(echo_agent, tmp_path)
     with TestClient(create_app(manager)) as client:

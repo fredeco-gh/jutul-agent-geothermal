@@ -163,7 +163,39 @@ def _install_routes(page):
             content_type="application/json", body=json.dumps({"session_id": "demo-session-0001"})
         ),
     )
+    page.route(
+        "**/sessions/history*",
+        lambda r: r.fulfill(content_type="application/json", body=json.dumps(_HISTORY)),
+    )
+    page.route(
+        "**/sessions/*/messages",
+        lambda r: r.fulfill(content_type="application/json", body=json.dumps({"messages": []})),
+    )
     page.route_web_socket("**/stream", lambda ws: ws.on_message(lambda m: None))
+
+
+_HISTORY = {
+    "sessions": [
+        {
+            "id": "2026-06-21-1007-8128",
+            "title": "Immiscible injector-producer sweep",
+            "started": "2026-06-21T10:07:00",
+            "sim": "jutuldarcy",
+        },
+        {
+            "id": "2026-06-21-0930-2a1b",
+            "title": "Well placement study",
+            "started": "2026-06-21T09:30:00",
+            "sim": "jutuldarcy",
+        },
+        {
+            "id": "2026-06-20-1715-9f3c",
+            "title": "BattMo Chen2020 discharge",
+            "started": "2026-06-20T17:15:00",
+            "sim": "battmo",
+        },
+    ]
+}
 
 
 def render(script, out, *, width=1440, height=900, settle=500, color_scheme="light"):
@@ -412,6 +444,12 @@ def _scenarios() -> dict:
             height=1500,
         ),
         WebScenario("slash", "Slash-command autocomplete menu.", slash, height=820),
+        WebScenario(
+            "history",
+            "Session history dropdown (reopen a past chat).",
+            [_META, {"_click": "#history-btn"}, {"_sleep": 400}],
+            height=620,
+        ),
         WebScenario(
             "canvas",
             "Conversation with a plot + report pinned in the canvas (report active).",
