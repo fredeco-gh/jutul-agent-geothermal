@@ -7,9 +7,9 @@ toy library (``DemoSim``) and a small web capability, both added through the
 extension seam rather than the built-in registry, so it doubles as a template
 for wiring in a simulator and front end of your own.
 
-Run it with ``python -m examples.demo-app.demo`` (or ``python demo.py`` from this
-directory) after installing the server extra. The first run instantiates the
-Julia env.
+Run it with ``python examples/demo-app/demo.py`` (the web stack ships in the core
+install, so there is nothing extra to add). The first run instantiates the Julia
+env.
 """
 
 from __future__ import annotations

@@ -27,14 +27,17 @@ MYSIM = SimulatorAdapter(
     primary_package="MySim",
     domain_hints="What the simulator is for, in one or two sentences.",
     warm_package="JutulAgentMySim",
+    example_prompts=("Run a small case and show me the result.", ...),
 )
 ```
 
 `module_dir` anchors the convention: the base class derives
 `julia_env_template_path` and `skills_dir` from it. `package_imports` is what
 the agent is told it can `using`, and `primary_package` is what `doctor`
-checks is actually resolved in the env. Adapters can also contribute simulator
-subagents through `subagent_factories`.
+checks is actually resolved in the env. `example_prompts` are starter tasks the
+web UI offers on its welcome screen (optional; lead with a simulate-and-plot
+one). Adapters can also contribute simulator subagents through
+`subagent_factories`.
 
 That is all the registration needed: the registry finds the adapter by scanning
 the simulator folders, so there is no list to edit. To ship a simulator from a
@@ -91,8 +94,8 @@ catches upstream releases that break the template.
 
 ```sh
 mkdir try-mysim && cd try-mysim
-uv run jutul-agent init --sim mysim --precompile
-uv run jutul-agent
+uv run jutul-agent init --sim mysim
+uv run jutul-agent web
 ```
 
 To develop against a local checkout of the simulator package:
