@@ -305,6 +305,7 @@ function onTool(msg) {
     sum.appendChild(chip);
     const body = el("div", "body");
     fillToolBody(body, msg);
+    addCopyButtons(body);
     const out = el("pre", "tool-output");
     out.hidden = true;
     body.appendChild(out);
@@ -333,7 +334,27 @@ function summarizeArgs(args) {
 function setOutput(card, content) {
   card.out.hidden = false;
   card.out.textContent = content;
+  addCopyButtons(card.out.parentElement);
   if (atBottom()) scrollDown();
+}
+
+// Add a hover "Copy" button to code blocks (idempotent via data-copy).
+function addCopyButtons(scope) {
+  if (!scope) return;
+  for (const pre of scope.querySelectorAll("pre:not([data-copy])")) {
+    pre.setAttribute("data-copy", "1");
+    pre.style.position = "relative";
+    const btn = el("button", "copy-btn", "Copy");
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const code = pre.querySelector("code") || pre;
+      navigator.clipboard.writeText(code.textContent || "").then(() => {
+        btn.textContent = "Copied";
+        setTimeout(() => (btn.textContent = "Copy"), 1200);
+      });
+    };
+    pre.appendChild(btn);
+  }
 }
 
 // --- the canvas: a registry of pinned views shown in the side panel -------
@@ -594,6 +615,7 @@ function clearInterrupt() {
 function onTurnEnd() {
   finalizeAssistant();
   toolCards.clear();
+  addCopyButtons(thread); // code blocks in the now-final assistant text
   // Collapse the (verbose) reasoning once the turn is done; tool cards stay open
   // so the conversation keeps a visible record of what the agent ran.
   const live = thread.querySelector(".reasoning[data-live]");

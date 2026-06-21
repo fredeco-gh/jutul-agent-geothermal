@@ -34,6 +34,16 @@ function renderMarkdown(text) {
   return html;
 }
 
+function isTableSep(line) {
+  return line.includes("-") && /^\s*\|?[\s:|-]+\|?\s*$/.test(line);
+}
+function splitRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
+}
+
 function renderBlocks(segment) {
   const lines = segment.split("\n");
   let html = "";
@@ -53,20 +63,41 @@ function renderBlocks(segment) {
     }
   };
 
-  for (const raw of lines) {
-    const line = raw.trimEnd();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
     const heading = line.match(/^(#{1,3})\s+(.*)$/);
     const bullet = line.match(/^[-*]\s+(.*)$/);
     const ordered = line.match(/^\d+\.\s+(.*)$/);
+    const quote = line.match(/^&gt;\s?(.*)$/); // '>' is HTML-escaped before block parsing
+    // A GitHub-style table: a row, then a |---|---| separator line.
+    const isTable = line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]);
 
     if (!line.trim()) {
       flushPara();
       closeList();
+    } else if (isTable) {
+      flushPara();
+      closeList();
+      const head = splitRow(line);
+      let body = "";
+      i += 2; // skip the header and the separator
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+        const cells = splitRow(lines[i]);
+        body += "<tr>" + cells.map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>";
+        i++;
+      }
+      i--; // the for-loop will advance past the last consumed row
+      const thead = "<tr>" + head.map((c) => `<th>${inline(c)}</th>`).join("") + "</tr>";
+      html += `<table><thead>${thead}</thead><tbody>${body}</tbody></table>`;
     } else if (heading) {
       flushPara();
       closeList();
       const level = heading[1].length;
       html += `<h${level}>${inline(heading[2])}</h${level}>`;
+    } else if (quote) {
+      flushPara();
+      closeList();
+      html += `<blockquote>${inline(quote[1])}</blockquote>`;
     } else if (bullet) {
       flushPara();
       if (list !== "ul") {
