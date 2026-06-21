@@ -43,10 +43,12 @@ class SessionHost:
         approval_mode: str | None = None,
         surface: str = "web",
         extensions: Sequence[Capability] = (),
+        workspace: Path | None = None,
     ) -> None:
         self.session = session
         self.agent = agent
         self.backend = backend
+        self.workspace = workspace
         self._exit_stack = exit_stack
         self._runner: TurnRunner | None = None
         # Kept so the agent can be rebuilt in place (e.g. /model, /approval-mode)
@@ -291,6 +293,7 @@ class SessionHost:
             approval_mode=approval_mode,
             surface=surface,
             extensions=all_extensions,
+            workspace=ws,
         )
 
 

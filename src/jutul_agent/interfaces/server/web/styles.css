@@ -466,6 +466,21 @@ pre:hover .copy-btn { opacity: 1; }
   box-shadow: var(--shadow);
 }
 .composer:focus-within { border-color: color-mix(in srgb, var(--border) 40%, var(--accent)); }
+.attach {
+  border: 0; background: transparent; color: var(--muted);
+  width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none;
+  transition: background 0.12s, color 0.12s;
+}
+.attach:hover { background: var(--surface-2); color: var(--text); }
+/* Drag-a-file overlay on the conversation pane */
+.app.dropping { position: relative; }
+.app.dropping::after {
+  content: "Drop a file to add it to this session";
+  position: absolute; inset: 0.5rem; z-index: 50; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 2px dashed var(--accent); border-radius: 14px;
+  color: var(--accent); font-weight: 650; pointer-events: none;
+}
 #prompt {
   flex: 1; border: 0; outline: 0; resize: none;
   background: transparent; color: var(--text);

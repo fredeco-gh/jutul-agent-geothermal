@@ -271,6 +271,20 @@ def test_transcript_and_memory_endpoints(tmp_path: Path) -> None:
         assert client.get("/sessions/nope/transcript").status_code == 404
 
 
+def test_upload_writes_to_workspace(tmp_path: Path) -> None:
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        manager.get(sid).workspace = tmp_path  # type: ignore[union-attr]
+        resp = client.post(
+            f"/sessions/{sid}/upload",
+            files={"file": ("my data.csv", b"a,b\n1,2\n", "text/csv")},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["path"] == "uploads/my_data.csv"  # basename + sanitized
+    assert (tmp_path / "uploads" / "my_data.csv").read_bytes() == b"a,b\n1,2\n"
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

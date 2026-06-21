@@ -38,6 +38,8 @@ jutul-agent = "jutul_agent.__main__:main"
 server = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
+    # FastAPI needs this to accept multipart uploads (POST .../upload).
+    "python-multipart>=0.0.9",
 ]
 eval = [
     # Validated against 0.3.238; <0.4 guards the framework's next breaking line.

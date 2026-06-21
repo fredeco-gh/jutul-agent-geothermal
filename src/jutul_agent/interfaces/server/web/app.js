@@ -887,6 +887,60 @@ sendEl.onclick = () => {
   send();
 };
 document.getElementById("new-chat").onclick = newChat;
+
+// --- file upload (attach button + drag-drop) ------------------------------
+
+const attachBtn = document.getElementById("attach");
+const fileInput = document.getElementById("file-input");
+attachBtn.onclick = () => fileInput.click();
+fileInput.onchange = () => {
+  for (const f of fileInput.files) uploadFile(f);
+  fileInput.value = "";
+};
+
+async function uploadFile(file) {
+  if (!sessionId) return addSystemNote("Start a session before uploading.", "warn");
+  const fd = new FormData();
+  fd.append("file", file);
+  const note = addSystemNote(`Uploading ${file.name}…`);
+  try {
+    const resp = await fetch(`/sessions/${sessionId}/upload`, { method: "POST", body: fd });
+    if (!resp.ok) throw new Error(await resp.text());
+    const { path } = await resp.json();
+    note.textContent = `Uploaded ${path} — referenced below; ask the agent to use it.`;
+    promptEl.value += (promptEl.value && !/\s$/.test(promptEl.value) ? " " : "") + path + " ";
+    resize();
+    promptEl.focus();
+  } catch (e) {
+    note.textContent = `Upload failed: ${e}`;
+    note.classList.add("warn");
+  }
+}
+
+// Drag a file anywhere over the conversation pane to upload it.
+const dropPane = document.querySelector(".app");
+let dragDepth = 0;
+dropPane.addEventListener("dragenter", (e) => {
+  if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) {
+    dragDepth++;
+    dropPane.classList.add("dropping");
+  }
+});
+dropPane.addEventListener("dragover", (e) => {
+  if (dropPane.classList.contains("dropping")) e.preventDefault();
+});
+dropPane.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) {
+    dragDepth = 0;
+    dropPane.classList.remove("dropping");
+  }
+});
+dropPane.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  dropPane.classList.remove("dropping");
+  for (const f of e.dataTransfer.files) uploadFile(f);
+});
 document.getElementById("canvas-close").onclick = closeCanvas;
 viewsBtn.onclick = () => { if (activeView) openView(activeView); };
 document.getElementById("canvas-popout").onclick = () => {

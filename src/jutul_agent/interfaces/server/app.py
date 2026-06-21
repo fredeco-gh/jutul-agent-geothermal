@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -203,6 +204,29 @@ def create_app(
 
         body = render_markdown_html(render_memory_overview(host.memory_dir))
         return HTMLResponse(_doc_page("Memory", body))
+
+    @app.post("/sessions/{session_id}/upload")
+    async def upload_file(session_id: str, file: Annotated[UploadFile, File()]) -> dict[str, str]:
+        """Save an uploaded file into the session workspace so the agent can use it.
+
+        Files land under ``uploads/`` in the workspace the agent runs in, so the
+        user can refer to ``uploads/<name>`` and the file tools / REPL read it.
+        """
+        from jutul_agent.paths import workspace_root
+
+        host = manager.get(session_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="no such session")
+        ws = host.workspace or workspace_root()
+        # Basename only, then a conservative safe name (no path separators escape).
+        name = Path(file.filename or "upload").name
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "upload"
+        dest = ws / "uploads" / safe
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(await file.read())
+        rel = f"uploads/{safe}"
+        host.session.trace.append("upload", {"path": rel})
+        return {"path": rel}
 
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
