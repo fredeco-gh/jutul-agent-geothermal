@@ -82,6 +82,11 @@ class SessionHost:
         self._attached = False
 
     @property
+    def attached(self) -> bool:
+        """Whether a live connection currently holds this session."""
+        return self._attached
+
+    @property
     def model(self) -> str | None:
         """The session's model spec (``provider:model``), or ``None`` for the default."""
         return self._model

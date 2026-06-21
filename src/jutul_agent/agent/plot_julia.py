@@ -172,18 +172,18 @@ async def _load_web_plot_backend(session: Session, adapter: SimulatorAdapter) ->
     return None
 
 
-def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -> str:
-    """Julia to evaluate the user code and export the figure for the browser.
+def _web_figure_block(user_code: str) -> str:
+    """Shared Julia preamble for the web render paths: activate the backends, run
+    the user code, and resolve its result to a Makie ``_fig`` (error if none).
 
-    WGLMakie is active while the user code runs, so native plotters (including 3D
-    reservoir views) build WebGL scenes; Bonito exports the figure to a
-    self-contained, responsive HTML file the web UI embeds. A CairoMakie PNG is
-    then saved best-effort for the record and the agent's ``view`` (it succeeds for
-    2D figures; a GL-only 3D scene simply yields no PNG, and the HTML still works).
+    WGLMakie is the active backend while the user code runs, so native plotters
+    (including 3D reservoir views) build WebGL scenes; GLMakie is imported offscreen
+    only so those plotters' methods (defined in its extension) are available. Both
+    the static-export and live-serve builders start from this, so the figure-
+    resolution logic lives in one place.
     """
 
     return (
-        "begin\n"
         "    import CairoMakie, WGLMakie, Bonito\n"
         # Load native-plotter GLMakie methods, but offscreen so no desktop window pops.
         "    try; @eval import GLMakie; GLMakie.activate!(visible = false); catch; end\n"
@@ -205,14 +205,42 @@ def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -
         '        "plot_julia: the code did not produce a Makie figure. Return a Figure, "  *\n'
         '        "or call a plotter that builds one."\n'
         "    )\n"
-        f'    Bonito.export_static(raw"{html_path.as_posix()}",\n'
-        '        Bonito.App(() -> Bonito.DOM.div(_fig; style = "width:100%; height:100%;")))\n'
+    )
+
+
+def _cairo_poster_block(png_path: Path, *, restore_wgl: bool) -> str:
+    """Julia to save the figure's CairoMakie PNG poster best-effort (2D and most 3D
+    scenes; a GL-only scene yields none). When ``restore_wgl`` the live path puts
+    WGLMakie back as the active backend so later client connections render with it.
+    """
+
+    restore = (
+        "    finally\n        WGLMakie.activate!(resize_to = :parent)\n" if restore_wgl else ""
+    )
+    return (
         "    try\n"
         "        CairoMakie.activate!()\n"
         f'        CairoMakie.save(raw"{png_path.as_posix()}", _fig)\n'
         "    catch\n"
+        f"{restore}"
         "    end\n"
-        '    "ok"\n'
+    )
+
+
+def _build_web_render_call(*, user_code: str, png_path: Path, html_path: Path) -> str:
+    """Julia to evaluate the user code and export the figure for the browser.
+
+    Bonito exports the resolved figure to a self-contained, responsive HTML file
+    the web UI embeds (the static fallback when no live server is running).
+    """
+
+    return (
+        "begin\n"
+        + _web_figure_block(user_code)
+        + f'    Bonito.export_static(raw"{html_path.as_posix()}",\n'
+        '        Bonito.App(() -> Bonito.DOM.div(_fig; style = "width:100%; height:100%;")))\n'
+        + _cairo_poster_block(png_path, restore_wgl=False)
+        + '    "ok"\n'
         "end"
     )
 
@@ -261,39 +289,13 @@ def _build_web_live_call(*, user_code: str, png_path: Path, route: str) -> str:
 
     return (
         "begin\n"
-        "    import CairoMakie, WGLMakie, Bonito\n"
-        # Load native-plotter GLMakie methods, but offscreen so no desktop window pops.
-        "    try; @eval import GLMakie; GLMakie.activate!(visible = false); catch; end\n"
-        "    WGLMakie.activate!(resize_to = :parent)\n"
-        "    local _M = WGLMakie.Makie\n"
-        "    local _val = begin\n"
-        f"{user_code}\n"
-        "    end\n"
-        "    local _fig = if _val isa _M.Figure\n"
-        "        _val\n"
-        "    elseif _val isa _M.FigureAxisPlot\n"
-        "        _val.figure\n"
-        "    elseif _val isa Tuple && length(_val) >= 1 && _val[1] isa _M.Figure\n"
-        "        _val[1]\n"
-        "    else\n"
-        "        _M.current_figure()\n"
-        "    end\n"
-        "    _fig === nothing && error(\n"
-        '        "plot_julia: the code did not produce a Makie figure. Return a Figure, "  *\n'
-        '        "or call a plotter that builds one."\n'
-        "    )\n"
-        f'    Main.__JUTUL_WEB_FIGS__[raw"{route}"] = _fig\n'
+        + _web_figure_block(user_code)
+        + f'    Main.__JUTUL_WEB_FIGS__[raw"{route}"] = _fig\n'
         f'    Bonito.route!(Main.__JUTUL_WEB_SERVER__, raw"{route}" => Bonito.App(() ->\n'
         f'        Bonito.DOM.div(Main.__JUTUL_WEB_FIGS__[raw"{route}"];\n'
         '            style = "width:100%; height:100%;")))\n'
-        "    try\n"
-        "        CairoMakie.activate!()\n"
-        f'        CairoMakie.save(raw"{png_path.as_posix()}", _fig)\n'
-        "    catch\n"
-        "    finally\n"
-        "        WGLMakie.activate!(resize_to = :parent)\n"
-        "    end\n"
-        '    "ok"\n'
+        + _cairo_poster_block(png_path, restore_wgl=True)
+        + '    "ok"\n'
         "end"
     )
 

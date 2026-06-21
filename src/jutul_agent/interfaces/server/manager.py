@@ -119,9 +119,12 @@ class SessionManager:
         """Add ``host`` as the most-recent session, then close any it displaces.
 
         A host already registered under this id (a re-resume) is replaced and the
-        stale one closed, and anything beyond ``max_live`` is evicted oldest-first.
-        Kernels are torn down outside the lock so a slow shutdown can't block other
-        sessions; eviction never raises (a closed kernel stays resumable on disk).
+        stale one closed, and anything beyond ``max_live`` is evicted oldest-first
+        — skipping any host a client is still connected to, so an in-use kernel is
+        never torn down mid-turn (if every live host is attached, the cap is exceeded
+        rather than killing an active one). Kernels are torn down outside the lock so
+        a slow shutdown can't block other sessions; eviction never raises (a closed
+        kernel stays resumable on disk).
         """
         to_close: list[SessionHost] = []
         async with self._lock:
@@ -130,8 +133,13 @@ class SessionManager:
                 to_close.append(stale)
             self._hosts[host.session_id] = host  # newest → most-recently-used end
             while len(self._hosts) > self._max_live:
-                _sid, evicted = self._hosts.popitem(last=False)  # oldest
-                to_close.append(evicted)
+                victim = next(
+                    (sid for sid, h in self._hosts.items() if not h.attached and h is not host),
+                    None,
+                )
+                if victim is None:  # everything else is in use; keep them all
+                    break
+                to_close.append(self._hosts.pop(victim))
         for old in to_close:
             with contextlib.suppress(Exception):
                 await old.aclose()

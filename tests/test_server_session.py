@@ -108,6 +108,21 @@ def test_manager_caps_live_sessions(tmp_path: Path) -> None:
     assert set(live) == {ids[1], ids[2]}  # the oldest was evicted
 
 
+async def test_eviction_skips_attached_sessions(tmp_path: Path) -> None:
+    # A session a client is connected to must not be torn down mid-turn: eviction
+    # skips attached hosts and takes the oldest idle one instead, even when the
+    # attached host is the oldest.
+    manager = _manager(echo_agent, tmp_path, max_live=2)
+    a = await manager.create(sim="demo")
+    a.attach()  # a live connection now holds the oldest session
+    b = await manager.create(sim="demo")
+    c = await manager.create(sim="demo")  # over cap → evict the oldest *idle* host (b)
+    live = set(manager.list_ids())
+    assert a.session_id in live  # attached, so kept despite being oldest
+    assert c.session_id in live
+    assert b.session_id not in live
+
+
 def test_second_connection_to_a_session_is_refused(tmp_path: Path) -> None:
     # Two live sockets on one session would run turns on one kernel concurrently;
     # the second is refused, and once the first closes a new one can attach.
