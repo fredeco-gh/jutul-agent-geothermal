@@ -62,8 +62,8 @@ def _julia_optional_int(value: int | None) -> str:
     return str(int(value))
 
 
-def _truncate(text: str, limit: int) -> str:
-    text = text.strip()
+def _truncate(text: str | None, limit: int) -> str:
+    text = (text or "").strip()
     return text if len(text) <= limit else text[:limit] + "..."
 
 
@@ -282,7 +282,9 @@ def _build_web_server_start(port: int) -> str:
         "        global __JUTUL_WEB_FIGS__ = Dict{String,Any}()\n"
         f"        global __JUTUL_WEB_PORT__ = {int(port)}\n"
         "    end\n"
-        "    string(__JUTUL_WEB_PORT__)\n"
+        # End on the bare Int so the eval's reported value is 53681, not a quoted
+        # string repr ("53681") that wouldn't parse as a port.
+        "    __JUTUL_WEB_PORT__\n"
         "end"
     )
 
@@ -461,10 +463,13 @@ def make_plot_julia_tool(session: Session, *, surface: str = "tui"):
         if web:
             port = _free_port()
             started = await session.julia.eval(_build_web_server_start(port))
-            actual_port = (started.output or "").strip()
-            if started.error or not actual_port.isdigit():
+            # Extract the port digits from the eval's reported value, robust to any
+            # quoting/whitespace the REPL adds around it.
+            actual_port = "".join(ch for ch in (started.output or "") if ch.isdigit())
+            if started.error or not actual_port:
+                reason = started.error or "the server did not report a port"
                 print(
-                    f"warning: live plot serving unavailable ({_truncate(started.error, 200)}); "
+                    f"warning: live plot serving unavailable ({_truncate(reason, 200)}); "
                     "falling back to static interactive exports.",
                     file=sys.stderr,
                 )
