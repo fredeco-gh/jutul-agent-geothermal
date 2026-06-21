@@ -149,7 +149,7 @@ def main() -> int:
     try:
         import uvicorn
     except ModuleNotFoundError:
-        print("Install the server extra first: pip install 'jutul-agent[server]'", file=sys.stderr)
+        print("The web stack is missing; reinstall jutul-agent (or `uv sync`).", file=sys.stderr)
         return 1
     ensure_env()
     print("Demo app on http://127.0.0.1:8742")

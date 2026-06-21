@@ -27,20 +27,19 @@ dependencies = [
     "pygments>=2.17",
     "textual>=8.2.6",
     "pillow>=12.2.0",
+    # The web interface (`jutul-agent web`) ships in the core install so it works
+    # out of the box — it is expected to be the most common way in. uvicorn[standard]
+    # serves the HTTP + WebSocket API; python-multipart lets FastAPI accept the
+    # file uploads the web UI sends.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 jutul-agent = "jutul_agent.__main__:main"
 
 [project.optional-dependencies]
-# The HTTP + WebSocket server interface (`jutul-agent serve`). Optional so the
-# core CLI/TUI install stays lean; a front end pulls this in.
-server = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    # FastAPI needs this to accept multipart uploads (POST .../upload).
-    "python-multipart>=0.0.9",
-]
 eval = [
     # Validated against 0.3.238; <0.4 guards the framework's next breaking line.
     "inspect-ai>=0.3.238,<0.4",

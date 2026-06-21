@@ -13,10 +13,10 @@ import sys
 from jutul_agent.interfaces.cli._helpers import add_workspace_flags
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "jutul-agent web") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="jutul-agent serve",
-        description="Run the jutul-agent server (HTTP + WebSocket).",
+        prog=prog,
+        description="Run the jutul-agent web interface (HTTP + WebSocket server + browser UI).",
     )
     parser.add_argument(
         "--host",
@@ -84,10 +84,11 @@ def run(args: argparse.Namespace) -> int:
     try:
         import uvicorn
     except ModuleNotFoundError:
+        # uvicorn ships in the core install, so this only fires on a broken
+        # environment; reinstalling restores the web stack.
         print(
-            "error: the server needs the optional [server] dependency. "
-            "Install it with `pip install 'jutul-agent[server]'` (or "
-            "`uv sync --extra server`).",
+            "error: the web stack (uvicorn/fastapi) is missing from this install. "
+            "Reinstall jutul-agent, or run `uv sync` from a checkout.",
             file=sys.stderr,
         )
         return 1

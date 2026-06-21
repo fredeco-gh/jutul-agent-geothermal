@@ -66,49 +66,39 @@ Details in the
 
 ## First run
 
-jutul-agent works in the directory you launch it from: that directory
-becomes the workspace where it reads and writes files. Start it from a
-fresh project folder.
+jutul-agent works in the directory you launch it from: that folder becomes the
+workspace where it reads and writes files, bound to one simulator. Set up a fresh
+folder, then pick an interface.
 
 ```sh
 mkdir my-battery-run && cd my-battery-run
 jutul-agent init --sim battmo --precompile
-jutul-agent
 ```
 
-```
-> Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve.
-```
-
-`--sim` takes any simulator from the table above, and the workflow is the
-same for all of them. The first `--precompile` takes a while (Julia compiles
-the simulator and the plotting stack), after which sessions start in
-seconds. If anything fails, `jutul-agent doctor` diagnoses the setup
-and prints a fix per finding.
-
-## Web interface
-
-Besides the terminal, jutul-agent has a browser UI: the same agent and session
-core behind a chat interface, with interactive plots and reports pinned beside
-the conversation. It ships in an optional `[server]` extra.
+`jutul-agent` has three interfaces — choose one explicitly (bare `jutul-agent`
+just lists them):
 
 ```sh
-uv tool install "jutul-agent[server] @ git+https://github.com/SINTEF-agentlab/jutul-agent"
-# from a clone instead: uv sync --extra server
+jutul-agent web      # browser UI: chat with interactive plots and reports (the usual way)
+jutul-agent tui      # terminal UI
+jutul-agent run "Plot a constant-current discharge of the chen_2020 cell"   # one headless turn
 ```
 
-Serve a folder and open it in the browser:
+`jutul-agent web` opens at <http://127.0.0.1:8742>; the agent runs the simulator,
+writes and runs Julia, and pins interactive plots and reports in a panel beside
+the chat. It is the same agent and session core as the terminal, so anything in
+one works in the other.
 
-```sh
-cd my-battery-run            # a folder set up with `jutul-agent init`
-jutul-agent serve --sim battmo
-```
+`--sim` takes any simulator from the table above, and the workflow is the same
+for all of them. The first `--precompile` takes a while (Julia compiles the
+simulator and the plotting stack), after which sessions start in seconds. If
+anything fails, `jutul-agent doctor` diagnoses the setup and prints a fix per
+finding.
 
-Open <http://127.0.0.1:8742> and type a task. As on the command line, one folder
-is bound to one simulator and its Julia environment; serve from another folder to
-use another simulator. The server runs locally for a single trusted user — the
-[server interface guide](docs/server-interface.md) covers the HTTP/WebSocket
-protocol, embedding the agent in your own app, and the multi-user boundary.
+One folder is bound to one simulator and its Julia environment; use another
+simulator from another folder. The web interface runs locally for a single
+trusted user — the [server interface guide](docs/server-interface.md) covers the
+HTTP/WebSocket protocol and embedding the agent in your own application.
 
 ## Documentation
 

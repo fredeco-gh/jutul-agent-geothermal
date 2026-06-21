@@ -33,18 +33,17 @@ from jutul_agent.workspace import (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "jutul-agent tui") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="jutul-agent",
+        prog=prog,
         description=(
             "Specialized scientific agent for AD-enabled simulators built on the Jutul framework."
         ),
         epilog=(
-            "Other commands: `jutul-agent init|setup [--sim <name>]`, "
-            "`jutul-agent doctor`, `jutul-agent upgrade`, "
-            "`jutul-agent transcript [<id>]`, `jutul-agent sessions`, "
-            "`jutul-agent eval <suite> --model <id>`. "
-            "(`setup` is an alias for `init`.)"
+            "Interfaces: `jutul-agent web` (browser), `jutul-agent tui` (terminal), "
+            '`jutul-agent run "<prompt>"` (one-shot). Setup: '
+            "`jutul-agent init|setup [--sim <name>]`. Other commands: `doctor`, "
+            "`upgrade`, `transcript [<id>]`, `sessions`, `review`, `eval`."
         ),
     )
     parser.add_argument("--version", action="version", version=f"jutul-agent {__version__}")
@@ -129,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "prompt",
         nargs="?",
-        help="Prompt for a single headless turn. Omit to launch the TUI.",
+        help="Prompt for a single headless turn (used by `jutul-agent run`).",
     )
     return parser
 

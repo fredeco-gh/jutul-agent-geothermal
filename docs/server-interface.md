@@ -32,12 +32,13 @@ flowchart LR
 
 ## The web UI
 
-`jutul-agent serve` starts the server with a built-in web app: a chat interface
-that is a visual alternative to the terminal UI. Point it at a simulator and open
-the browser:
+`jutul-agent web` starts the server with a built-in web app: a chat interface
+that is a visual alternative to the terminal UI. The web stack ships in the core
+install, so nothing extra is needed. Point it at a simulator and open the browser
+(`jutul-agent serve` is a back-compatible alias):
 
 ```
-jutul-agent serve --sim jutuldarcy
+jutul-agent web --sim jutuldarcy
 ```
 
 Open <http://127.0.0.1:8742>. Type a task and watch the agent stream its reply,

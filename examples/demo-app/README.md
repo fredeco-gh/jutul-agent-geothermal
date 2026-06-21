@@ -17,10 +17,9 @@ What it demonstrates:
 
 ## Run it
 
-Install the server extra, then start the app:
+The web stack ships in the core install, so just start the app:
 
 ```bash
-pip install 'jutul-agent[server]'      # or: uv sync --extra server
 python examples/demo-app/demo.py       # first run instantiates the Julia env
 ```
 

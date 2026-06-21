@@ -100,7 +100,7 @@ The server exposes a stable HTTP + WebSocket contract (see
 [the server interface](server-interface.md)). Your front end can be anything that
 speaks it. Two starting points:
 
-- **Use the bundled UI.** `jutul-agent serve --sim mysim` serves a complete chat
+- **Use the bundled UI.** `jutul-agent web --sim mysim` serves a complete chat
   interface. Good for getting going and for internal tools.
 - **Build your own.** Code against the protocol with whatever stack your app
   needs (React, Svelte, MapLibre, ...). The bundled UI and the `examples/`

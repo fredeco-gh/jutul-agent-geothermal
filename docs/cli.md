@@ -9,29 +9,65 @@ flags are accepted by every command:
 | `--workspace <path>` | Workspace directory (default: current working directory) |
 | `--state-home <path>` | Where sessions and traces live (default: `$XDG_DATA_HOME/jutul-agent`, falling back to `~/.local/share/jutul-agent`) |
 
-## jutul-agent (run)
+## Interfaces
+
+`jutul-agent` has three interfaces; pick one explicitly (bare `jutul-agent`
+prints this list and exits, rather than launching one by default):
+
+| Command | Interface |
+|---|---|
+| `jutul-agent web [options]` | Browser UI (HTTP + WebSocket server + bundled web app) |
+| `jutul-agent tui [options]` | Terminal UI |
+| `jutul-agent run "<prompt>" [options]` | One headless turn, then exit |
+
+`jutul-agent serve` is a back-compatible alias for `web`. `jutul-agent --version`
+prints the version.
+
+### jutul-agent web
 
 ```sh
-jutul-agent [options] [prompt]
+jutul-agent web [--sim <name>] [--host <addr>] [--port <n>]
 ```
 
-Without a prompt this launches the TUI. With a prompt it runs one headless
-turn and exits.
+Serves the browser UI (default <http://127.0.0.1:8742>). One folder is bound to
+one simulator — from `--sim`, the workspace config, or auto-detection — and the
+choice is remembered. Runs locally for a single trusted user; the protocol and
+embedding are covered in [the server interface](server-interface.md).
+
+| Option | Meaning |
+|---|---|
+| `--sim <name>` | Simulator for this folder's sessions (persisted to the workspace config) |
+| `--host <addr>` | Address to bind (default `127.0.0.1`, localhost only) |
+| `--port <n>` | Port to bind (default `8742`) |
+
+### jutul-agent tui
+
+```sh
+jutul-agent tui [options]
+```
+
+Launches the interactive terminal UI.
 
 | Option | Meaning |
 |---|---|
 | `--sim <name>` | Active simulator. Required only if not in workspace config and not auto-detectable from a `Project.toml` |
-| `--model <provider:model>` | Model for this run. Precedence: this flag, workspace config, user config, `$JUTUL_AGENT_MODEL`, default |
+| `--model <provider:model>` | Model for this session. Precedence: this flag, workspace config, user config, `$JUTUL_AGENT_MODEL`, default |
 | `--julia-project <path>` | Override the resolved workspace Julia project |
 | `--add-dir <path>` | Add an extra folder for the agent (repeatable) |
 | `--continue` | Continue the most recent session in this workspace |
 | `--resume [id]` | Resume a session by id or unique prefix; with no value, pick from a list |
-| `--approval-mode ask\|workspace\|auto` | Human-in-the-loop policy (headless runs need `auto`) |
+| `--approval-mode ask\|workspace\|auto` | Human-in-the-loop policy |
 | `--ephemeral-memory` | Throwaway memory directory for this session |
-| `--version` | Print the version |
 
-Headless exit codes: 0 on success, 3 when the turn needed an approval that
-headless mode cannot ask for.
+### jutul-agent run
+
+```sh
+jutul-agent run "<prompt>" [options]
+```
+
+Runs one headless turn and exits — same options as `tui` (headless runs need
+`--approval-mode auto`). Exit codes: 0 on success, 3 when the turn needed an
+approval that headless mode cannot ask for.
 
 ## jutul-agent init (alias: setup)
 
