@@ -29,7 +29,36 @@ from pathlib import Path
 WEB_DIR = Path(__file__).resolve().parents[1] / "interfaces" / "server" / "web"
 
 _MODELS = {"default": "claude-opus-4-8", "providers": ["anthropic", "google", "openai"]}
-_SIMS = {"simulators": ["jutuldarcy", "battmo", "fimbul"], "default": "jutuldarcy"}
+_SIMS = {
+    "simulators": ["jutuldarcy", "battmo", "fimbul"],
+    "default": "jutuldarcy",
+    "details": {
+        "jutuldarcy": {
+            "display_name": "JutulDarcy",
+            "examples": [
+                "Build a small 3D reservoir with one water injector and one producer, run a "
+                "short immiscible simulation, and show the interactive 3D view.",
+                "Plot the well rates and bottom-hole pressures from the last run.",
+                "Set up a CO2 injection case and plot the CO2 inventory over time.",
+            ],
+        },
+        "battmo": {
+            "display_name": "BattMo",
+            "examples": [
+                "Run a constant-current discharge on the Chen 2020 lithium-ion cell and plot "
+                "the voltage curve.",
+                "Compare discharge at 0.5C, 1C, and 2C on the same plot.",
+            ],
+        },
+        "fimbul": {
+            "display_name": "Fimbul",
+            "examples": [
+                "Run the geothermal doublet demo and show the temperature field over time.",
+                "Plot the produced fluid temperature versus time.",
+            ],
+        },
+    },
+}
 
 _MISSING_PLAYWRIGHT = (
     "web_ui needs Playwright and a system Chrome. Install it with "
@@ -344,6 +373,87 @@ def _convo() -> list:
     ]
 
 
+def _resume_steps() -> list:
+    """A resumed session replayed inline: text, reasoning, tool cards, a pinned report.
+
+    Exercises the same renderers the live socket uses, driven through
+    ``replaySession`` with the wire shape ``/sessions/{id}/messages`` returns — so
+    the screenshot shows a reopened chat reconstructed tool cards and all. The live
+    plot replays as its saved image (its Bonito server is gone after a restart),
+    while a static report stays an interactive canvas view.
+    """
+    msgs = [
+        {
+            "type": "user",
+            "text": "Set up a small reservoir, simulate it, show the 3D view, "
+            "then write a short report.",
+        },
+        {
+            "type": "reasoning",
+            "text": "Build a 20x20x5 mesh with an injector and a producer, "
+            "advance 10 steps, render the reservoir, then summarise.",
+        },
+        {
+            "type": "tool",
+            "event": "requested",
+            "tool_call_id": "t1",
+            "name": "run_julia",
+            "label": "Run Julia",
+            "args": {
+                "code": "using JutulDarcy, Jutul\n"
+                "mesh = CartesianMesh((20, 20, 5), (200.0, 200.0, 25.0))\n"
+                "case = setup_reservoir_model(domain, :immiscible; wells=[inj, prod])"
+            },
+        },
+        {
+            "type": "tool",
+            "event": "finished",
+            "tool_call_id": "t1",
+            "name": "run_julia",
+            "content": "MultiModel with 4 models. Simulation done, 10/10 steps converged.",
+        },
+        {
+            "type": "tool",
+            "event": "requested",
+            "tool_call_id": "t2",
+            "name": "plot_julia",
+            "label": "Plot",
+            "args": {"caption": "3D reservoir — Saturation"},
+        },
+        {
+            "type": "tool",
+            "event": "finished",
+            "tool_call_id": "t2",
+            "name": "plot_julia",
+            "content": "served a live interactive plot (artifacts/reservoir.png)",
+        },
+        {
+            "type": "artifact",
+            "url": f"{_ART}/reservoir.png",
+            "mime": "image/png",
+            "caption": "3D reservoir — Saturation",
+            "slot": "reservoir",
+        },
+        {
+            "type": "assistant",
+            "text": "The run converged; the saturation field is above. "
+            "The interactive plot fell back to its saved image on resume. Here's the report:",
+        },
+        {
+            "type": "viz",
+            "url": f"{_ART}/report.html",
+            "title": "Immiscible displacement",
+            "kind": "report",
+            "slot": "report",
+        },
+    ]
+    return [
+        _META,
+        {"_eval": f"window.jutulDebug.replaySession({json.dumps(msgs)})"},
+        {"_sleep": 300},
+    ]
+
+
 def _tool(tid, name, label, args, content):
     return {
         "type": "tool",
@@ -446,9 +556,14 @@ def _scenarios() -> dict:
         WebScenario("slash", "Slash-command autocomplete menu.", slash, height=820),
         WebScenario(
             "history",
-            "Session history dropdown (reopen a past chat).",
-            [_META, {"_click": "#history-btn"}, {"_sleep": 400}],
-            height=620,
+            "Left history sidebar (full height) with past chats and per-sim examples.",
+            [_META],
+            height=720,
+        ),
+        WebScenario(
+            "resume",
+            "A reopened session replayed inline: reasoning, tool cards, image, report.",
+            _resume_steps(),
         ),
         WebScenario(
             "canvas",

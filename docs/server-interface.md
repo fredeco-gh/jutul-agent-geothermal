@@ -56,7 +56,13 @@ is one consumer of it.
 A front end starts by creating a session over REST. Creating a session chooses
 the simulator, the model, and the approval policy (see
 [approval and safety](approval.md)), and returns a session id. An earlier
-session can be reopened by id, because conversation state is kept per session.
+session can be reopened by id, because conversation state is kept per session;
+`/sessions/{id}/messages` then replays the whole conversation — text, reasoning,
+tool cards and their results, and views — so a reopened chat is reconstructed
+inline as it was left. Each session is named from its first prompt and, once the
+first turn finishes, upgraded to a short content-aware title (best-effort; the
+first-prompt name stands if a model call is unavailable). The bundled UI lists
+these in a collapsible left sidebar for one-click resume.
 
 Once a session exists, the front end opens a WebSocket to it. That socket carries
 the live, two-way exchange of a turn. The front end sends the user's prompt, and
@@ -73,13 +79,13 @@ turn.
 | `GET` | `/sessions/history` | List resumable sessions on disk (title, time, simulator) |
 | `POST` | `/sessions/{id}/resume` | Reopen an earlier session |
 | `DELETE` | `/sessions/{id}` | Close a session |
-| `GET` | `/sessions/{id}/messages` | The conversation, for replaying a resumed session |
+| `GET` | `/sessions/{id}/messages` | The full conversation (text, reasoning, tool calls and results, views), for replaying a resumed session inline |
 | `GET` | `/sessions/{id}/artifacts/{path}` | Fetch a file the session produced |
 | `GET` | `/sessions/{id}/transcript` | The transcript (`?format=html` or `md`) |
 | `GET` | `/sessions/{id}/memory` | The session's workspace memory, as a page |
 | `POST` | `/sessions/{id}/upload` | Add a file to the session workspace (`uploads/<name>`) |
 | `GET` | `/models` | List the models that can be selected |
-| `GET` | `/simulators` | List the simulators that can be selected |
+| `GET` | `/simulators` | List the simulators that can be selected, each with its display name and starter prompts |
 
 ## The wire protocol
 
@@ -109,10 +115,11 @@ command rebuilds the agent in place, so the model or approval policy can change
 mid-session without losing the conversation or the live Julia state.
 
 The bundled UI exposes these as slash commands in the composer (`/model`,
-`/approval-mode`, plus client-side `/help`, `/clear`, `/copy`, `/context`), and
-renders each tool call in a form that fits it — a plan as a checklist, a file
-edit as a diff, and so on. None of that is part of the contract; it is how one
-front end chooses to present the same stream.
+`/approval-mode`, `/add-dir`, `/compact`, plus client-side `/transcript`,
+`/memory`, `/help`, `/clear`, `/copy`, `/context`), and renders each tool call in
+a form that fits it — a plan as a checklist, a file edit as a diff, and so on.
+None of that is part of the contract; it is how one front end chooses to present
+the same stream.
 
 ### Driving the user interface
 

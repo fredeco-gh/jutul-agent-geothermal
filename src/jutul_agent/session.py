@@ -337,6 +337,23 @@ class Session:
             return
         self.output_dir = target
 
+    def retitle(self, title: str) -> None:
+        """Replace the session title after it was first adopted (e.g. an LLM one).
+
+        Unlike ``adopt_title`` this overwrites an existing title: it updates the
+        title file that session listings read and records a trace event. The
+        output-directory slug is deliberately left as the first-prompt one, so
+        nothing on disk has to be renamed (and no open handles are disturbed);
+        only the displayed name changes. Best-effort and a no-op for empty input.
+        """
+        title = re.sub(r"\s+", " ", title).strip()
+        if not title or title == self.title:
+            return
+        self.title = title
+        with contextlib.suppress(OSError):
+            (self.state_dir / TITLE_FILENAME).write_text(title + "\n", encoding="utf-8")
+        self.trace.append("session_title", {"session_id": self.session_id, "title": title})
+
     def note_report(self, report_path: Path) -> None:
         """Remember a report so its sidecar transcript is refreshed at turn end.
 

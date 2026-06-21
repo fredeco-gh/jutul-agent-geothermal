@@ -31,4 +31,11 @@ JUTULDARCY = SimulatorAdapter(
         "means millidarcy/darcy left unconverted), porosity in 0..1, times in seconds, "
         "SI rates and pressures."
     ),
+    example_prompts=(
+        "Build a small 3D reservoir with one water injector and one producer, run a "
+        "short immiscible simulation, and show the interactive 3D view.",
+        "Plot the well rates and bottom-hole pressures from the last run.",
+        "Run the wells_intro example and explain what each well is doing.",
+        "Set up a CO2 injection case and plot the CO2 inventory over time.",
+    ),
 )

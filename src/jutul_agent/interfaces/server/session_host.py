@@ -59,6 +59,14 @@ class SessionHost:
         self._approval_mode = approval_mode
         self._surface = surface
         self._extensions = list(extensions)
+        # Set once a content-aware (LLM) title has been generated for this session,
+        # so the server only attempts it on the first turn.
+        self.titled = False
+
+    @property
+    def model(self) -> str | None:
+        """The session's model spec (``provider:model``), or ``None`` for the default."""
+        return self._model
 
     def reconfigure(self, *, model: str | None = None, approval_mode: str | None = None) -> None:
         """Rebuild the agent in place with a new model and/or approval policy.

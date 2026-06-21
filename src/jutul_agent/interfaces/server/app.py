@@ -105,7 +105,15 @@ def create_app(
     def list_simulators() -> dict[str, Any]:
         from jutul_agent.simulators import registry
 
-        return {"simulators": registry.names(), "default": default_sim}
+        names = registry.names()
+        details = {}
+        for name in names:
+            adapter = registry.get(name)
+            details[name] = {
+                "display_name": adapter.display_name,
+                "examples": list(adapter.example_prompts),
+            }
+        return {"simulators": names, "default": default_sim, "details": details}
 
     def _workspace_for(sim: str, requested: str | None) -> Path | None:
         """The workspace a session for ``sim`` should run in.
@@ -144,23 +152,62 @@ def create_app(
 
     @app.get("/sessions/{session_id}/messages")
     def session_messages(session_id: str) -> dict[str, Any]:
-        """The session's conversation (user/assistant text and views) for replay on resume."""
+        """The full conversation for replay on resume, in the live wire shape.
+
+        Emits the same message types the WebSocket streams during a turn — user
+        and assistant text, reasoning, tool calls paired with their results, and
+        views — so a reopened chat reconstructs inline exactly as it looked when
+        the user left it, tool cards and all. Artifacts replay with ``live=False``
+        because the Julia process restarted, so live plot embeds fall back to their
+        saved posters.
+        """
         host = manager.get(session_id)
         state_dir = host.session.state_dir if host else _session_state_dir(session_id)
         if state_dir is None:
             raise HTTPException(status_code=404, detail="no such session")
+        from jutul_agent.tool_labels import tool_label
         from jutul_agent.trace import TraceLog
 
         items: list[dict[str, Any]] = []
         with TraceLog(state_dir / "trace.sqlite") as log:
             for ev in log.iter_events():
-                if ev.kind in ("message_user", "message_assistant"):
+                if ev.kind == "message_user":
                     text = str(ev.payload.get("content", "")).strip()
                     if text:
-                        role = "user" if ev.kind == "message_user" else "assistant"
-                        items.append({"type": role, "text": text})
+                        items.append({"type": "user", "text": text})
+                elif ev.kind == "message_assistant":
+                    text = str(ev.payload.get("content", "")).strip()
+                    if text:
+                        items.append({"type": "assistant", "text": text})
+                elif ev.kind == "message_reasoning":
+                    text = str(ev.payload.get("content", "")).strip()
+                    if text:
+                        items.append({"type": "reasoning", "text": text})
+                elif ev.kind == "tool_call":
+                    name = ev.payload.get("name")
+                    items.append(
+                        {
+                            "type": "tool",
+                            "event": "requested",
+                            "name": name,
+                            "label": tool_label(name) if name else name,
+                            "tool_call_id": ev.payload.get("id"),
+                            "args": ev.payload.get("args"),
+                        }
+                    )
+                elif ev.kind == "tool_result":
+                    finished = "error" if ev.payload.get("status") == "error" else "finished"
+                    items.append(
+                        {
+                            "type": "tool",
+                            "event": finished,
+                            "name": ev.payload.get("name"),
+                            "tool_call_id": ev.payload.get("tool_call_id"),
+                            "content": ev.payload.get("content"),
+                        }
+                    )
                 elif ev.kind == "artifact":
-                    items.extend(artifact_wire_events([ev.payload], session_id))
+                    items.extend(artifact_wire_events([ev.payload], session_id, live=False))
         return {"messages": items}
 
     @app.post("/sessions")
@@ -213,22 +260,24 @@ def create_app(
 
     @app.get("/sessions/{session_id}/transcript")
     def get_transcript(session_id: str, format: str = "html") -> Response:
-        """The session transcript, as a page to view (html) or a file to save (md)."""
+        """Download the session transcript to share (html or md)."""
         host = manager.get(session_id)
-        if host is None:
+        state_dir = host.session.state_dir if host else _session_state_dir(session_id)
+        if state_dir is None:
             raise HTTPException(status_code=404, detail="no such session")
         from jutul_agent.trace import TraceLog
         from jutul_agent.transcript import render_html, render_markdown
 
-        with TraceLog(host.session.state_dir / "trace.sqlite") as log:
+        with TraceLog(state_dir / "trace.sqlite") as log:
             events = list(log.iter_events())
-        if format in ("md", "markdown"):
-            return PlainTextResponse(
-                render_markdown(events),
-                media_type="text/markdown",
-                headers={"Content-Disposition": "attachment; filename=transcript.md"},
-            )
-        return HTMLResponse(render_html(events))
+        md = format in ("md", "markdown")
+        body = render_markdown(events) if md else render_html(events)
+        ext = "md" if md else "html"
+        return PlainTextResponse(
+            body,
+            media_type="text/markdown" if md else "text/html",
+            headers={"Content-Disposition": f"attachment; filename=transcript.{ext}"},
+        )
 
     @app.get("/sessions/{session_id}/memory")
     def get_memory(session_id: str) -> Response:
@@ -282,12 +331,19 @@ def _artifact_url(session_id: str, rel: str) -> str:
     return f"/sessions/{session_id}/artifacts/{rel}"
 
 
-def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> list[dict[str, Any]]:
+def artifact_wire_events(
+    payloads: list[dict[str, Any]], session_id: str, *, live: bool = True
+) -> list[dict[str, Any]]:
     """Wire events for produced artifacts: interactive HTML as ``viz``, the rest as ``artifact``.
 
     An HTML artifact (an interactive plot, or a written report) becomes a ``viz``
     the front end pins to its canvas, carrying the artifact's ``kind``, ``slot``,
     and a ``poster`` image URL when one was saved alongside.
+
+    ``live=False`` is for replaying a resumed session: the Julia process (and with
+    it any Bonito server that backed a live plot) has restarted, so a recorded
+    ``live_url`` is dead. The figure then falls back to its saved PNG poster, shown
+    inline as a static image, instead of an embed pointing at a gone server.
     """
     events: list[dict[str, Any]] = []
     for payload in payloads:
@@ -296,7 +352,7 @@ def artifact_wire_events(payloads: list[dict[str, Any]], session_id: str) -> lis
         # so it carries a live_url and its recorded file is the PNG poster. A static
         # plot or report is an HTML artifact embedded at its own URL. Everything else
         # (a saved image, a file) is a plain artifact.
-        live_url = payload.get("live_url")
+        live_url = payload.get("live_url") if live else None
         poster = payload.get("poster")
         if live_url or payload.get("mime") == "text/html":
             events.append(
@@ -387,6 +443,8 @@ class _StreamState:
         self._host = host
         self._pending: list[Any] = []
         self._turn: asyncio.Task[None] | None = None
+        # Held so the fire-and-forget titling task isn't garbage-collected mid-run.
+        self._title_task: asyncio.Task[None] | None = None
 
     async def handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -492,6 +550,48 @@ class _StreamState:
         if usage is not None:
             await _safe_send(self._ws, usage)
         await _safe_send(self._ws, protocol.turn_end_to_wire(result.messages))
+        self._maybe_title_session()
+
+    def _maybe_title_session(self) -> None:
+        """After the first turn, upgrade the first-prompt title to a content-aware one.
+
+        Fire-and-forget and once per session: the first-prompt title already shows
+        in the history list, so this only improves it from what the exchange was
+        actually about. Runs only on the very first turn (exactly one user message
+        recorded) and is wholly best-effort — a failure keeps the first-prompt title.
+        """
+        host = self._host
+        if host.titled:
+            return
+        events = host.session.trace.iter_events()
+        user_msgs = [e for e in events if e.kind == "message_user"]
+        if len(user_msgs) != 1:
+            return
+        host.titled = True
+        first_user = str(user_msgs[0].payload.get("content", "")).strip()
+        first_reply = next(
+            (
+                str(e.payload.get("content", "")).strip()
+                for e in events
+                if e.kind == "message_assistant"
+            ),
+            "",
+        )
+        if not first_user:
+            return
+        conversation = f"User: {first_user}\n\nAssistant: {first_reply}"
+        self._title_task = asyncio.create_task(self._retitle(conversation))
+
+    async def _retitle(self, conversation: str) -> None:
+        """Generate and apply an LLM title, then nudge the front end to refresh history."""
+        from jutul_agent.agent.titling import generate_session_title
+
+        title = await generate_session_title(self._host.model, conversation)
+        if not title:
+            return
+        with contextlib.suppress(Exception):  # session may be closing; never raise here
+            self._host.session.retitle(title)
+        await _safe_send(self._ws, protocol.ui_command("history_changed", {"title": title}))
 
     def _latest_event_id(self) -> int:
         events = self._host.session.trace.iter_events()

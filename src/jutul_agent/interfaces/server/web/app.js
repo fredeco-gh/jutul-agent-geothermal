@@ -17,6 +17,7 @@ const simSelect = document.getElementById("sim-select");
 let ws = null;
 let sessionId = null;
 let sim = null;
+let simDetails = {}; // name -> { display_name, examples } from /simulators
 let model = null;
 let assistant = null; // { el, raw } for the in-progress assistant message
 const toolCards = new Map(); // tool_call_id -> { details, body, chip }
@@ -46,20 +47,25 @@ function add(node) {
   return node;
 }
 
+// Fallback suggestions when the active simulator declares no examples of its own.
 const EXAMPLES = [
-  "Set up a small 3D reservoir with one injector and one producer, run a short simulation, and show me the interactive result.",
-  "Plot the well results from the run.",
+  "Set up a small simulation and show me the interactive result.",
+  "Plot the results from the run.",
   "Give me a quick tour of what this simulator can do.",
 ];
 
 function showWelcome() {
   thread.innerHTML = "";
   const w = el("div", "welcome");
-  const h = el("h1", null, "What would you like to explore?");
+  const display = (simDetails[sim] && simDetails[sim].display_name) || sim;
+  const h = el("h1", null, display ? `What would you like to explore with ${display}?`
+    : "What would you like to explore?");
   const p = el("p", null,
     "Ask a question or describe a task. The agent runs the simulator, writes and runs Julia, and shows results here.");
   const ex = el("div", "examples");
-  for (const t of EXAMPLES) {
+  const prompts = (simDetails[sim] && simDetails[sim].examples && simDetails[sim].examples.length)
+    ? simDetails[sim].examples : EXAMPLES;
+  for (const t of prompts) {
     const btn = el("button", "example", t);
     btn.onclick = () => {
       if (busy || !ws) return;
@@ -86,11 +92,13 @@ async function init() {
   const sims = await fetch("/simulators").then((r) => r.json()).catch(() => ({}));
   const models = await fetch("/models").then((r) => r.json()).catch(() => ({}));
   const names = sims.simulators || [];
+  simDetails = sims.details || {};
   const saved = localStorage.getItem("ja_sim");
   sim = saved && names.includes(saved) ? saved : sims.default || names[0] || "jutuldarcy";
   model = models.default || null;
   populateSims(names);
   showWelcome();
+  refreshHistory();
   await startSession();
 }
 
@@ -181,17 +189,39 @@ async function resumeSession(id, sessSim) {
     "Resumed this session. The chat is restored, but the Julia REPL restarted — " +
       "earlier files and artifacts are intact; re-run setup to rebuild in-memory state.",
   );
+  refreshHistory(); // move the current highlight to the reopened session
 }
 
+// Reconstruct a resumed session inline from the recorded wire stream so it looks
+// like it did when the user left: user/assistant text, collapsed reasoning, tool
+// cards (with their output), and views. The same renderers as the live socket are
+// reused, so a replayed turn is indistinguishable from a live one.
 function replaySession(msgs) {
   for (const m of msgs) {
     if (m.type === "user") addUserBubble(m.text);
     else if (m.type === "assistant") addAssistantText(m.text);
+    else if (m.type === "reasoning") addReasoningBlock(m.text);
+    else if (m.type === "tool") onTool(m);
     else if (m.type === "viz") onViz(m);
     else if (m.type === "artifact") onArtifact(m);
   }
+  finalizeAssistant();
+  toolCards.clear(); // replayed cards are complete; a new turn starts its own
   addCopyButtons(thread);
   scrollDown();
+}
+
+// A finished reasoning block, collapsed like one the live stream leaves at turn end.
+function addReasoningBlock(text) {
+  finalizeAssistant();
+  const block = el("details", "block reasoning");
+  block.open = false;
+  const sum = el("summary");
+  sum.appendChild(el("span", "tool-name", "Reasoning"));
+  const body = el("div", "body");
+  body.textContent = text;
+  block.append(sum, body);
+  add(block);
 }
 
 function addAssistantText(text) {
@@ -260,6 +290,9 @@ function onNotice(msg) {
 // override window.jutulDebug.onUi to apply actions to their interface.
 function onUi(msg) {
   if (window.onJutulUi && window.onJutulUi(msg) === true) return; // host-app hook
+  // Internal signal: the session was renamed (e.g. an LLM title landed after the
+  // first turn). Refresh the sidebar quietly rather than surfacing it as an action.
+  if (msg.action === "history_changed") { refreshHistory(); return; }
   finalizeAssistant();
   const note = add(el("div", "ui-note"));
   note.appendChild(el("span", "ui-gear", "⚙"));
@@ -714,6 +747,7 @@ function onTurnEnd() {
     if (label) label.textContent = "Reasoning";
   }
   setBusy(false);
+  refreshHistory(); // the session now has a title (and may be newly added)
   notifyDone("The agent finished your turn.");
 }
 
@@ -838,7 +872,7 @@ const SLASH = [
   { name: "/context", desc: "show how much context the last turn used", run: showContext },
   { name: "/model", hint: "[provider:model]", desc: "switch the model (keeps the session)", run: cmdModel },
   { name: "/approval-mode", hint: "[ask|workspace|auto]", desc: "set the approval policy", run: cmdApproval },
-  { name: "/transcript", hint: "[md]", desc: "open the transcript (md to download)", run: cmdTranscript },
+  { name: "/transcript", hint: "[md]", desc: "download the conversation to share", run: cmdTranscript },
   { name: "/memory", desc: "view the workspace memory", run: cmdMemory },
   { name: "/compact", desc: "summarize older turns to free context", run: cmdCompact },
   { name: "/add-dir", hint: "<path>", desc: "give the agent another folder", run: cmdAddDir },
@@ -927,11 +961,14 @@ function pinDoc(url, title, slot) {
 
 function cmdTranscript(arg) {
   if (!sessionId) return addSystemNote("No active session.");
-  if (arg === "md" || arg === "markdown") {
-    window.open(`/sessions/${sessionId}/transcript?format=md`, "_blank", "noopener");
-    return addSystemNote("Downloading the transcript (markdown).");
-  }
-  pinDoc(`/sessions/${sessionId}/transcript?format=html`, "Transcript", "transcript");
+  const fmt = arg === "md" || arg === "markdown" ? "md" : "html";
+  const a = document.createElement("a");
+  a.href = `/sessions/${sessionId}/transcript?format=${fmt}`;
+  a.download = `transcript.${fmt}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  addSystemNote(`Downloading the transcript (${fmt}) to share.`);
 }
 
 function cmdMemory() {
@@ -1080,46 +1117,48 @@ dropPane.addEventListener("drop", (e) => {
   for (const f of e.dataTransfer.files) uploadFile(f);
 });
 
-// --- session history ------------------------------------------------------
+// --- session history (left sidebar) ---------------------------------------
 
-const historyBtn = document.getElementById("history-btn");
-const historyMenu = el("div", "history-menu");
-historyMenu.hidden = true;
-document.body.appendChild(historyMenu);
+const sidebar = document.getElementById("sidebar");
+const sidebarToggle = document.getElementById("sidebar-toggle");
+const historyList = document.getElementById("history-list");
 
-historyBtn.onclick = async (e) => {
-  e.stopPropagation();
-  if (!historyMenu.hidden) {
-    historyMenu.hidden = true;
-    return;
-  }
-  const r = historyBtn.getBoundingClientRect();
-  historyMenu.style.top = `${r.bottom + 6}px`;
-  historyMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
-  historyMenu.innerHTML = "<div class='history-empty'>Loading…</div>";
-  historyMenu.hidden = false;
-  const data = await fetch("/sessions/history").then((r) => r.json()).catch(() => ({}));
-  renderHistory(data.sessions || []);
+// Restore the collapsed state; default open on a wide screen, closed on a narrow one.
+if (localStorage.getItem("ja_sidebar") === "collapsed" ||
+    (localStorage.getItem("ja_sidebar") === null && window.innerWidth <= 760)) {
+  sidebar.classList.add("collapsed");
+}
+sidebarToggle.onclick = () => {
+  const collapsed = sidebar.classList.toggle("collapsed");
+  localStorage.setItem("ja_sidebar", collapsed ? "collapsed" : "open");
 };
 
+// Pull the resumable sessions and paint the list. Cheap, so it runs on load and
+// whenever the set or a title may have changed (new chat, resume, turn end, rename).
+async function refreshHistory() {
+  const data = await fetch("/sessions/history").then((r) => r.json()).catch(() => ({}));
+  renderHistory(data.sessions || []);
+}
+
 function renderHistory(sessions) {
-  historyMenu.innerHTML = "";
-  historyMenu.appendChild(el("div", "history-head", "Past sessions"));
+  historyList.innerHTML = "";
+  // A session earns a title from its first prompt; ones without are empty/abandoned
+  // new-chats, so leave them out to keep the list to real conversations.
+  sessions = sessions.filter((s) => s.title);
   if (!sessions.length) {
-    historyMenu.appendChild(el("div", "history-empty", "No past sessions yet."));
+    historyList.appendChild(el("div", "history-empty", "No past sessions yet."));
     return;
   }
   for (const s of sessions) {
     const item = el("button", "history-item" + (s.id === sessionId ? " current" : ""));
     item.dataset.id = s.id;
     item.appendChild(el("div", "h-title", s.title || "Untitled session"));
-    const tag = s.id === sessionId ? " · current" : "";
-    item.appendChild(el("div", "h-meta", `${s.sim} · ${timeAgo(s.started)}${tag}`));
+    item.title = s.title || "Untitled session";
+    item.appendChild(el("div", "h-meta", `${s.sim} · ${timeAgo(s.started)}`));
     item.onclick = () => {
-      historyMenu.hidden = true;
       if (s.id !== sessionId) resumeSession(s.id, s.sim);
     };
-    historyMenu.appendChild(item);
+    historyList.appendChild(item);
   }
 }
 
@@ -1132,11 +1171,6 @@ function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-document.addEventListener("click", (e) => {
-  if (!historyMenu.hidden && !historyMenu.contains(e.target) && e.target !== historyBtn) {
-    historyMenu.hidden = true;
-  }
-});
 document.getElementById("canvas-close").onclick = closeCanvas;
 viewsBtn.onclick = () => { if (activeView) openView(activeView); };
 document.getElementById("canvas-popout").onclick = () => {
@@ -1178,6 +1212,8 @@ window.jutulDebug = {
   closeCanvas,
   views,
   dispatchSlash,
+  replaySession,
+  refreshHistory,
   setPrompt: (v) => { promptEl.value = v; updateSlashMenu(); },
 };
 

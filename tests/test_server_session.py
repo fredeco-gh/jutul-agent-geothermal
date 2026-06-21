@@ -68,6 +68,10 @@ def test_simulators_endpoint(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         body = client.get("/simulators").json()
     assert "jutuldarcy" in body["simulators"]
+    # Each simulator carries its display name and starter prompts for a welcome screen.
+    detail = body["details"]["jutuldarcy"]
+    assert detail["display_name"] == "JutulDarcy"
+    assert detail["examples"] and all(isinstance(e, str) for e in detail["examples"])
 
 
 def test_web_ui_is_served(tmp_path: Path) -> None:
@@ -288,10 +292,51 @@ def test_messages_endpoint_replays_conversation(tmp_path: Path) -> None:
         state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
         with TraceLog(state_dir / "trace.sqlite") as log:  # own connection (test thread)
             log.append("message_user", {"content": "set up a reservoir"})
+            log.append("message_reasoning", {"content": "I'll build a small grid"})
+            log.append(
+                "tool_call",
+                {"id": "c1", "name": "run_julia", "args": {"code": "1+1"}},
+            )
+            log.append(
+                "tool_result",
+                {"tool_call_id": "c1", "name": "run_julia", "content": "2", "status": "success"},
+            )
             log.append("message_assistant", {"content": "done — here it is"})
         msgs = client.get(f"/sessions/{sid}/messages").json()["messages"]
     assert {"type": "user", "text": "set up a reservoir"} in msgs
+    assert {"type": "reasoning", "text": "I'll build a small grid"} in msgs
     assert {"type": "assistant", "text": "done — here it is"} in msgs
+    # A tool replays as a requested card followed by its finished result, so the
+    # resumed chat shows the full tool card with its output (not just text).
+    requested = next(m for m in msgs if m["type"] == "tool" and m["event"] == "requested")
+    assert requested["tool_call_id"] == "c1" and requested["args"] == {"code": "1+1"}
+    finished = next(m for m in msgs if m["type"] == "tool" and m["event"] == "finished")
+    assert finished["tool_call_id"] == "c1" and finished["content"] == "2"
+
+
+def test_first_turn_generates_llm_title(tmp_path: Path, monkeypatch: Any) -> None:
+    # After the first turn the server replaces the first-prompt title with a
+    # content-aware one (best-effort) and nudges the front end to refresh history.
+    from jutul_agent import session as session_mod
+    from jutul_agent.agent import titling
+
+    async def fake_title(model_id: Any, conversation: str) -> str:
+        return "Reservoir Sweep Study"
+
+    monkeypatch.setattr(titling, "generate_session_title", fake_title)
+
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "set up a small reservoir"})
+            events = _drain_turn(ws)
+            renamed = ws.receive_json()  # the post-turn history-refresh signal
+    assert events[-1]["type"] == "turn_end"
+    assert renamed["type"] == "ui" and renamed["action"] == "history_changed"
+    assert renamed["payload"]["title"] == "Reservoir Sweep Study"
+    # The new title is persisted, so a history listing shows it.
+    titles = [s.title for s in session_mod.list_sessions(state_root=tmp_path)]
+    assert "Reservoir Sweep Study" in titles
 
 
 def test_upload_writes_to_workspace(tmp_path: Path) -> None:

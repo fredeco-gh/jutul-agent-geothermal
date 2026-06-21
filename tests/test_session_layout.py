@@ -103,6 +103,26 @@ def test_adopt_title_renames_output_and_records(tmp_path: Path) -> None:
     session.trace.close()
 
 
+def test_retitle_overwrites_title_but_keeps_output_dir(tmp_path: Path) -> None:
+    from jutul_agent.session import read_session_title
+
+    session = _title_session(tmp_path)
+    session.adopt_title("Run a chen_2020 discharge and plot voltage")
+    out_after_adopt = session.output_dir  # carries the first-prompt slug
+
+    # An LLM title replaces the displayed/stored name without renaming the folder
+    # (no open handles disturbed) — only the title file and a trace event change.
+    session.retitle("Chen2020 CC Discharge Voltage")
+    assert session.title == "Chen2020 CC Discharge Voltage"
+    assert read_session_title(session.state_dir) == "Chen2020 CC Discharge Voltage"
+    assert session.output_dir == out_after_adopt  # folder slug unchanged
+    assert [e.kind for e in session.trace.iter_events()].count("session_title") == 2
+
+    session.retitle("   ")  # blank is a no-op
+    assert session.title == "Chen2020 CC Discharge Voltage"
+    session.trace.close()
+
+
 def test_adopt_title_without_usable_slug_keeps_dir(tmp_path: Path) -> None:
     session = _title_session(tmp_path)
     before = session.output_dir
