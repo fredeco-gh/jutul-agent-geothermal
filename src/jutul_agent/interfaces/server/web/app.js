@@ -511,18 +511,28 @@ function onTool(msg) {
     body.appendChild(out);
     details.append(sum, body);
     add(details);
-    card = { details, body, chip, out, preview };
+    card = { details, body, chip, out, preview, raw: "" };
     toolCards.set(msg.tool_call_id, card);
+  }
+  if (msg.event === "delta") {
+    // Live kernel output (run_julia/execute): append and re-render so the user
+    // watches it stream, instead of waiting for the whole result at the end.
+    if (msg.content && policy.rawOutput !== false) {
+      card.raw += msg.content;
+      renderOutput(card);
+    }
+    return;
   }
   if (msg.event === "finished") {
     card.chip.textContent = "done";
     card.chip.className = "chip-status";
     if (policy.note && msg.content) appendNote(card, policy.note(msg.content));
-    if (msg.content && policy.rawOutput !== false) setOutput(card, msg.content, msg.name);
+    // The final result is canonical; replace any streamed deltas with it (clean + clamped).
+    if (msg.content && policy.rawOutput !== false) setOutput(card, msg.content);
   } else if (msg.event === "error") {
     card.chip.textContent = "error";
     card.chip.className = "chip-status error";
-    if (msg.content) setOutput(card, msg.content, msg.name); // always surface errors
+    if (msg.content) setOutput(card, msg.content); // always surface errors
   }
 }
 
@@ -550,13 +560,31 @@ function clampOutput(text) {
   return text.length > 6000 ? text.slice(0, 6000) + "\n  … truncated …" : text;
 }
 
-function setOutput(card, content, name) {
-  const text = clampOutput(String(content));
+// Kernel output arrives as raw terminal text: ANSI color codes and carriage
+// returns (progress bars overwrite their line with \r). Strip the escapes and
+// apply each line's last \r, so a <pre> shows clean output, not escape soup.
+function cleanOutput(raw) {
+  return String(raw)
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    .split("\n")
+    .map((line) => {
+      const cr = line.lastIndexOf("\r");
+      return cr >= 0 ? line.slice(cr + 1) : line;
+    })
+    .join("\n");
+}
+
+function renderOutput(card) {
   keepingBottom(() => {
     card.out.hidden = false;
-    card.out.textContent = text;
+    card.out.textContent = clampOutput(cleanOutput(card.raw));
     addCopyButtons(card.out.parentElement);
   });
+}
+
+function setOutput(card, content) {
+  card.raw = String(content);
+  renderOutput(card);
 }
 
 // Add a hover "Copy" button to code blocks (idempotent via data-copy).
