@@ -63,6 +63,11 @@
     if (btn) btn.hidden = false;
   };
 
+  // newChat()/resumeSession() wipe every pinned view (resetCanvas), so the map
+  // needs to come back on its own each time — switching chats shouldn't require
+  // a manual reopen; that button is only for when the user closes it themselves.
+  window.onJutulSessionStart = openMap;
+
   // Outbound: the agent's ui messages are forwarded into the map iframe. This
   // app's ui channel is dedicated to the map, so we suppress the bundled UI's
   // default "gear note" rendering by returning true.
