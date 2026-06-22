@@ -17,6 +17,12 @@ plots the results, and iterates: fixing mistakes and refining the next run.
   <a href="https://github.com/sintefmath/Mocca.jl"><img src="https://raw.githubusercontent.com/sintefmath/Mocca.jl/main/docs/src/assets/mocca_small_transparent.png" alt="Mocca" height="62"></a>
 </p>
 
+<p align="center">
+  <img src="docs/images/web-jutuldarcy.png" alt="jutul-agent web UI: a JutulDarcy waterflood with an interactive 3D reservoir view" width="49%">
+  <img src="docs/images/web-battmo.png" alt="jutul-agent web UI: a BattMo discharge-rate investigation with plots and a report" width="49%">
+</p>
+<p align="center"><sub>The browser UI (<code>jutul-agent web</code>): chat on the left; interactive plots and reports pinned in a canvas on the right. Left — a JutulDarcy waterflood with an interactive 3D reservoir. Right — a BattMo C-rate study: voltage curves, an attempts map, and a written report.</sub></p>
+
 What makes it work for scientific computing:
 
 - A persistent Julia REPL per session. State, loaded packages, and compiled

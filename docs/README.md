@@ -29,6 +29,13 @@ fixing mistakes and refining the next run.</p>
 </div>
 </div>
 
+<p align="center">
+  <img src="images/web-jutuldarcy.png" alt="jutul-agent web UI: a JutulDarcy waterflood with an interactive 3D reservoir view" width="49%">
+  <img src="images/web-battmo.png" alt="jutul-agent web UI: a BattMo discharge-rate investigation with plots and a report" width="49%">
+</p>
+<p align="center" markdown><small>The browser UI (`jutul-agent web`): chat on the left; interactive plots and
+reports pinned in a canvas on the right.</small></p>
+
 <div class="grid cards" markdown>
 
 -   :material-rocket-launch:{ .lg .middle } **Usage**

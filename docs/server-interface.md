@@ -45,6 +45,9 @@ Open <http://127.0.0.1:8742>. Type a task and watch the agent stream its reply,
 run tools, and return plots, with the same session core behind it as every other
 front end.
 
+![The bundled web UI running JutulDarcy: the conversation on the left, an
+interactive 3D reservoir pinned in the side canvas on the right.](images/web-jutuldarcy.png)
+
 The server is bound to **one folder and one simulator**, the same way the
 command line is: the folder is its launch directory (or `--workspace`), and the
 simulator comes from `--sim`, the folder's saved `[workspace] simulator`, or
