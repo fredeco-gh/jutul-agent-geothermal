@@ -160,6 +160,10 @@ function openSocket() {
   ws.onmessage = (e) => handle(JSON.parse(e.data));
   ws.onclose = () => setBusy(false);
   setWarming(true); // the kernel warms in the background until the first turn lands
+  // newChat()/resumeSession() call resetCanvas() before getting here, which wipes
+  // every pinned view — a host app's always-open view (e.g. a map) needs telling
+  // to come back, since nothing else would re-pin it after a session switch.
+  if (window.onJutulSessionStart) window.onJutulSessionStart();
 }
 
 // The "warming up Julia" hint: the kernel loads the simulator + plotting stack on
