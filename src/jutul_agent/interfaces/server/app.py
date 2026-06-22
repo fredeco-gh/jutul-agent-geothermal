@@ -527,10 +527,23 @@ def _session_state_dir(session_id: str) -> Path | None:
     return candidate if (candidate / "trace.sqlite").exists() else None
 
 
+# Inert page policy for the canvas iframe: no scripts (the body is markdown the
+# agent may have read), only inline styles and images. Defense in depth alongside
+# the markdown renderer's html=False escaping.
+_DOC_CSP = (
+    "default-src 'none'; img-src 'self' data: http: https:; style-src 'unsafe-inline'; "
+    "font-src data:; base-uri 'none'; form-action 'none'"
+)
+
+
 def _doc_page(title: str, body_html: str) -> str:
     """Wrap rendered HTML in a minimal, self-contained page for the canvas iframe."""
+    import html as _html
+
     return (
-        "<!doctype html><html><head><meta charset='utf-8'><title>" + title + "</title><style>"
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<meta http-equiv='Content-Security-Policy' content=\"{_DOC_CSP}\">"
+        "<title>" + _html.escape(title) + "</title><style>"
         "body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
         "color:#1f2328;background:#fff;line-height:1.6}"
         ".page{max-width:760px;margin:0 auto;padding:2rem 1.6rem}"
@@ -572,12 +585,18 @@ async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
     state = _StreamState(websocket, host)
     try:
         while True:
-            message = await websocket.receive_json()
+            try:
+                message = await websocket.receive_json()
+            except ValueError:  # a non-JSON text frame (json.JSONDecodeError)
+                await _safe_send(
+                    websocket, {"type": "error", "message": "invalid message (expected JSON)"}
+                )
+                continue
             await state.handle(message)
     except WebSocketDisconnect:
         pass
     finally:
-        await state.cancel_turn()
+        await state.aclose()
         host.detach()
 
 
@@ -802,6 +821,18 @@ class _StreamState:
             self._turn.cancel()  # type: ignore[union-attr]
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._turn  # type: ignore[arg-type]
+
+    async def aclose(self) -> None:
+        """Tear down on disconnect: cancel a running turn and any in-flight titling.
+
+        The titling task is a fire-and-forget model call; without this it would
+        keep running (and spend) after the connection is gone.
+        """
+        await self.cancel_turn()
+        if self._title_task is not None and not self._title_task.done():
+            self._title_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._title_task
 
 
 async def _safe_send(websocket: WebSocket, message: dict[str, Any]) -> None:

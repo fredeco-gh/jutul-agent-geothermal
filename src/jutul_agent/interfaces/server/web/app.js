@@ -1068,6 +1068,11 @@ function onError(message) {
   if (lastPrompt && !pendingInterrupt) {
     const retry = el("button", "btn", "Retry");
     retry.onclick = () => {
+      // An error often arrives as the socket is closing; don't send on a dead one.
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        addSystemNote("Connection lost — reload the page to continue.");
+        return;
+      }
       card.remove();
       addUserBubble(lastPrompt);
       ws.send(JSON.stringify({ type: "prompt", text: lastPrompt }));
