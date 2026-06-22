@@ -791,7 +791,10 @@ function onViz(msg) {
     view.loaded = false;
     view.frame.src = bust(view.url);
   }
-  addChip(view); // a fresh inline reference in the conversation each time
+  // A host app pinning its own view outside any actual turn (e.g. an always-open
+  // map, opened/reopened with no chat exchange behind it) passes silent: true —
+  // unlike a real plot/report, it isn't a conversation event worth a reference.
+  if (!msg.silent) addChip(view); // a fresh inline reference in the conversation each time
   openView(id); // reveal the panel and focus this view
 }
 
@@ -923,6 +926,11 @@ function removeView(id) {
   const view = views.get(id);
   if (view && view.frame) view.frame.remove();
   views.delete(id);
+  // Host-app hook: a view removed this way (the tab's own ✕, not "close panel")
+  // is gone for good unless something re-adds it — this lets a host app offer
+  // its own way back (e.g. a button that re-pins it), since the bundled UI only
+  // ever creates these from a server-pushed viz / its own slot reuse.
+  if (window.onJutulViewClosed) window.onJutulViewClosed(id);
   viewOrder = viewOrder.filter((x) => x !== id);
   if (activeView === id) {
     activeView = viewOrder[viewOrder.length - 1] || null;
