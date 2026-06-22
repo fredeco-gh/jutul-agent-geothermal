@@ -1616,10 +1616,21 @@ document.getElementById("canvas-popout").onclick = () => {
 (function () {
   const grip = document.getElementById("canvas-grip");
   let dragging = false;
+  // While dragging, an iframe'd view (a plot, report, or an embedded map) would
+  // otherwise swallow mousemove the instant the cursor crosses into it — it's a
+  // separate browsing context, so those events never reach this window's
+  // listener. Disabling pointer events on every frame for the drag's duration
+  // keeps the cursor's moves landing here the whole time.
+  function setFramesInert(inert) {
+    for (const v of views.values()) {
+      if (v.frame) v.frame.style.pointerEvents = inert ? "none" : "";
+    }
+  }
   grip.addEventListener("mousedown", (e) => {
     dragging = true;
     grip.classList.add("dragging");
     document.body.style.userSelect = "none";
+    setFramesInert(true);
     e.preventDefault();
   });
   window.addEventListener("mousemove", (e) => {
@@ -1633,6 +1644,7 @@ document.getElementById("canvas-popout").onclick = () => {
     dragging = false;
     grip.classList.remove("dragging");
     document.body.style.userSelect = "";
+    setFramesInert(false);
   });
 })();
 
