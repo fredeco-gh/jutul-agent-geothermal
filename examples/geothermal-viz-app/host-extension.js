@@ -35,8 +35,33 @@
     // Same path a server-pushed plot/report view takes (updates the tab order
     // too, not just the view registry) — just called directly instead of
     // waiting for a `viz` message, since the map is always open, not tool-gated.
-    window.jutulDebug.onViz({ kind: "map", url: childUrl(), title: "Map", slot: "map" });
+    window.jutulDebug.onViz({ kind: "map", url: childUrl(), title: "Map", slot: "map", silent: true });
+    if (reopenBtn) reopenBtn.hidden = true;
   }
+
+  // A small top-right button that appears only once the map tab's own ✕ has
+  // fully removed it (closing the canvas panel doesn't — the bundled UI's
+  // "Views" button already covers that case). Reopening re-fetches the map
+  // fresh, the same way reopening a closed browser tab would.
+  let reopenBtn = null;
+  function ensureReopenButton() {
+    if (reopenBtn) return reopenBtn;
+    const actions = document.querySelector(".actions");
+    if (!actions) return null;
+    reopenBtn = document.createElement("button");
+    reopenBtn.className = "ghost";
+    reopenBtn.textContent = "Reopen map";
+    reopenBtn.hidden = true;
+    reopenBtn.onclick = openMap;
+    actions.appendChild(reopenBtn);
+    return reopenBtn;
+  }
+
+  window.onJutulViewClosed = function (id) {
+    if (id !== MAP_VIEW_ID) return;
+    const btn = ensureReopenButton();
+    if (btn) btn.hidden = false;
+  };
 
   // Outbound: the agent's ui messages are forwarded into the map iframe. This
   // app's ui channel is dedicated to the map, so we suppress the bundled UI's
