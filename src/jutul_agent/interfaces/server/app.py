@@ -117,6 +117,7 @@ def create_app(
     threads: str | None = None,
     add_dirs: Sequence[Path] = (),
     ephemeral_memory: bool = False,
+    extra_static: dict[str, Path] | None = None,
 ) -> FastAPI:
     # The launch-wide knobs (folder-fixed) ride in the default manager's host
     # factory; an injected manager (tests) brings its own. The model is a default
@@ -587,6 +588,12 @@ def create_app(
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
         await _serve_stream(websocket, manager, session_id)
+
+    # Registered before the catch-all UI mount below: a host app's extra file (e.g.
+    # a bridge script) needs its own route to win, since a Mount("/") matches every
+    # path and a route added after it would never be reached.
+    for route_path, file_path in (extra_static or {}).items():
+        app.add_api_route(route_path, lambda fp=file_path: FileResponse(fp), methods=["GET"])
 
     # The bundled web UI is mounted last so the API routes above take precedence.
     ui_dir = _ui_dir()
