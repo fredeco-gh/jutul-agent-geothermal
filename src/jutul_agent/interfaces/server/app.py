@@ -271,6 +271,15 @@ def create_app(
 
     @app.post("/sessions/{session_id}/resume")
     async def resume_session(session_id: str, req: ResumeSessionRequest) -> dict[str, str]:
+        if not _is_valid_session_id(session_id):
+            raise HTTPException(status_code=404, detail="no such session")
+        # Re-resuming a session that another connection is using would build a
+        # fresh kernel and tear the live one down under it; refuse instead.
+        existing = manager.get(session_id)
+        if existing is not None and existing.attached:
+            raise HTTPException(
+                status_code=409, detail="session is already open in another connection"
+            )
         try:
             host = await manager.resume(
                 session_id,
@@ -410,7 +419,18 @@ def create_app(
         safe = re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "upload"
         dest = ws / "uploads" / safe
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(await file.read())
+        # Stream to disk with a size cap so a large upload can't exhaust memory
+        # (the whole server runs on one event loop).
+        max_bytes = 100 * 1024 * 1024
+        written = 0
+        with dest.open("wb") as fh:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > max_bytes:
+                    fh.close()
+                    dest.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="upload too large (max 100 MB)")
+                fh.write(chunk)
         rel = f"uploads/{safe}"
         host.session.trace.append("upload", {"path": rel})
         return {"path": rel}
@@ -484,11 +504,26 @@ def _session_sim(state_dir: Path) -> str | None:
     return None
 
 
+# A session id is server-generated and shaped like ``2026-06-21-2315-3f2a`` (plus
+# an optional title slug). Validate the shape so a client-supplied id can never be
+# a path traversal (``..``, separators, encoded slashes) into ``mkdir`` or a read.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _is_valid_session_id(session_id: str) -> bool:
+    return bool(_SESSION_ID_RE.match(session_id)) and ".." not in session_id
+
+
 def _session_state_dir(session_id: str) -> Path | None:
     """The on-disk state dir for a (possibly not-loaded) session, if it exists."""
     from jutul_agent.session import sessions_root
 
-    candidate = sessions_root() / session_id
+    if not _is_valid_session_id(session_id):
+        return None
+    root = sessions_root().resolve()
+    candidate = (root / session_id).resolve()
+    if not candidate.is_relative_to(root):  # belt-and-braces against traversal
+        return None
     return candidate if (candidate / "trace.sqlite").exists() else None
 
 
@@ -719,8 +754,12 @@ class _StreamState:
     async def _retitle(self, conversation: str) -> None:
         """Generate and apply an LLM title, then nudge the front end to refresh history."""
         from jutul_agent.agent.titling import generate_session_title
+        from jutul_agent.models import DEFAULT_MODEL
 
-        title = await generate_session_title(self._host.model, conversation)
+        # ``host.model`` is None when the session runs the default model, so fall
+        # back to it (matching the /compact path) instead of skipping titling for
+        # the common case.
+        title = await generate_session_title(self._host.model or DEFAULT_MODEL, conversation)
         if not title:
             return
         with contextlib.suppress(Exception):  # session may be closing; never raise here

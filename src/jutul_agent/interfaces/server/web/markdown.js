@@ -4,10 +4,16 @@
 // links). Not a full CommonMark implementation; it just has to read well.
 
 function escapeHtml(s) {
+  // Escape quotes too, not just angle brackets: rendered text is interpolated
+  // into attribute context (e.g. a link's href="..."), so an unescaped " in
+  // model/tool output could otherwise break out of the attribute and inject an
+  // event handler. Escaping quotes here closes every attribute sink at once.
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function inline(s) {

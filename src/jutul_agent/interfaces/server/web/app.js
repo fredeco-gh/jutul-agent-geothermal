@@ -149,7 +149,7 @@ async function startSession() {
     return;
   }
   sessionId = (await resp.json()).session_id;
-  metaEl.innerHTML = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
+  metaEl.textContent = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
   openSocket();
 }
 
@@ -194,7 +194,7 @@ async function resumeSession(id, sessSim) {
     return;
   }
   sessionId = (await resp.json()).session_id;
-  metaEl.innerHTML = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
+  metaEl.textContent = `${model || "no model"} · ${sessionId.slice(0, 13)}`;
   openSocket();
   const data = await fetch(`/sessions/${id}/messages`).then((r) => r.json()).catch(() => ({}));
   replaySession(data.messages || []);
@@ -1276,7 +1276,7 @@ async function showContext() {
 function cmdModel(arg) {
   if (arg) {
     model = arg;
-    metaEl.innerHTML = `${model} · ${(sessionId || "").slice(0, 13)}`;
+    metaEl.textContent = `${model} · ${(sessionId || "").slice(0, 13)}`;
     sendCommand("set_model", arg, `Switched the model to ${arg}.`);
     refreshContextWindow();
     return;

@@ -470,3 +470,28 @@ def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Pa
     with TestClient(create_app(SessionManager())) as client:
         resp = client.post("/sessions", json={"sim": "does-not-exist"})
     assert resp.status_code == 400
+
+
+def test_resume_rejects_malformed_session_id(tmp_path: Path) -> None:
+    # A client-supplied id that isn't the server-generated shape is refused before
+    # any disk access, so it can't become a path traversal into mkdir.
+    with _client(echo_agent, tmp_path) as client:
+        resp = client.post("/sessions/foo%24bar/resume", json={})
+    assert resp.status_code == 404
+
+
+def test_messages_rejects_malformed_session_id(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        resp = client.get("/sessions/foo%24bar/messages")
+    assert resp.status_code == 404
+
+
+def test_resume_refuses_when_session_in_use(tmp_path: Path) -> None:
+    # Re-resuming a session another connection holds would tear its live kernel
+    # down; the server returns 409 instead.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        manager.get(sid).attach()  # type: ignore[union-attr]  # simulate an active connection
+        resp = client.post(f"/sessions/{sid}/resume", json={})
+    assert resp.status_code == 409
