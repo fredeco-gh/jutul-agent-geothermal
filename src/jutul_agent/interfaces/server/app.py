@@ -87,6 +87,7 @@ def create_app(
     *,
     ui: bool = True,
     default_sim: str | None = None,
+    extra_static: dict[str, Path] | None = None,
 ) -> FastAPI:
     manager = manager or SessionManager()
 
@@ -438,6 +439,12 @@ def create_app(
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
         await _serve_stream(websocket, manager.get(session_id))
+
+    # Registered before the catch-all UI mount below: a host app's extra file (e.g.
+    # a bridge script) needs its own route to win, since a Mount("/") matches every
+    # path and a route added after it would never be reached.
+    for route_path, file_path in (extra_static or {}).items():
+        app.add_api_route(route_path, lambda fp=file_path: FileResponse(fp), methods=["GET"])
 
     # The bundled web UI is mounted last so the API routes above take precedence.
     if ui and WEB_DIR.is_dir():

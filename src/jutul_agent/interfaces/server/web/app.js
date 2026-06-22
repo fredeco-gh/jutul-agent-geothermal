@@ -31,8 +31,9 @@ const ICONS = {
   plot: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>',
   report: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg>',
   image: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5L5 20"/></svg>',
+  map: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l-6 3V5l6-3 6 3 6-3v16l-6 3-6-3z"/><path d="M9 2v16M15 5v16"/></svg>',
 };
-const KIND_LABEL = { plot: "Interactive plot", report: "Report", image: "Image" };
+const KIND_LABEL = { plot: "Interactive plot", report: "Report", image: "Image", map: "Map" };
 
 function el(tag, cls, text) {
   const node = document.createElement(tag);
@@ -777,8 +778,8 @@ function viewId(msg) {
 function onViz(msg) {
   finalizeAssistant();
   const id = viewId(msg);
-  const kind = msg.kind === "report" ? "report" : "plot";
-  const title = msg.title || (kind === "report" ? "Report" : "Interactive plot");
+  const kind = msg.kind === "report" ? "report" : msg.kind === "map" ? "map" : "plot";
+  const title = msg.title || (kind === "report" ? "Report" : kind === "map" ? "Map" : "Interactive plot");
   const existing = views.get(id);
   const view = existing || { id };
   Object.assign(view, { url: msg.url, title, kind, poster: msg.poster || null });
@@ -1638,10 +1639,17 @@ window.jutulDebug = {
   openView,
   closeCanvas,
   views,
+  // Pins a view (e.g. a host app's embedded page) into the canvas exactly like a
+  // server-pushed plot/report does — the supported way to add one from outside,
+  // since it also updates the tab-strip order that views/openView alone don't.
+  onViz,
   dispatchSlash,
   replaySession,
   refreshHistory,
   setPrompt: (v) => { promptEl.value = v; updateSlashMenu(); },
+  // A host app's bridge script sends over the live session socket through this
+  // (e.g. relaying a ui_event from an embedded view back to the agent).
+  send: (obj) => { if (ws) ws.send(JSON.stringify(obj)); },
 };
 
 init();
