@@ -66,9 +66,9 @@ set `info.num_cycles = 3` before `setup_mocca_case` for a short run.
 
 ## Building a case directly
 
-The examples are the ground truth. Find the source path with `pkgdir(Mocca)` in
-`run_julia`, then list them and read the one that fits your task before writing
-your own chain:
+The examples are the ground truth. Mocca's source path is given to you up front;
+list the examples there and read the one that fits your task before writing your
+own chain:
 
 ```text
 glob("/.../Mocca/examples/*.jl")

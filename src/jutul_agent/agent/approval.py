@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from copy import deepcopy
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from langchain.agents.middleware import InterruptOnConfig
 
@@ -107,6 +109,19 @@ def interrupt_matches_allowlist(value: Any, allowlist: ToolAllowlist) -> bool:
     return all(allowlist.contains(category) for category in categories)
 
 
+def always_allow_categories(value: Any) -> frozenset[str]:
+    """Categories a front end may offer to 'always allow' for this interrupt.
+
+    Mirrors the TUI's policy so every interface behaves the same: shell approvals
+    are deliberately one-off (a blanket 'always allow shell' is too broad), so a
+    shell-only interrupt offers nothing; file edits and other categories do.
+    """
+    categories = categories_for_interrupt(value)
+    if not categories or categories == {ALLOWLIST_SHELL}:
+        return frozenset()
+    return categories
+
+
 def parse_approval_mode(value: str | None) -> ApprovalMode:
     if not value:
         return ApprovalMode.ASK
@@ -160,3 +175,97 @@ def should_auto_approve_interrupt(
     if mode == ApprovalMode.WORKSPACE:
         return interrupt_is_workspace_edits_only(value)
     return False
+
+
+# ---------------------------------------------------------------------------
+# Interrupt decisions and resume payloads.
+#
+# Shared across interfaces (TUI, server) so every front end resolves an
+# approval interrupt the same way. An interrupt payload follows deepagents'
+# contract: a dict with an ``action_requests`` list and a parallel
+# ``review_configs`` list of allowed-decision policies.
+
+# The decisions a front end can resolve an interrupt with.
+SUPPORTED_APPROVAL_DECISIONS = frozenset({"approve", "reject", "respond"})
+
+
+class SupportsInterrupt(Protocol):
+    """A pending interrupt: an id and its raw payload value."""
+
+    interrupt_id: str
+    value: Any
+
+
+def review_config_map(review_configs: Any) -> dict[str, frozenset[str]]:
+    """Map each action name to its allowed decisions from a ``review_configs`` list."""
+
+    config_map: dict[str, frozenset[str]] = {}
+    if not isinstance(review_configs, list):
+        return config_map
+    for review in review_configs:
+        if not isinstance(review, dict):
+            continue
+        action_name = review.get("action_name")
+        allowed = review.get("allowed_decisions")
+        if isinstance(action_name, str) and isinstance(allowed, list):
+            config_map[action_name] = frozenset(str(item) for item in allowed)
+    return config_map
+
+
+def allowed_decisions_for_interrupt(value: Any) -> frozenset[str]:
+    """Return the intersection of decisions allowed across an interrupt's actions.
+
+    An interrupt may bundle multiple ``action_requests``; each can declare its
+    own ``allowed_decisions`` in a sibling ``review_configs`` block. A front end
+    can only resume an interrupt with a decision every action accepts, so we
+    intersect. Empty / malformed payloads fall back to all supported decisions,
+    matching deepagents' default.
+    """
+
+    if not isinstance(value, dict):
+        return SUPPORTED_APPROVAL_DECISIONS
+
+    config_map = review_config_map(value.get("review_configs"))
+    action_requests = value.get("action_requests")
+    if not isinstance(action_requests, list):
+        return SUPPORTED_APPROVAL_DECISIONS
+
+    shared: frozenset[str] | None = None
+    for action in action_requests:
+        if not isinstance(action, dict):
+            continue
+        action_name = str(action.get("name") or "")
+        allowed = config_map.get(action_name, SUPPORTED_APPROVAL_DECISIONS)
+        shared = allowed if shared is None else shared & allowed
+    return shared if shared is not None else SUPPORTED_APPROVAL_DECISIONS
+
+
+def pending_allowed_decisions(interrupts: Iterable[SupportsInterrupt]) -> frozenset[str]:
+    """Decisions every pending interrupt accepts, scoped to the supported set."""
+
+    shared: frozenset[str] | None = None
+    for interrupt in interrupts:
+        allowed = allowed_decisions_for_interrupt(interrupt.value)
+        shared = allowed if shared is None else shared & allowed
+    if shared is None:
+        return frozenset()
+    return shared & SUPPORTED_APPROVAL_DECISIONS
+
+
+def build_resume_payload(
+    interrupts: Iterable[SupportsInterrupt],
+    decision: dict[str, str],
+) -> dict[str, dict[str, list[dict[str, str]]]]:
+    """Apply one decision to every action of every pending interrupt, for ``resume``.
+
+    The result is the ``Command(resume=...)`` payload deepagents expects: keyed
+    by interrupt id, each carrying one decision per ``action_request``.
+    """
+
+    payload: dict[str, dict[str, list[dict[str, str]]]] = {}
+    for interrupt in interrupts:
+        value = interrupt.value if isinstance(interrupt.value, dict) else {}
+        action_requests = value.get("action_requests")
+        count = len(action_requests) if isinstance(action_requests, list) else 1
+        payload[interrupt.interrupt_id] = {"decisions": [deepcopy(decision) for _ in range(count)]}
+    return payload

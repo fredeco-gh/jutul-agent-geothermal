@@ -48,6 +48,11 @@ class SimulatorAdapter:
     subagent_factories: tuple[Callable[[Session], dict[str, Any]], ...] = field(
         default_factory=tuple
     )
+    # A few starter tasks a graphical front end can offer on its welcome screen,
+    # phrased the way a user would. Kept short and runnable; the first one should
+    # exercise a simulate-and-plot round trip so a new user sees the agent's full
+    # loop. Empty falls back to the front end's generic suggestions.
+    example_prompts: tuple[str, ...] = ()
 
     @property
     def julia_env_template_path(self) -> Path:

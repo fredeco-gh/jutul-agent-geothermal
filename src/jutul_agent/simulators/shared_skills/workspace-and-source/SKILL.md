@@ -57,16 +57,10 @@ workspace.
 
 ## Reading installed package source and examples
 
-Every package the environment resolves (the simulator, the Jutul-stack packages
-it builds on, their dependencies, and anything you `Pkg.add`) has its source on
-disk at the path `pkgdir(<Package>)` returns. Get the path in the REPL, then
-read and grep it with the ordinary file tools; the same path string works in
-Julia too:
-
-```julia
-# run_julia
-pkgdir(JutulDarcy)             # -> /.../.julia/packages/JutulDarcy/<hash>
-```
+The active simulator's package source path is given to you up front (in the
+system prompt). Read and grep it directly with the file tools — don't run
+`using <Sim>` / `pkgdir(<Sim>)` to find it, since that loads the package (slow
+the first time) just to learn a path you already have:
 
 ```text
 glob("/.../JutulDarcy/examples/**/*.jl")          # discover examples
@@ -74,8 +68,14 @@ read_file("/.../JutulDarcy/examples/.../example.jl")
 grep("setup_well", path="/.../JutulDarcy/src")    # find API uses
 ```
 
-A package you `Pkg.add` mid-session is reachable at its `pkgdir` path the same
-way.
+Every *other* package the environment resolves (the Jutul-stack packages the
+simulator builds on, their dependencies, and anything you `Pkg.add`) also has
+its source on disk; `pkgdir(<Package>)` in the REPL returns that path:
+
+```julia
+# run_julia
+pkgdir(SomeDependency)         # -> /.../.julia/packages/SomeDependency/<hash>
+```
 
 Installed source is **read-only**: it lives in the shared Julia depot, so the
 file tools refuse to `write_file`/`edit_file` there (editing it would break
@@ -93,14 +93,14 @@ methods(solve)                 # available methods
 names(SimulatorPackage)        # exported names of the active simulator's package
 ```
 
-Rule of thumb: **`pkgdir(<Package>)` + the file tools for examples and source
-you want to read or grep; `@doc` / `methods` / `names` in `run_julia` for
-precise API.**
+Rule of thumb: **read/grep the simulator's source at the path you were given (and
+`pkgdir(<Package>)` for any other package); `@doc` / `methods` / `names` in
+`run_julia` for precise API.**
 
 If `.jutul-agent/config.toml` sets a `source_path` for the simulator, its
-primary package is `Pkg.develop`-ed there, so `pkgdir(<Package>)` points at that
-checkout. It is **writable**, so you can `edit_file` it to modify the library
-and re-`include` to test.
+primary package is `Pkg.develop`-ed there, so the source path you were given is
+that checkout. It is **writable**, so you can `edit_file` it to modify the
+library and re-`include` to test.
 
 ## Workspace already has its own Project.toml?
 

@@ -6,7 +6,9 @@ import base64
 import hashlib
 import html
 import json
-from collections.abc import Iterable
+import mimetypes
+from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Any
 
 from jutul_agent.tool_labels import tool_label
@@ -691,16 +693,69 @@ def _index_hitl_responses(events: list[Event]) -> dict[str, dict[str, Any]]:
     return indexed
 
 
-def _inline_artifact_preview(artifact: ArtifactPayload | None) -> str:
+# Largest artifact to base64-inline into a transcript; above this, keep the path.
+_MAX_INLINE_BYTES = 10 * 1024 * 1024
+
+
+def _resolve_artifact_file(path: str, artifact_dirs: Sequence[Path]) -> Path | None:
+    """Find the on-disk file for a recorded artifact path, contained to the run's dirs.
+
+    The transcript inlines file *bytes*, so a recorded path must resolve to a file
+    inside one of the run dirs; an absolute or ``..`` path that escapes every dir is
+    rejected (mirrors the server's ``_resolve_artifact`` guard) so a stray/crafted
+    artifact path can't pull arbitrary files into a shared transcript.
+    """
+    raw = Path(path)
+    for root in artifact_dirs:
+        base = root.resolve()
+        candidate = (base / raw).resolve()
+        if candidate.is_file() and candidate.is_relative_to(base):
+            return candidate
+        if path.startswith("artifacts/"):  # the transcript may sit inside artifacts/
+            tail = (base / raw.name).resolve()
+            if tail.is_file() and tail.is_relative_to(base):
+                return tail
+    return None
+
+
+def _image_src(path: str, artifact_dirs: Sequence[Path]) -> str:
+    """A self-contained ``<img>`` src for an artifact path: a base64 data URI when
+    the file resolves under the run's artifact dirs, else the path unchanged.
+
+    Embedding makes the transcript show its plots regardless of where it's opened
+    (a sidecar inside ``artifacts/``, a standalone download, or a bundle); the
+    plain-path fallback still works when the file sits beside the transcript.
+    """
+    if not path or path.startswith(("data:", "http:", "https:")):
+        return path
+    resolved = _resolve_artifact_file(path, artifact_dirs)
+    if resolved is None:
+        return path
+    try:
+        # Don't inline a very large file: it would bloat the transcript (and the
+        # server response) by ~1.33x its size, held in memory. Leave the path instead.
+        if resolved.stat().st_size > _MAX_INLINE_BYTES:
+            return path
+        data = base64.standard_b64encode(resolved.read_bytes()).decode("ascii")
+    except OSError:
+        return path
+    mime = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+    return f"data:{mime};base64,{data}"
+
+
+def _inline_artifact_preview(
+    artifact: ArtifactPayload | None, artifact_dirs: Sequence[Path] = ()
+) -> str:
     if artifact is None or not artifact.path or not artifact.is_image:
         return ""
     meta = _artifact_meta_html(artifact)
+    src = _image_src(artifact.path, artifact_dirs)
     return (
         f'<div class="inline-artifact">'
         f"{meta}"
         f"<figure>"
-        f'<a href="{_esc_attr(artifact.path)}">'
-        f'<img src="{_esc_attr(artifact.path)}" alt="{_esc_attr(artifact.caption)}">'
+        f'<a href="{_esc_attr(src)}">'
+        f'<img src="{_esc_attr(src)}" alt="{_esc_attr(artifact.caption)}">'
         f"</a>"
         f"<figcaption>{_esc(artifact.caption)}</figcaption>"
         f"</figure>"
@@ -708,7 +763,9 @@ def _inline_artifact_preview(artifact: ArtifactPayload | None) -> str:
     )
 
 
-def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
+def _render_body(
+    events: Iterable[Event], artifact_dirs: Sequence[Path] = ()
+) -> tuple[str, dict[str, int]]:
     event_list = list(events)
     tool_results = _index_tool_results(event_list)
     artifacts_by_call = _index_artifacts_by_tool_call(event_list)
@@ -815,7 +872,9 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                 content = str(result_payload.get("content", ""))
                 detail += f"<h4>Result</h4>{_tool_result_block(content, tool_name=name)}"
             if tool_call_id is not None and name == "plot_julia":
-                preview = _inline_artifact_preview(artifacts_by_call.get(str(tool_call_id)))
+                preview = _inline_artifact_preview(
+                    artifacts_by_call.get(str(tool_call_id)), artifact_dirs
+                )
                 if preview:
                     detail += preview
             parts.append(
@@ -884,7 +943,8 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
                     f"{_event_header(kind, 'Artifact', ts, 'artifact')}"
                     f"{meta_html}"
                     f"<figure>"
-                    f'<img src="{_esc_attr(artifact.path)}" alt="{_esc_attr(artifact.caption)}">'
+                    f'<img src="{_esc_attr(_image_src(artifact.path, artifact_dirs))}"'
+                    f' alt="{_esc_attr(artifact.caption)}">'
                     f"<figcaption>{_esc(artifact.caption)}</figcaption>"
                     f"</figure>"
                     f"{source_html}"
@@ -970,12 +1030,15 @@ def _render_body(events: Iterable[Event]) -> tuple[str, dict[str, int]]:
     return header, kind_counts
 
 
-def render_html(events: Iterable[Event]) -> str:
+def render_html(events: Iterable[Event], *, artifact_dirs: Sequence[Path] = ()) -> str:
     """Render trace events as a complete, self-contained HTML document.
 
-    Artifact paths are taken from each event's ``path`` payload field.
+    When ``artifact_dirs`` are given, image artifacts are inlined as base64 data
+    URIs so the transcript shows its plots wherever it is opened; otherwise they
+    keep their recorded relative path (which resolves beside the file, e.g. in a
+    ``--bundle`` zip).
     """
-    body, _ = _render_body(events)
+    body, _ = _render_body(events, artifact_dirs)
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'

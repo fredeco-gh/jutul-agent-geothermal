@@ -1,0 +1,9 @@
+/* The app stylesheet, composed from focused layers. Import order is the cascade
+   order: tokens and base primitives first, then structure (layout), then content
+   (chat surfaces and markdown). All selectors are class-based; there are no id
+   selectors, so styling never depends on a specific element id. */
+@import "./tokens.css";
+@import "./base.css";
+@import "./layout.css";
+@import "./chat.css";
+@import "./markdown.css";

@@ -38,3 +38,24 @@ def test_creates_parent_dir(tmp_path: Path) -> None:
     log.append("session_start", {"session_id": "x"})
     log.close()
     assert db.exists()
+
+
+def test_events_after_and_max_id(tmp_path: Path) -> None:
+    # Incremental helpers used by the server's side-output flush and high-water mark:
+    # events_after(id) returns only newer events; max_id() is the latest id (0 empty).
+    log = TraceLog(tmp_path / "trace.sqlite")
+    try:
+        assert log.max_id() == 0  # empty trace
+        assert log.events_after(0) == []
+        log.append("session_start", {"session_id": "abc"})
+        log.append("message_user", {"content": "hi"})
+        first_two = log.iter_events()
+        mark = first_two[-1].id
+        log.append("message_assistant", {"content": "yo"})
+
+        assert log.max_id() == mark + 1
+        after = log.events_after(mark)
+        assert [e.kind for e in after] == ["message_assistant"]  # only the new one
+        assert log.events_after(log.max_id()) == []  # nothing past the latest
+    finally:
+        log.close()

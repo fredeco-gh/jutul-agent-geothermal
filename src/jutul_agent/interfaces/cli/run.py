@@ -11,11 +11,11 @@ from typing import Any
 
 from jutul_agent import __version__
 from jutul_agent.interfaces.cli._helpers import (
+    add_session_flags,
     add_workspace_flags,
     known_packages_map,
+    resolve_add_dirs,
 )
-from jutul_agent.julia.threads import THREADS_ENV_VAR
-from jutul_agent.models import DEFAULT_MODEL, MODEL_ENV_VAR
 from jutul_agent.paths import workspace_root
 from jutul_agent.session import (
     default_session_id,
@@ -33,18 +33,17 @@ from jutul_agent.workspace import (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(prog: str = "jutul-agent tui") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="jutul-agent",
+        prog=prog,
         description=(
             "Specialized scientific agent for AD-enabled simulators built on the Jutul framework."
         ),
         epilog=(
-            "Other commands: `jutul-agent init|setup [--sim <name>]`, "
-            "`jutul-agent doctor`, `jutul-agent upgrade`, "
-            "`jutul-agent transcript [<id>]`, `jutul-agent sessions`, "
-            "`jutul-agent eval <suite> --model <id>`. "
-            "(`setup` is an alias for `init`.)"
+            "Interfaces: `jutul-agent web` (browser), `jutul-agent tui` (terminal), "
+            '`jutul-agent run "<prompt>"` (one-shot). Setup: '
+            "`jutul-agent init|setup [--sim <name>]`. Other commands: `doctor`, "
+            "`upgrade`, `transcript [<id>]`, `sessions`, `review`, `eval`."
         ),
     )
     parser.add_argument("--version", action="version", version=f"jutul-agent {__version__}")
@@ -54,42 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=False,
         help="Active simulator. Required if not set in workspace config and not auto-detectable.",
     )
-    parser.add_argument(
-        "--model",
-        default=None,
-        help=(
-            "LLM identifier (provider:model) for this run. Precedence: --model > "
-            f"workspace config > user config > ${MODEL_ENV_VAR} > {DEFAULT_MODEL}."
-        ),
-    )
-    parser.add_argument(
-        "--julia-project",
-        type=Path,
-        default=None,
-        help="Override the resolved workspace Julia project.",
-    )
-    parser.add_argument(
-        "--threads",
-        default=None,
-        metavar="N",
-        help=(
-            "Julia compute threads for this run: an integer, or 'auto' for all "
-            f"logical cores. Precedence: --threads > ${THREADS_ENV_VAR} > default "
-            "(physical cores minus one). The kernel adds one interactive thread on top."
-        ),
-    )
-    parser.add_argument(
-        "--add-dir",
-        type=Path,
-        action="append",
-        default=None,
-        metavar="DIR",
-        dest="add_dir",
-        help=(
-            "Add an extra folder so the agent can read and edit it, alongside "
-            "the workspace. Repeatable. Also available at runtime via /add-dir."
-        ),
-    )
+    add_session_flags(parser)
     add_workspace_flags(parser)
     parser.add_argument(
         "--continue",
@@ -109,14 +73,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--ephemeral-memory",
-        action="store_true",
-        help=(
-            "Use a throwaway memory directory for this session. Nothing is "
-            "persisted to workspace memory on disk."
-        ),
-    )
-    parser.add_argument(
         "--approval-mode",
         choices=["ask", "workspace", "auto"],
         default=None,
@@ -129,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "prompt",
         nargs="?",
-        help="Prompt for a single headless turn. Omit to launch the TUI.",
+        help="Prompt for a single headless turn (used by `jutul-agent run`).",
     )
     return parser
 
@@ -388,48 +344,6 @@ def _warn_if_plotting_unavailable() -> None:
     )
 
 
-async def _resolve_package_sources(julia_project: Path) -> list[Any]:
-    """Resolve the installed package source dirs for this session.
-
-    Enumerates every package the environment resolves so the read-only guard
-    knows which depot paths to protect; the agent reads them at their real
-    ``pkgdir`` paths. A ``Pkg.develop`` checkout stays writable; registry
-    installs are read-only. Resolution is one fast, no-compile Julia call run
-    off the event loop, done once at session start; an unresolved manifest
-    yields an empty set.
-    """
-
-    from jutul_agent.agent.builder import PackageSource
-    from jutul_agent.simulators.env_setup import resolve_env_package_sources
-
-    env = await asyncio.to_thread(resolve_env_package_sources, julia_project)
-    return [
-        PackageSource(name=name, path=path, writable=is_dev)
-        for name, (path, is_dev) in sorted(env.items())
-    ]
-
-
-def _resolve_add_dirs(raw_dirs: Any, ws: Path) -> list[Path]:
-    """Resolve ``--add-dir`` paths, warning on (and skipping) bad ones.
-
-    One unreadable folder shouldn't abort startup, so invalid entries are
-    reported and dropped; the agent launches with whatever resolved cleanly.
-    """
-
-    from jutul_agent.agent.added_dirs import AddDirError, resolve_dir
-
-    resolved: list[Path] = []
-    for raw in raw_dirs or ():
-        try:
-            path = resolve_dir(raw, workspace=ws)
-        except AddDirError as exc:
-            print(f"warning: --add-dir {raw}: {exc}", file=sys.stderr)
-            continue
-        if path not in resolved:
-            resolved.append(path)
-    return resolved
-
-
 async def _run_with_backend(
     kernel_config: Any,
     args: argparse.Namespace,
@@ -444,7 +358,7 @@ async def _run_with_backend(
 
     from jutul_agent.agent.added_dirs import added_dirs
     from jutul_agent.agent.approval import parse_approval_mode
-    from jutul_agent.agent.builder import build_agent, resolve_model
+    from jutul_agent.agent.builder import build_agent, resolve_model, resolve_package_sources
     from jutul_agent.display import can_open_windows
     from jutul_agent.juliakernel import JuliaKernel
     from jutul_agent.session import Session
@@ -483,8 +397,10 @@ async def _run_with_backend(
                     user_model=user_config.model,
                 )
                 approval_mode = parse_approval_mode(args.approval_mode or config.approval_mode)
-                package_sources = await _resolve_package_sources(kernel_config.julia_project)
-                extra_dirs = _resolve_add_dirs(args.add_dir, kernel_config.cwd)
+                package_sources = await asyncio.to_thread(
+                    resolve_package_sources, kernel_config.julia_project
+                )
+                extra_dirs = resolve_add_dirs(args.add_dir, kernel_config.cwd)
 
                 def build(model_id: str, dirs: Any) -> Any:
                     # Rebuilds with the same checkpointer/session so the TUI can
@@ -510,7 +426,7 @@ async def _run_with_backend(
                     agent, backend = None, None
                     print(
                         f"note: {model_label} needs {env_var}, which isn't set. "
-                        "Starting without a model- Open the selector with `/model` "
+                        "Starting without a model. Open the selector with `/model` "
                         "to enter the key or pick a local Ollama model.",
                         file=sys.stderr,
                     )
@@ -559,33 +475,10 @@ async def _run_with_backend(
 
 
 def _start_warmup(julia: Any, warm_package: str) -> asyncio.Task[Any] | None:
-    """Background warm-up: load the agent's precompiled Julia runtime, then
-    initialise this session's GL context while the user reads the welcome card.
+    """Background warm-up; the logic is shared with the server in ``simulators.warmup``."""
+    from jutul_agent.simulators.warmup import start_warmup
 
-    The heavy compilation is already baked into the packages' precompile caches at
-    ``init``, so loading the shared ``JutulAgent`` and the env's per-simulator
-    ``warm_package`` here is just load latency; a tiny offscreen save then warms
-    GLMakie's GL context. Best-effort: every step is wrapped so a missing piece
-    never breaks startup, and the task is cancelled on session teardown.
-    """
-
-    from jutul_agent.simulators.warmup import GL_CONTEXT_WARMUP, HYPRE_THREADS_SETUP
-
-    loads = ["try; @eval using JutulAgent; catch; end"]
-    if warm_package:
-        loads.append(f"try; @eval using {warm_package}; catch; end")
-    bootstrap = "\n".join(loads)
-
-    async def _run_warmup() -> None:
-        with contextlib.suppress(Exception):
-            await julia.eval(bootstrap)
-        # After the warm packages load, set HYPRE's thread count before the first solve.
-        with contextlib.suppress(Exception):
-            await julia.eval(HYPRE_THREADS_SETUP)
-        with contextlib.suppress(Exception):
-            await julia.eval(GL_CONTEXT_WARMUP)
-
-    return asyncio.create_task(_run_warmup(), name="julia-warmup")
+    return start_warmup(julia, warm_package)
 
 
 async def _headless_turn(agent: Any, session: Any, prompt: str) -> int:

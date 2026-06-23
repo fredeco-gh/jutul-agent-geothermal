@@ -75,8 +75,7 @@ async def _live_render(
     interval: float,
     max_frames: int,
 ) -> tuple[list[str], str]:
-    from jutul_agent.agent.builder import build_agent
-    from jutul_agent.interfaces.cli.run import _resolve_package_sources
+    from jutul_agent.agent.builder import build_agent, resolve_package_sources
     from jutul_agent.interfaces.tui import TUIApp
     from jutul_agent.juliakernel import JuliaKernel, KernelConfig
     from jutul_agent.paths import set_workspace_root
@@ -95,7 +94,7 @@ async def _live_render(
         session = Session.create(
             julia=julia, simulator=adapter, state_root=scratch, ephemeral_memory=True
         )
-        package_sources = await _resolve_package_sources(julia_project)
+        package_sources = await asyncio.to_thread(resolve_package_sources, julia_project)
         agent, backend = build_agent(
             session, model=model, approval_mode="auto", package_sources=package_sources
         )

@@ -109,6 +109,36 @@ class TurnRunner:
                 )
         return await self._run(Command(resume=resume_payload), on_message=on_message)
 
+    async def pending_interrupts(self) -> list[TurnInterrupt]:
+        """Interrupts awaiting a decision in the persisted graph state, if any.
+
+        A turn that pauses on an approval completes its task with the interrupt
+        recorded in the checkpointer. Reading it back lets a fresh connection
+        re-surface an approval that an earlier (dropped) connection left pending,
+        instead of orphaning the paused turn. Returns ``[]`` when nothing is pending
+        or the agent does not expose its state.
+        """
+        aget_state = getattr(self._agent, "aget_state", None)
+        if aget_state is None:
+            return []
+        snapshot = await aget_state(self._config)
+        raw = getattr(snapshot, "interrupts", None) or [
+            interrupt
+            for task in getattr(snapshot, "tasks", ()) or ()
+            for interrupt in getattr(task, "interrupts", ()) or ()
+        ]
+        interrupts: list[TurnInterrupt] = []
+        seen: set[str] = set()
+        for itp in raw:
+            interrupt_id = str(getattr(itp, "id", "") or "")
+            if not interrupt_id or interrupt_id in seen:
+                continue
+            seen.add(interrupt_id)
+            interrupts.append(
+                TurnInterrupt(interrupt_id=interrupt_id, value=getattr(itp, "value", None))
+            )
+        return interrupts
+
     async def _run(
         self,
         stream_input: dict[str, Any] | Command,

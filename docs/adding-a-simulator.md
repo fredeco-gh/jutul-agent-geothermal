@@ -1,15 +1,29 @@
 # Adding a simulator
 
-A simulator is a folder of data under `src/jutul_agent/simulators/`, plus one
-registry entry. The agent code does not change.
+A simulator is a self-contained folder of data: an adapter, a Julia environment
+template, and skills. Nothing else changes, because the registry discovers the
+folder on its own and the agent code reads it generically.
 
 ```
-simulators/<name>/
+<name>/
   __init__.py         # exports the adapter
   adapter.py          # SimulatorAdapter instance
   julia_env/          # Project.toml + JutulAgent<Sim>/ warm package
   skills/             # one folder per skill, each with a SKILL.md
 ```
+
+The folder goes in one of two places, depending on who it is for:
+
+- **In-tree**, under `src/jutul_agent/simulators/<name>/` in a checkout of this
+  repo, to contribute a simulator to jutul-agent itself. The rest of this page
+  follows this route.
+- **In your own package**, to add a simulator for your own use without forking.
+  The folder is laid out the same way; you publish its adapter under an entry
+  point so an install discovers it. See
+  [building your application](extending-for-your-application.md).
+
+Either way the registry finds the adapter automatically, so there is no list to
+edit and no core code to change.
 
 ## 1. The adapter
 
@@ -27,16 +41,20 @@ MYSIM = SimulatorAdapter(
     primary_package="MySim",
     domain_hints="What the simulator is for, in one or two sentences.",
     warm_package="JutulAgentMySim",
+    example_prompts=("Run a small case and show me the result.", ...),
 )
 ```
 
 `module_dir` anchors the convention: the base class derives
 `julia_env_template_path` and `skills_dir` from it. `package_imports` is what
 the agent is told it can `using`, and `primary_package` is what `doctor`
-checks is actually resolved in the env. Adapters can also contribute simulator
-subagents through `subagent_factories`.
+checks is actually resolved in the env. `example_prompts` are starter tasks the
+web UI offers on its welcome screen (optional; lead with a simulate-and-plot
+one). Adapters can also contribute simulator subagents through
+`subagent_factories`.
 
-Register it in `simulators/registry.py`.
+That is all the registration needed: dropping the folder in place is enough for
+the registry to find it.
 
 ## 2. The Julia environment template
 
@@ -87,8 +105,8 @@ catches upstream releases that break the template.
 
 ```sh
 mkdir try-mysim && cd try-mysim
-uv run jutul-agent init --sim mysim --precompile
-uv run jutul-agent
+uv run jutul-agent init --sim mysim
+uv run jutul-agent web
 ```
 
 To develop against a local checkout of the simulator package:

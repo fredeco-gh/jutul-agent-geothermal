@@ -17,6 +17,49 @@ def test_render_html_is_complete_document(snapshot) -> None:
     assert html == snapshot
 
 
+def test_render_html_inlines_images_with_artifact_dirs(tmp_path) -> None:
+    # Given the run's artifact dirs, the transcript embeds plot images as base64
+    # data URIs so it shows them wherever it's opened (a sidecar inside artifacts/,
+    # a standalone download). Without the dirs it keeps the recorded relative path,
+    # which still resolves beside the file in a --bundle zip.
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts" / "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n fake png")
+    events = [
+        make_event(1, "session_start", {"session_id": "abc", "simulator": "jutuldarcy"}),
+        make_event(
+            2,
+            "artifact",
+            {"path": "artifacts/plot.png", "mime": "image/png", "caption": "fig", "format": "png"},
+        ),
+    ]
+    embedded = render_html(events, artifact_dirs=[tmp_path / "artifacts", tmp_path])
+    assert "data:image/png;base64," in embedded
+    assert 'src="artifacts/plot.png"' not in embedded
+    assert 'src="artifacts/plot.png"' in render_html(events)  # fallback keeps the path
+
+
+def test_render_html_does_not_inline_files_outside_the_artifact_dirs(tmp_path) -> None:
+    # A recorded artifact path that escapes the run dirs (a traversal or absolute path)
+    # must not be read and base64-embedded: the transcript only inlines files contained
+    # in the session's own artifact dirs (mirrors the server's _resolve_artifact guard).
+    import base64
+
+    run = tmp_path / "run"
+    (run / "artifacts").mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_bytes(b"TOP SECRET")
+    events = [
+        make_event(
+            1,
+            "artifact",
+            {"path": "artifacts/../../secret.txt", "mime": "image/png", "caption": "x"},
+        ),
+    ]
+    html = render_html(events, artifact_dirs=[run / "artifacts", run])
+    assert "data:image/png;base64," not in html  # nothing inlined
+    assert base64.standard_b64encode(b"TOP SECRET").decode() not in html  # bytes not leaked
+
+
 def test_render_full_turn(snapshot) -> None:
     events = [
         make_event(1, "session_start", {"session_id": "abc", "simulator": "jutuldarcy"}),

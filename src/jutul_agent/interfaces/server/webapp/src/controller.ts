@@ -1,0 +1,475 @@
+// The application controller: the imperative glue between the store, the REST API,
+// and the WebSocket transport. Components call these high-level commands; the
+// controller decides what to send, what to fetch, and how to update the store.
+// Kept out of React so the flow is one readable unit (and the store stays pure).
+
+import type { StoreApi } from "zustand/vanilla";
+
+import { api } from "./api";
+import { HISTORY_CHANGED, type ServerMessage } from "./protocol";
+import type { SessionStore } from "./store";
+import { Transport } from "./transport";
+
+export interface SlashCommand {
+  name: string;
+  hint?: string;
+  desc: string;
+}
+
+export const SLASH_COMMANDS: SlashCommand[] = [
+  { name: "/help", desc: "show available commands" },
+  { name: "/clear", desc: "clear the visible conversation" },
+  { name: "/new", desc: "start a new chat" },
+  { name: "/copy", desc: "copy the last assistant message" },
+  { name: "/context", desc: "show how much context the last turn used" },
+  { name: "/model", hint: "[provider:model]", desc: "switch the model (keeps the session)" },
+  { name: "/approval-mode", hint: "[ask|workspace|auto]", desc: "set the approval policy" },
+  { name: "/transcript", hint: "[md]", desc: "download the conversation to share" },
+  { name: "/memory", desc: "view the workspace memory" },
+  { name: "/compact", desc: "summarize older turns to free context" },
+  { name: "/add-dir", hint: "<path>", desc: "give the agent another folder" },
+];
+
+const APPROVAL_MODES = ["ask", "workspace", "auto"];
+
+const REATTACHED_NOTE = "Reconnected to this session. Its Julia REPL and live state are intact.";
+const RESTARTED_NOTE =
+  "Resumed this session. The chat is restored, but the Julia REPL restarted. " +
+  "Earlier files and artifacts are intact; re-run setup to rebuild in-memory state.";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export class Controller {
+  readonly transport: Transport;
+  private notifyAsked = false;
+  private promptHistory: string[] = [];
+  private historyPos = -1;
+  private historyDraft = "";
+  // The composer registers a sink so an uploaded file's path can be appended to the
+  // message box, whether the upload came from the attach button or a drag-drop.
+  private composerSink: ((text: string) => void) | null = null;
+  // A prompt the user sent while no socket was open (before the first session is
+  // ready, or during a reconnect); delivered once a socket opens.
+  private queuedPrompt: string | null = null;
+  // True while a reconnect is in flight, so a second trigger does not start another.
+  private recovering = false;
+  // Bumped per reenter so a superseding one (e.g. a sidebar switch during a reconnect)
+  // makes the older flow bail instead of the two clobbering each other's socket.
+  private reenterSeq = 0;
+
+  constructor(private store: StoreApi<SessionStore>) {
+    this.transport = new Transport(
+      store,
+      (msg) => this.effects(msg),
+      () => void this.reconnect(),
+      () => {
+        this.queuedPrompt = null;
+      },
+    );
+  }
+
+  private get s() {
+    return this.store.getState();
+  }
+
+  private meta(): string {
+    const { model, sessionId } = this.s;
+    return `${model || "no model"} · ${(sessionId || "").slice(0, 13)}`;
+  }
+
+  // --- startup --------------------------------------------------------------
+
+  async init(): Promise<void> {
+    const [sims, models] = await Promise.all([api.simulators(), api.models()]);
+    const names = sims.simulators || [];
+    this.store.setState({
+      sim: sims.default || names[0] || "jutuldarcy",
+      simDetails: sims.details || {},
+      model: models.default ?? null,
+      models: models.models || [],
+    });
+    this.refreshHistory();
+    this.refreshContextWindow();
+    await this.startSession();
+  }
+
+  async refreshContextWindow(): Promise<void> {
+    const { model } = this.s;
+    const data = await api.modelWindow(model || "");
+    this.s.setContextWindow(data.window ?? null);
+  }
+
+  async startSession(): Promise<void> {
+    // Supersede any in-flight reenter: starting fresh (init or /new) must win over a
+    // reconnect that is still trying to get back to the old session.
+    this.reenterSeq++;
+    const { sim } = this.s;
+    this.store.setState({
+      meta: `starting ${sim}… (first run builds its environment, this can take a few minutes)`,
+    });
+    try {
+      const { session_id } = await api.createSession({ sim: sim || undefined });
+      this.s.setSession(session_id, "");
+      this.store.setState({ meta: this.meta() });
+      this.transport.open(session_id);
+      this.flushQueuedPrompt();
+    } catch {
+      this.store.setState({ meta: "could not start a session" });
+      if (this.queuedPrompt) {
+        this.queuedPrompt = null;
+        this.store.setState({ busy: false, working: false });
+        this.s.addSysNote("Could not start a session.", "warn");
+      }
+    }
+  }
+
+  // Deliver a prompt held while no socket was open (see `queuedPrompt`). The socket
+  // buffers it if it is still connecting.
+  private flushQueuedPrompt(): void {
+    if (!this.queuedPrompt) return;
+    this.transport.send({ type: "prompt", text: this.queuedPrompt });
+    this.queuedPrompt = null;
+  }
+
+  private effects(msg: ServerMessage): void {
+    if (msg.type === "turn_end") {
+      this.refreshHistory();
+      if (!msg.cancelled) this.notifyDone("The agent finished your turn.");
+    } else if (msg.type === "ui" && msg.action === HISTORY_CHANGED) {
+      this.refreshHistory();
+    }
+  }
+
+  // --- composing / sending --------------------------------------------------
+
+  send(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("/")) {
+      this.runSlash(trimmed);
+      return;
+    }
+    if (this.s.busy) return;
+    if (this.s.pending) {
+      this.s.addUser(trimmed);
+      this.s.pinBottom();
+      this.sendDecision("respond", trimmed);
+      return;
+    }
+    this.s.startTurn(trimmed);
+    this.s.pinBottom();
+    this.pushPrompt(trimmed);
+    this.requestNotifyPermission();
+    this.deliver({ type: "prompt", text: trimmed });
+  }
+
+  retry(text: string): void {
+    this.s.startTurn(text);
+    this.s.pinBottom();
+    this.deliver({ type: "prompt", text });
+  }
+
+  // Send a prompt, or hold it and reconnect if the socket is gone. `send` buffers
+  // while connecting; a false means no socket, so keep the text and re-establish the
+  // session (a fresh start flushes it, a reconnect replays then flushes it).
+  private deliver(msg: { type: "prompt"; text: string }): void {
+    if (this.transport.send(msg)) {
+      // Buffered into a still-connecting socket: keep a durable copy too, since a
+      // reconnect would clear the transport's buffer. The socket's onOpen drops this
+      // copy once the buffer is actually flushed, so it is never sent twice.
+      if (!this.transport.isOpen()) this.queuedPrompt = msg.text;
+      return;
+    }
+    this.queuedPrompt = msg.text;
+    if (this.s.sessionId) void this.reconnect();
+  }
+
+  stop(): void {
+    this.transport.send({ type: "cancel" });
+  }
+
+  sendDecision(decision: string, message?: string): void {
+    if (!this.s.pending) return;
+    this.transport.send({ type: "decision", decision, ...(message ? { message } : {}) });
+    this.s.clearInterrupt();
+    this.s.beginWorking();
+  }
+
+  // --- slash commands -------------------------------------------------------
+
+  runSlash(text: string): void {
+    const name = text.split(/\s+/)[0];
+    const arg = text.slice(name.length).trim();
+    switch (name) {
+      case "/help":
+        return this.s.addHelp();
+      case "/clear":
+        return this.store.setState({ items: [] });
+      case "/new":
+        void this.newChat();
+        return;
+      case "/copy":
+        return this.copyLast();
+      case "/context":
+        void this.showContext();
+        return;
+      case "/model":
+        return this.setModel(arg); // empty arg opens the picker via the composer
+      case "/approval-mode":
+        return this.setApproval(arg);
+      case "/transcript":
+        return this.transcript(arg === "md" || arg === "markdown" ? "md" : "html");
+      case "/memory":
+        return this.memory();
+      case "/compact":
+        return this.compact();
+      case "/add-dir":
+        return this.addDir(arg);
+      default:
+        return this.s.addSysNote(`Unknown command ${name}. Type /help for the list.`, "warn");
+    }
+  }
+
+  setModel(id: string): void {
+    if (!id) return; // the composer opens the picker for a bare /model
+    if (this.s.busy) {
+      this.s.addSysNote("Finish the current turn before changing the model.", "warn");
+      return;
+    }
+    // Apply to the UI only if the command actually went out, so a send that fails
+    // (socket down) doesn't leave the UI showing a model the server never switched to.
+    if (!this.sendCommand("set_model", id)) return;
+    this.s.setModel(id);
+    this.store.setState({ meta: this.meta() });
+    this.s.addSysNote(`Switched the model to ${id}.`);
+    this.refreshContextWindow();
+  }
+
+  setApproval(mode: string): void {
+    if (!APPROVAL_MODES.includes(mode)) {
+      this.s.addSysNote(`Usage: /approval-mode ${APPROVAL_MODES.join(" | ")}.`);
+      return;
+    }
+    if (this.sendCommand("set_approval", mode)) this.s.addSysNote(`Approval policy set to ${mode}.`);
+  }
+
+  private sendCommand(command: "set_model" | "set_approval" | "add_dir" | "compact", arg: string): boolean {
+    if (!this.transport.isOpen()) return false;
+    // The server applies these between turns and rejects them mid-turn, so don't
+    // send (or print an optimistic note) while a turn is running.
+    if (this.s.busy) {
+      this.s.addSysNote("Finish the current turn before changing settings.", "warn");
+      return false;
+    }
+    return this.transport.send({ type: "command", command, arg });
+  }
+
+  compact(): void {
+    if (this.s.busy) {
+      this.s.addSysNote("Finish the current turn before compacting.", "warn");
+      return;
+    }
+    // Begin the working state only once the command is actually sent: doing it first
+    // would trip sendCommand's own busy guard and strand the spinner with no turn to
+    // end it. The server's notice (or an error) clears it.
+    if (this.sendCommand("compact", "")) {
+      this.s.addSysNote("Compacting the conversation…");
+      this.s.beginWorking();
+    }
+  }
+
+  addDir(path: string): void {
+    if (!path) {
+      this.s.addSysNote("Usage: /add-dir <path>.");
+      return;
+    }
+    this.sendCommand("add_dir", path);
+  }
+
+  transcript(fmt: "html" | "md"): void {
+    const { sessionId } = this.s;
+    if (!sessionId) return this.s.addSysNote("No active session.");
+    const a = document.createElement("a");
+    a.href = api.transcriptUrl(sessionId, fmt);
+    a.download = `transcript.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    this.s.addSysNote(`Downloading the transcript (${fmt}) to share.`);
+  }
+
+  memory(): void {
+    const { sessionId } = this.s;
+    if (!sessionId) return this.s.addSysNote("No active session.");
+    this.s.pinDoc(api.memoryUrl(sessionId), "Workspace memory", "memory");
+  }
+
+  private async showContext(): Promise<void> {
+    const { sessionId } = this.s;
+    if (!sessionId) return this.s.addSysNote("No active session.");
+    const data = await api.context(sessionId);
+    if (!data.markdown) return this.s.addSysNote("Could not read context usage.", "warn");
+    this.s.addContext(data.markdown);
+  }
+
+  private copyLast(): void {
+    const last = [...this.s.items].reverse().find((it) => it.kind === "assistant");
+    if (!last || last.kind !== "assistant") return this.s.addSysNote("No assistant message to copy yet.");
+    navigator.clipboard.writeText(last.text).then(
+      () => this.s.addSysNote("Copied the last reply to the clipboard."),
+      () => this.s.addSysNote("Could not access the clipboard.", "warn"),
+    );
+  }
+
+  // --- files ----------------------------------------------------------------
+
+  setComposerSink(sink: ((text: string) => void) | null): void {
+    this.composerSink = sink;
+  }
+
+  async upload(file: File): Promise<string | null> {
+    const { sessionId } = this.s;
+    if (!sessionId) {
+      this.s.addSysNote("Start a session before uploading.", "warn");
+      return null;
+    }
+    try {
+      const { path } = await api.uploadFile(sessionId, file);
+      this.s.addSysNote(`Uploaded ${path}. It is referenced below; ask the agent to use it.`);
+      this.composerSink?.(path);
+      return path;
+    } catch (e) {
+      this.s.addSysNote(`Upload failed: ${e}`, "warn");
+      return null;
+    }
+  }
+
+  // --- session lifecycle ----------------------------------------------------
+
+  async resume(id: string, sim?: string): Promise<void> {
+    if (id === this.s.sessionId) return;
+    if (sim) this.store.setState({ sim });
+    try {
+      await this.reenter(id);
+    } catch {
+      this.store.setState({ meta: "could not resume" });
+      this.s.addSysNote("Could not resume that session.", "warn");
+    }
+  }
+
+  // Reopen a session: reattach to it if the server kept it live (its Julia REPL
+  // survives), otherwise resume it from disk (a fresh kernel). Throws on failure;
+  // callers decide how to report it.
+  private async reenter(id: string): Promise<void> {
+    const seq = ++this.reenterSeq;
+    const stale = () => seq !== this.reenterSeq; // a newer reenter superseded this one
+    // Reconnecting to the current session (vs switching to a different one): if the
+    // server kept it live, the thread, canvas, and any pending approval are already
+    // correct, so reattach without wiping and re-fetching the conversation.
+    const reconnecting = id === this.s.sessionId;
+    this.transport.close();
+    this.store.setState({ meta: `resuming ${this.s.sim ?? ""}…` });
+    const body = await api.resumeSession(id, {
+      sim: this.s.sim || undefined,
+      model: this.s.model || undefined,
+    });
+    if (stale()) return;
+    if (!(reconnecting && body.kernel_restarted === false)) {
+      // A from-disk resume or a switch to another session: rebuild from the record.
+      // Lay the history down before opening the socket so a live frame can't
+      // interleave with the replay.
+      this.s.reset();
+      this.s.setSession(body.session_id, "");
+      this.s.replay(await api.messages(id));
+      if (stale()) return;
+    }
+    this.store.setState({ meta: this.meta() });
+    this.transport.open(body.session_id);
+    this.flushQueuedPrompt();
+    this.s.addSysNote(body.kernel_restarted === false ? REATTACHED_NOTE : RESTARTED_NOTE);
+    this.refreshHistory();
+  }
+
+  // Recover after the socket dropped (a network blip, sleep/wake, or a proxy idle
+  // timeout). Reattaches to the still-live session (keeping its REPL), or resumes it
+  // from disk if the server let it go. Retried with backoff against the brief window
+  // where the server has not yet released the old connection.
+  private async reconnect(): Promise<void> {
+    const id = this.s.sessionId;
+    if (!id || this.recovering) return;
+    this.recovering = true;
+    this.store.setState({ reconnecting: true });
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await this.reenter(id); // the new socket clears `reconnecting` on open
+          return;
+        } catch {
+          if (attempt >= 3) throw new Error("unreachable");
+          await sleep(Math.min(500 * 2 ** attempt, 4000));
+        }
+      }
+    } catch {
+      this.queuedPrompt = null;
+      this.store.setState({ reconnecting: false, busy: false, working: false });
+      this.s.addSysNote("Connection lost. Reload the page to continue.", "warn");
+    } finally {
+      this.recovering = false;
+    }
+  }
+
+  async newChat(): Promise<void> {
+    this.transport.close();
+    const { sessionId } = this.s;
+    if (sessionId) void api.deleteSession(sessionId);
+    this.s.reset();
+    this.store.setState({ sessionId: null });
+    await this.startSession();
+  }
+
+  async refreshHistory(): Promise<void> {
+    this.s.setHistory(await api.history());
+  }
+
+  // --- prompt history (↑/↓) -------------------------------------------------
+
+  private pushPrompt(text: string): void {
+    if (this.promptHistory.at(-1) !== text) this.promptHistory.push(text);
+    this.historyPos = -1;
+  }
+
+  recall(dir: -1 | 1, draft: string): string | null {
+    if (!this.promptHistory.length) return null;
+    if (this.historyPos === -1) {
+      if (dir > 0) return null;
+      this.historyDraft = draft;
+      this.historyPos = this.promptHistory.length - 1;
+    } else {
+      this.historyPos += dir;
+    }
+    if (this.historyPos < 0) this.historyPos = 0;
+    if (this.historyPos >= this.promptHistory.length) {
+      this.historyPos = -1;
+      return this.historyDraft;
+    }
+    return this.promptHistory[this.historyPos];
+  }
+
+  // --- notifications --------------------------------------------------------
+
+  private requestNotifyPermission(): void {
+    if (this.notifyAsked || !("Notification" in window) || Notification.permission !== "default") return;
+    this.notifyAsked = true;
+    Notification.requestPermission().catch(() => {});
+  }
+
+  private notifyDone(body: string): void {
+    if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification("jutul-agent", { body });
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+}

@@ -20,7 +20,7 @@ cell_parameters = load_cell_parameters(; from_default_set = "chen_2020")
 ```
 
 To enumerate other default sets that ship with your installed version,
-search the installed source with the file tools (path is `pkgdir(BattMo)`):
+search the installed source with the file tools (its path is given to you up front):
 
 ```text
 grep("from_default_set", path="/.../BattMo/src")

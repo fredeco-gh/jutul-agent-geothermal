@@ -50,16 +50,24 @@ def build_parser(prog: str = "jutul-agent init") -> argparse.ArgumentParser:
             "simulator template (use after upgrading jutul-agent)."
         ),
     )
+    # Precompile is on by default: a fresh workspace should be ready for any
+    # interface, so the first session doesn't stall for minutes baking the env (and
+    # the web-plotting overlay). `--no-precompile` is the quick-bootstrap escape
+    # hatch (CI, "I'll bake later"); the first session then builds what's missing.
     parser.add_argument(
         "--precompile",
         "--instantiate",
         action="store_true",
         dest="precompile",
-        help=(
-            "Run Pkg.instantiate after bootstrap and warm up GLMakie for "
-            "plot_julia (slow on first run). --instantiate is a synonym."
-        ),
+        help="Instantiate + precompile the env and the web-plotting overlay (the default).",
     )
+    parser.add_argument(
+        "--no-precompile",
+        action="store_false",
+        dest="precompile",
+        help="Skip the bake; bootstrap config + env only (the first session builds the rest).",
+    )
+    parser.set_defaults(precompile=True)
     add_workspace_flags(parser)
     return parser
 
@@ -108,6 +116,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    # Bake the web-plotting overlay (WGLMakie + Bonito) now too, so the first
+    # `jutul-agent web` is fast. It's a global, one-time build shared by every
+    # workspace, and every interface uses the same env underneath.
+    overlay_status = _ensure_web_overlay() if args.precompile else None
+
     new_config = config
     if new_config.simulator != sim_name:
         new_config = dc_replace(new_config, simulator=sim_name)
@@ -124,10 +137,30 @@ def run(args: argparse.Namespace) -> int:
         print("  env:           replaced from template (--force)")
     if args.precompile:
         print("  precompile:    done (Pkg.instantiate + Pkg.precompile)")
+        print(f"  web overlay:   {overlay_status}")
         _note_headless_plotting()
+    else:
+        print("  precompile:    skipped (--no-precompile); the first session will build the env")
 
     _maybe_prompt_for_provider_key(new_config)
     return 0
+
+
+def _ensure_web_overlay() -> str:
+    """Build the web-plotting overlay (WGLMakie + Bonito), returning a status note.
+
+    Best-effort: a failure (e.g. offline on first run) is reported but does not
+    fail init — the first `jutul-agent web` builds it lazily instead.
+    """
+    from jutul_agent.interfaces.server.web_overlay import WebOverlayError, ensure_web_overlay
+
+    try:
+        ensure_web_overlay()
+    except WebOverlayError:
+        return "not built now; the first `jutul-agent web` will build it"
+    except Exception:  # never let an unexpected overlay issue fail the whole init
+        return "skipped; the first `jutul-agent web` will build it"
+    return "ready (WGLMakie + Bonito)"
 
 
 def _note_headless_plotting() -> None:

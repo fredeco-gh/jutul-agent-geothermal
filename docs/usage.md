@@ -39,25 +39,30 @@ Initialise once per folder:
 
 ```sh
 mkdir my-reservoir-study && cd my-reservoir-study
-jutul-agent init --sim jutuldarcy --precompile
+jutul-agent init --sim jutuldarcy
 ```
 
-`init` writes `.jutul-agent/config.toml` and copies the simulator's Julia env
-template. `--precompile` instantiates the env and warms the precompile caches
-up front. The first time can take a while (Julia compiles the simulator and
-the plotting stack), after which sessions start in seconds. Useful variants:
+`init` writes `.jutul-agent/config.toml`, copies the simulator's Julia env
+template, and **precompiles by default**: it instantiates the env, warms the
+precompile caches, and bakes the web-plotting overlay (WGLMakie + Bonito, a
+one-time global build). The first time can take a while (Julia compiles the
+simulator and the plotting stacks), after which the first session in any
+interface starts in seconds. Useful variants:
 
 ```sh
+jutul-agent init --sim jutuldarcy --no-precompile                      # quick bootstrap, bake later
 jutul-agent init --sim jutuldarcy --source-path /path/to/JutulDarcy.jl
-jutul-agent init --sim jutuldarcy --force --precompile
+jutul-agent init --sim jutuldarcy --force                              # rebuild env from the template
 ```
 
-`--source-path` dev-links the simulator to a local checkout the agent can read
-and edit at its real path (a dev checkout, so it is writable, unlike a
-registry install in the shared depot). `--force` rebuilds the env from the
-template, the standard fix after upgrading jutul-agent. `setup` is an alias
-for `init`. If you skip `init` entirely, the first run bootstraps the
-workspace and auto-detects the simulator from a `Project.toml` when it can.
+`--no-precompile` skips the bake for a fast bootstrap — the first session then
+builds what's missing (the ~minutes wait moves to first use). `--source-path`
+dev-links the simulator to a local checkout the agent can read and edit at its
+real path (a dev checkout, so it is writable, unlike a registry install in the
+shared depot). `--force` rebuilds the env from the template, the standard fix
+after upgrading jutul-agent. `setup` is an alias for `init`. If you skip `init`
+entirely, the first run bootstraps the workspace and auto-detects the simulator
+from a `Project.toml` when it can.
 
 One simulator per workspace. Different simulators have incompatible Julia
 dependencies, so use a separate folder for each. Pointing an existing
@@ -96,7 +101,7 @@ Add folders outside the workspace so the agent can use them with the same
 file tools:
 
 ```sh
-jutul-agent --add-dir ../shared-data --add-dir ~/datasets/spe10
+jutul-agent tui --add-dir ../shared-data --add-dir ~/datasets/spe10
 ```
 
 Inside the TUI, `/add-dir <path>` adds one immediately and `/add-dir` lists
@@ -104,10 +109,25 @@ the folders added so far. The agent uses each at its real absolute path in
 every tool: the file tools, `run_julia`, and `execute`. Added folders last
 for the session and are not written to config.
 
+## Interfaces
+
+Pick an interface explicitly — bare `jutul-agent` just lists them:
+
+```sh
+jutul-agent web      # browser UI: chat with interactive plots and reports
+jutul-agent tui      # terminal UI
+jutul-agent run "<prompt>"   # one headless turn, then exit
+```
+
+All three are the same agent and session core, so a session started in one
+resumes in another. `jutul-agent web` is covered in
+[the server interface](server-interface.md); the terminal UI and headless runs
+are below.
+
 ## The TUI
 
 ```sh
-jutul-agent
+jutul-agent tui
 ```
 
 | Command | Effect |
@@ -143,11 +163,13 @@ The conversation survives the process: every session checkpoints its
 thread, so you can pick an earlier one back up.
 
 ```sh
-jutul-agent --continue          # reopen the most recent session
-jutul-agent --resume            # pick from a list of recent sessions
-jutul-agent --resume 2026-06-12 # by id, or any unique prefix
-jutul-agent sessions            # list what's resumable
+jutul-agent tui --continue          # reopen the most recent session
+jutul-agent tui --resume            # pick from a list of recent sessions
+jutul-agent tui --resume 2026-06-12 # by id, or any unique prefix
+jutul-agent sessions                # list what's resumable
 ```
+
+(The web interface lists and resumes past sessions from its sidebar.)
 
 A resumed TUI replays the prior exchanges and the model continues with the
 full conversation. Sessions are named by start time plus a short suffix
@@ -162,10 +184,10 @@ needs.
 
 ## Headless turns
 
-Pass the prompt as a positional argument to run one turn and exit:
+`jutul-agent run` takes a prompt, runs one turn, and exits:
 
 ```sh
-jutul-agent --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
+jutul-agent run --approval-mode auto "Plot the voltage curve for the chen_2020 cell."
 ```
 
 Headless mode cannot pause for approval, so use `--approval-mode auto` (the

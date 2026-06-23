@@ -69,8 +69,9 @@
 
   % ===== agent core spine, interfaces centred over the TurnRunner =====
   \node[python] (runner) {TurnRunner};
-  \node[python, anchor=south] (tui) at ([xshift=-13mm,yshift=13mm]runner.north) {TUI};
-  \node[python, anchor=south] (cli) at ([xshift=13mm,yshift=13mm]runner.north) {CLI};
+  \node[python, anchor=south] (web) at ([xshift=-22mm,yshift=13mm]runner.north) {Web};
+  \node[python, anchor=south] (tui) at ([yshift=13mm]runner.north) {TUI};
+  \node[python, anchor=south] (cli) at ([xshift=22mm,yshift=13mm]runner.north) {CLI};
 
   \node[python, below=11mm of runner] (loop) {deepagents loop};
 
@@ -109,7 +110,7 @@
 
   % ===== group boxes =====
   \begin{scope}[on background layer]
-    \node[fit=(tui)(cli), inner sep=8pt] (ifacebox) {};
+    \node[fit=(web)(tui)(cli), inner sep=8pt] (ifacebox) {};
     \draw[jagroup, fill=jafillblue, rounded corners=3pt] (ifacebox.south west) rectangle (ifacebox.north east);
     \node[grouplabel, anchor=south west] at ([yshift=1.5mm]ifacebox.north west) {Interfaces};
 
@@ -138,8 +139,9 @@
   \end{scope}
 
   % ===== edges =====
-  \draw[bi] (tui.south) -- ++(0,-5mm) -| ([xshift=-4mm]runner.north);
-  \draw[bi] (cli.south) -- ++(0,-5mm) -| ([xshift=4mm]runner.north);
+  \draw[bi] (web.south) -- ++(0,-5mm) -| ([xshift=-5mm]runner.north);
+  \draw[bi] (tui.south) -- ++(0,-5mm) -| (runner.north);
+  \draw[bi] (cli.south) -- ++(0,-5mm) -| ([xshift=5mm]runner.north);
   \draw[bi] (runner.south) -- (loop.north);
   \draw[ard] (pack.west) -- (prompt.east);
   \draw[ard] (pack.south) -- (pack.south |- fsbox.north);

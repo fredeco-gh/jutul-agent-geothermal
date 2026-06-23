@@ -1,0 +1,109 @@
+/* Shared primitives used across surfaces: buttons, the loading spinner, the code
+   "Copy" button, and the two keyframe animations. Anything reused by more than one
+   feature lives here so it is defined once. */
+
+button {
+  font-family: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* Solid/secondary button (approvals, retry). */
+.btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.4rem 0.8rem;
+  border-radius: 9px;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn:hover {
+  filter: brightness(1.05);
+}
+
+/* Bordered, low-emphasis button (top-bar "Views", card actions). */
+.ghost {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.35rem 0.7rem;
+  border-radius: 9px;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.ghost:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--border) 60%, var(--accent));
+}
+
+/* Square icon button (sidebar toggle, canvas actions). */
+.icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.icon-btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  display: inline-block;
+  animation: spin 0.7s linear infinite;
+}
+
+/* Hover "Copy" button on code blocks (the parent <pre> is positioned relative). */
+.copy-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+pre:hover .copy-btn {
+  opacity: 1;
+}
+.copy-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--border) 50%, var(--accent));
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 0.9;
+  }
+}

@@ -39,11 +39,35 @@ def test_assemble_session_prompt_includes_runtime_context(tmp_path: Path) -> Non
     assert "run_julia" in prompt
     assert "write_file" in prompt
     assert "workspace" in prompt
-    # Package source is referenced by its pkgdir path.
-    assert "pkgdir(TestSim)" in prompt
+    # Installed source is reachable by its pkgdir path (the general mechanism); with
+    # no resolved primary source, the prompt does not yet hand over a concrete path.
+    assert "pkgdir(<Package>)" in prompt
+    assert "already on disk at" not in prompt
     assert "/packages/" not in prompt
     # Retry guidance lives in HarnessProfile suffix, not the static prompt.
     assert "retry before responding" not in prompt
+
+
+def test_assemble_session_prompt_hands_over_resolved_source_path(tmp_path: Path) -> None:
+    # When the simulator package's source path is resolved at session start, the
+    # prompt states it directly so the agent reads it without `using <Sim>;
+    # pkgdir(<Sim>)` (which would load the package just to find a known path).
+    adapter = SimulatorAdapter(
+        name="testsim",
+        display_name="TestSim",
+        module_dir=tmp_path,
+        package_imports=("Jutul", "TestSim"),
+        primary_package="TestSim",
+        domain_hints="",
+    )
+    src = str(tmp_path / "depot" / "TestSim")
+
+    prompt = assemble_session_prompt(adapter, primary_source=src)
+
+    assert src in prompt
+    assert "already on disk at" in prompt
+    assert "Do not run `using TestSim`" in prompt  # don't pay the load to find it
+    assert "pkgdir(<Package>)" in prompt  # other packages still use pkgdir
 
 
 def test_build_backend_is_a_single_real_path_backend(tmp_path: Path) -> None:

@@ -1,0 +1,996 @@
+"""End-to-end tests for the server: REST lifecycle and the turn WebSocket.
+
+The agent and Julia kernel are fakes (see ``fakes``), so a turn runs through the
+real ``TurnRunner`` and wire protocol without a provider API or a Julia process.
+A test ``SessionManager`` is injected with a host factory that wraps those fakes.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+
+from fakes import (
+    FakeJulia,
+    echo_agent,
+    interrupt_agent,
+    make_fake_adapter,
+    streaming_agent,
+)
+from jutul_agent.interfaces.server.app import artifact_wire_events, create_app
+from jutul_agent.interfaces.server.manager import SessionBusyError, SessionManager
+from jutul_agent.interfaces.server.session_host import SessionHost
+from jutul_agent.session import Session, default_session_id
+
+
+def _manager(
+    agent_factory: Callable[[], Any], tmp_path: Path, *, max_live: int = 16
+) -> SessionManager:
+    """A manager whose sessions wrap a fresh fake agent and a real (fake-kernel) Session."""
+
+    async def host_factory(
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
+    ) -> SessionHost:
+        adapter = make_fake_adapter(tmp_path)
+        sid = session_id or default_session_id()
+        session = Session.create(
+            julia=FakeJulia(), simulator=adapter, session_id=sid, state_root=tmp_path
+        )
+        return SessionHost(session=session, agent=agent_factory())
+
+    return SessionManager(host_factory=host_factory, max_live=max_live)
+
+
+def _client(agent_factory: Callable[[], Any], tmp_path: Path) -> TestClient:
+    return TestClient(create_app(_manager(agent_factory, tmp_path)))
+
+
+def _drain_turn(ws: Any) -> list[dict]:
+    """Read events until the turn ends or pauses for approval."""
+    events: list[dict] = []
+    while True:
+        event = ws.receive_json()
+        events.append(event)
+        if event["type"] in {"turn_end", "interrupt"}:
+            return events
+
+
+def test_models_endpoint(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/models").json()
+    assert "default" in body
+    assert isinstance(body["providers"], list)
+
+
+def test_models_endpoint_reports_the_launch_default_model(tmp_path: Path) -> None:
+    # /models reports the server's actual default so the UI seeds the right model: the
+    # launch --model when set, else the catalog default. Otherwise the UI would show
+    # and resume onto the catalog default even when the server runs a different model.
+    from jutul_agent.models import DEFAULT_MODEL
+
+    app = create_app(_manager(echo_agent, tmp_path), default_model="provider:custom")
+    with TestClient(app) as c:
+        assert c.get("/models").json()["default"] == "provider:custom"
+    with TestClient(create_app(_manager(echo_agent, tmp_path))) as c:
+        assert c.get("/models").json()["default"] == DEFAULT_MODEL
+
+
+def test_simulators_endpoint(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/simulators").json()
+    assert "jutuldarcy" in body["simulators"]
+    # Each simulator carries its display name and starter prompts for a welcome screen.
+    detail = body["details"]["jutuldarcy"]
+    assert detail["display_name"] == "JutulDarcy"
+    assert detail["examples"] and all(isinstance(e, str) for e in detail["examples"])
+
+
+def test_bound_simulator_uses_one_and_rejects_mismatch(tmp_path: Path) -> None:
+    # A server bound to a simulator (the `web` case) uses it for every session
+    # and refuses a request for a different one — one folder, one simulator, no
+    # in-place switching. Without a bound simulator the caller's choice is honoured.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager, default_sim="jutuldarcy")) as client:
+        assert client.get("/simulators").json()["default"] == "jutuldarcy"
+        assert client.post("/sessions", json={"sim": "jutuldarcy"}).status_code == 200
+        assert client.post("/sessions", json={}).status_code == 200  # omitted → the bound one
+        mismatch = client.post("/sessions", json={"sim": "battmo"})
+        assert mismatch.status_code == 409 and "bound" in mismatch.json()["detail"]
+
+
+def test_default_approval_mode_applies_when_request_omits_it(tmp_path: Path) -> None:
+    # `jutul-agent web --approval-mode auto` sets the default policy for new sessions;
+    # a per-request approval_mode still wins (and the UI can change it live).
+    seen: list[str | None] = []
+
+    async def host_factory(
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
+    ) -> SessionHost:
+        seen.append(approval_mode)
+        adapter = make_fake_adapter(tmp_path)
+        sid = session_id or default_session_id()
+        session = Session.create(
+            julia=FakeJulia(), simulator=adapter, session_id=sid, state_root=tmp_path
+        )
+        return SessionHost(session=session, agent=echo_agent())
+
+    manager = SessionManager(host_factory=host_factory, max_live=16)
+    with TestClient(create_app(manager, default_approval_mode="auto")) as client:
+        assert client.post("/sessions", json={"sim": "demo"}).status_code == 200
+        assert (
+            client.post("/sessions", json={"sim": "demo", "approval_mode": "ask"}).status_code
+            == 200
+        )
+    assert seen == ["auto", "ask"]  # omitted → the launch default; explicit → the request
+
+
+def test_default_model_applies_when_request_omits_it(tmp_path: Path) -> None:
+    # `jutul-agent web --model <m>` sets the default model for new sessions; a
+    # per-request model (the UI's picker) still wins.
+    seen: list[str | None] = []
+
+    async def host_factory(
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
+    ) -> SessionHost:
+        seen.append(model)
+        adapter = make_fake_adapter(tmp_path)
+        sid = session_id or default_session_id()
+        session = Session.create(
+            julia=FakeJulia(), simulator=adapter, session_id=sid, state_root=tmp_path
+        )
+        return SessionHost(session=session, agent=echo_agent())
+
+    manager = SessionManager(host_factory=host_factory, max_live=16)
+    with TestClient(create_app(manager, default_model="prov:base")) as client:
+        assert client.post("/sessions", json={"sim": "demo"}).status_code == 200
+        assert (
+            client.post("/sessions", json={"sim": "demo", "model": "prov:override"}).status_code
+            == 200
+        )
+    assert seen == ["prov:base", "prov:override"]
+
+
+async def test_launch_defaults_reach_session_host_start(monkeypatch, tmp_path: Path) -> None:
+    # The folder-fixed launch knobs (--threads/--add-dir/--ephemeral-memory/
+    # --julia-project) ride in the default host factory's closure and are handed
+    # to SessionHost.start for every session, so the server honours them.
+    from jutul_agent.interfaces.server import manager as manager_mod
+    from jutul_agent.interfaces.server.manager import SessionLaunchDefaults, make_host_factory
+
+    captured: dict[str, Any] = {}
+
+    async def fake_start(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "host"
+
+    monkeypatch.setattr(manager_mod.SessionHost, "start", staticmethod(fake_start))
+    monkeypatch.setattr("jutul_agent.simulators.registry.get", lambda name: f"adapter:{name}")
+
+    factory = make_host_factory(
+        SessionLaunchDefaults(
+            julia_project=tmp_path / "proj",
+            threads="3",
+            add_dirs=(tmp_path / "extra",),
+            ephemeral_memory=True,
+        )
+    )
+    await factory(
+        sim="demo",
+        model=None,
+        approval_mode=None,
+        workspace=None,
+        resume=False,
+        session_id=None,
+        extensions=(),
+    )
+    assert captured["threads"] == "3"
+    assert captured["ephemeral_memory"] is True
+    assert captured["add_dirs"] == (tmp_path / "extra",)
+    assert captured["julia_project"] == tmp_path / "proj"
+
+
+def test_unbound_server_requires_a_simulator(tmp_path: Path) -> None:
+    # No bound simulator (tests / a future multi-folder launcher): the caller must
+    # name one, and an omitted simulator is a clear 400 rather than a crash.
+    with _client(echo_agent, tmp_path) as client:
+        assert client.post("/sessions", json={}).status_code == 400
+
+
+def test_manager_caps_live_sessions(tmp_path: Path) -> None:
+    # Each live session pins a Julia kernel, so the manager keeps only the most
+    # recent ``max_live`` and closes the rest (they stay resumable on disk).
+    manager = _manager(echo_agent, tmp_path, max_live=2)
+    with TestClient(create_app(manager)) as client:
+        ids = [
+            client.post("/sessions", json={"sim": "demo"}).json()["session_id"] for _ in range(3)
+        ]
+        live = client.get("/sessions").json()["sessions"]
+    assert set(live) == {ids[1], ids[2]}  # the oldest was evicted
+
+
+async def test_eviction_skips_attached_sessions(tmp_path: Path) -> None:
+    # A session a client is connected to must not be torn down mid-turn: eviction
+    # skips attached hosts and takes the oldest idle one instead, even when the
+    # attached host is the oldest.
+    manager = _manager(echo_agent, tmp_path, max_live=2)
+    a = await manager.create(sim="demo")
+    a.attach()  # a live connection now holds the oldest session
+    b = await manager.create(sim="demo")
+    c = await manager.create(sim="demo")  # over cap → evict the oldest *idle* host (b)
+    live = set(manager.list_ids())
+    assert a.session_id in live  # attached, so kept despite being oldest
+    assert c.session_id in live
+    assert b.session_id not in live
+
+
+def test_second_connection_to_a_session_is_refused(tmp_path: Path) -> None:
+    # Two live sockets on one session would run turns on one kernel concurrently;
+    # the second is refused, and once the first closes a new one can attach.
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with (
+            client.websocket_connect(f"/sessions/{sid}/stream"),  # first holds the session
+            client.websocket_connect(f"/sessions/{sid}/stream") as ws2,
+        ):
+            refused = ws2.receive_json()
+        assert refused["type"] == "error" and "another window" in refused["message"]
+        # The first socket has closed, so a fresh connection attaches and runs.
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws3:
+            ws3.send_json({"type": "prompt", "text": "hi"})
+            assert _drain_turn(ws3)[-1]["type"] == "turn_end"
+
+
+def test_web_ui_is_served(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        root = client.get("/")
+    assert root.status_code == 200
+    assert "jutul-agent" in root.text
+
+
+def test_create_list_delete(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        assert sid in client.get("/sessions").json()["sessions"]
+        assert client.delete(f"/sessions/{sid}").json() == {"ok": True}
+        assert client.get("/sessions").json()["sessions"] == []
+        assert client.delete(f"/sessions/{sid}").status_code == 404
+
+
+async def test_manager_aclose_isolates_a_failing_teardown(tmp_path: Path) -> None:
+    # Server shutdown closes every live session; one session whose teardown raises
+    # (e.g. a kernel already gone) must not abort the loop and orphan the rest.
+    class _Host:
+        def __init__(self, sid: str, boom: bool) -> None:
+            self.session_id = sid
+            self._boom = boom
+            self.closed = False
+
+        @property
+        def attached(self) -> bool:
+            return False
+
+        async def aclose(self) -> None:
+            self.closed = True
+            if self._boom:
+                raise RuntimeError("kernel already gone")
+
+    manager = SessionManager()
+    first, second = _Host("a", boom=True), _Host("b", boom=False)
+    manager._hosts["a"] = first  # type: ignore[assignment]
+    manager._hosts["b"] = second  # type: ignore[assignment]
+
+    await manager.aclose()  # must not raise despite first's teardown error
+
+    assert first.closed and second.closed  # both were torn down
+    assert manager.list_ids() == []  # and both removed from the registry
+
+
+def test_reattach_leaves_the_live_host_as_is(tmp_path: Path) -> None:
+    # Reattaching to a live idle session must NOT reconfigure it from the resume
+    # request. The live host is authoritative: an in-session model/approval change
+    # already updated it through the set_model/set_approval command (see
+    # test_command_reconfigures_session). The UI always reports the default model by
+    # name and never sends the approval mode, so honouring the request here would
+    # revert the user's in-session choice on every reconnect.
+    async def host_factory(
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
+    ) -> SessionHost:
+        adapter = make_fake_adapter(tmp_path)
+        sid = session_id or default_session_id()
+        session = Session.create(
+            julia=FakeJulia(), simulator=adapter, session_id=sid, state_root=tmp_path
+        )
+        return SessionHost(session=session, agent=echo_agent(), model=model)
+
+    manager = SessionManager(host_factory=host_factory, max_live=16)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "demo", "model": "prov:b"}).json()["session_id"]
+        host = manager.get(sid)
+        calls: list[dict] = []
+        host.reconfigure = lambda **kw: calls.append(kw)  # type: ignore[method-assign]
+
+        # Even a resume request naming a different model leaves the live host untouched.
+        resp = client.post(f"/sessions/{sid}/resume", json={"sim": "demo", "model": "prov:c"})
+        assert resp.json()["kernel_restarted"] is False
+        assert calls == []
+
+
+def test_reconfigure_keeps_state_consistent_when_build_fails(tmp_path: Path, monkeypatch) -> None:
+    # If build_agent rejects a value (e.g. an unknown approval mode), reconfigure
+    # must leave the host reporting its previous, still-running model/approval —
+    # not the rejected value, which a same-value reattach would later read as
+    # "unchanged" and silently skip, stranding the desync.
+    import pytest
+
+    adapter = make_fake_adapter(tmp_path)
+    session = Session.create(
+        julia=FakeJulia(), simulator=adapter, session_id=default_session_id(), state_root=tmp_path
+    )
+    host = SessionHost(
+        session=session, agent="AGENT-0", backend=None, model="prov:a", approval_mode="ask"
+    )
+
+    def boom(*args, **kwargs):
+        raise ValueError("unknown approval mode 'bogus'")
+
+    monkeypatch.setattr("jutul_agent.agent.builder.build_agent", boom)
+    with pytest.raises(ValueError):
+        host.reconfigure(approval_mode="bogus")
+
+    assert host.approval_mode == "ask"  # not poisoned to the rejected value
+    assert host.model == "prov:a"
+    assert host.agent == "AGENT-0"  # the previous agent still runs
+
+
+def test_ws_streaming_prompt(tmp_path: Path) -> None:
+    with _client(streaming_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "hi"})
+            events = _drain_turn(ws)
+    texts = [e["text"] for e in events if e["type"] == "text"]
+    assert "".join(texts) == "Hello world"
+    assert events[-1]["type"] == "turn_end"
+
+
+class _FakeWS:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_json(self, message: dict) -> None:
+        self.sent.append(message)
+
+
+async def test_stream_delta_renders_terminal_output_and_trailing_flushes() -> None:
+    # Streamed tool output is rendered the way the TUI renders it: the accumulated
+    # raw stream is replayed through the terminal emulator (a progress bar's carriage
+    # returns collapse to one line, not a stack) and the client replaces the card.
+    # Throttling is leading+trailing, so a delta within the interval still gets shown
+    # by a trailing flush rather than lingering until the next event.
+    from jutul_agent.interfaces.server.app import _StreamState
+
+    ws = _FakeWS()
+    st = _StreamState(ws, None)  # type: ignore[arg-type]
+    cid = "c1"
+
+    await st._on_tool_delta(
+        cid, {"type": "tool", "event": "delta", "tool_call_id": cid, "content": "step 1\rstep 2"}
+    )
+    assert ws.sent[-1]["replace"] is True
+    assert ws.sent[-1]["content"] == "step 2"  # the carriage return overwrote, not stacked
+
+    sent_so_far = len(ws.sent)
+    await st._on_tool_delta(
+        cid, {"type": "tool", "event": "delta", "tool_call_id": cid, "content": "\nstep 3"}
+    )
+    assert len(ws.sent) == sent_so_far  # within the throttle: not sent yet...
+    assert cid in st._tool_flush  # ...but a trailing flush is scheduled
+    await st._tool_flush[cid]  # which sends the combined, rendered state
+    assert "step 3" in ws.sent[-1]["content"]
+
+    st._end_tool_stream(cid)  # the final result ends the stream and clears state
+    assert cid not in st._tool_streams and cid not in st._tool_flush
+
+
+def test_ws_echo_prompt(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "hi"})
+            events = _drain_turn(ws)
+    assert any(e["type"] == "text" and "Echo:" in e["text"] for e in events)
+    assert events[-1]["type"] == "turn_end"
+
+
+def test_ws_interrupt_then_approve(tmp_path: Path) -> None:
+    with _client(interrupt_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "please run"})
+            paused = _drain_turn(ws)
+            interrupt = paused[-1]
+            assert interrupt["type"] == "interrupt"
+            assert interrupt["actions"][0]["name"] == "execute"
+            assert set(interrupt["allowed_decisions"]) == {"approve", "reject", "respond"}
+
+            ws.send_json({"type": "decision", "decision": "approve"})
+            resumed = _drain_turn(ws)
+    assert any(e["type"] == "text" and "approval handled" in e["text"] for e in resumed)
+    assert resumed[-1]["type"] == "turn_end"
+
+
+def test_ws_reconnect_resurfaces_a_pending_approval(tmp_path: Path) -> None:
+    # If the connection drops while an approval is pending, a fresh connection to the
+    # same live session re-surfaces the interrupt (read from the persisted graph state)
+    # so the user can still answer it, instead of the paused turn being orphaned.
+    with _client(interrupt_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "please run"})
+            assert _drain_turn(ws)[-1]["type"] == "interrupt"
+        # ws closed without deciding (a dropped connection); the session stays live.
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws2:
+            resurfaced = ws2.receive_json()  # re-sent on attach, before any prompt
+            assert resurfaced["type"] == "interrupt"
+            assert resurfaced["actions"][0]["name"] == "execute"
+            ws2.send_json({"type": "decision", "decision": "approve"})
+            resumed = _drain_turn(ws2)
+    assert any(e["type"] == "text" and "approval handled" in e["text"] for e in resumed)
+    assert resumed[-1]["type"] == "turn_end"
+
+
+def test_ws_always_allow_auto_approves_future_interrupts(tmp_path: Path) -> None:
+    # "Always allow" approves now and remembers the category, so a later interrupt
+    # of the same kind auto-approves without asking the user again (like the TUI).
+    def agent() -> Any:
+        return interrupt_agent(tool_name="write_file", allowed_decisions=["approve", "reject"])
+
+    with _client(agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "edit a file"})
+            interrupt = _drain_turn(ws)[-1]
+            assert interrupt["type"] == "interrupt"
+            assert interrupt["allowlist"] == ["file_edits"]  # offered to the front end
+
+            ws.send_json({"type": "decision", "decision": "always_allow"})
+            assert _drain_turn(ws)[-1]["type"] == "turn_end"
+
+            # A second file-edit interrupt is now resolved automatically: the client
+            # sees the turn complete and is never asked to approve again.
+            ws.send_json({"type": "prompt", "text": "edit another file"})
+            second = _drain_turn(ws)
+            assert second[-1]["type"] == "turn_end"
+            assert not any(e["type"] == "interrupt" for e in second)
+
+
+def test_ws_unknown_session(tmp_path: Path) -> None:
+    with (
+        _client(echo_agent, tmp_path) as client,
+        client.websocket_connect("/sessions/nope/stream") as ws,
+    ):
+        assert ws.receive_json() == {"type": "error", "message": "no such session"}
+
+
+def test_ws_decision_without_pending_is_error(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "decision", "decision": "approve"})
+            event = ws.receive_json()
+    assert event["type"] == "error"
+    assert "no approval" in event["message"]
+
+
+def test_artifact_wire_events_png_and_html() -> None:
+    payloads = [
+        {"path": "artifacts/plot.png", "mime": "image/png", "caption": "fig"},
+        {
+            "path": "artifacts/scene.html",
+            "mime": "text/html",
+            "caption": "interactive",
+            "kind": "plot",
+            "poster": "artifacts/scene.png",
+            "slot": "scene",
+        },
+        {
+            "path": "artifacts/report.html",
+            "mime": "text/html",
+            "caption": "Run report",
+            "kind": "report",
+            "slot": "report",
+        },
+    ]
+    events = artifact_wire_events(payloads, "sid")
+    assert events[0] == {
+        "type": "artifact",
+        "url": "/sessions/sid/artifacts/plot.png",
+        "mime": "image/png",
+        "caption": "fig",
+        "slot": None,
+        "format": None,
+    }
+    # An interactive plot becomes a viz carrying its kind, slot, and poster URL.
+    assert events[1] == {
+        "type": "viz",
+        "url": "/sessions/sid/artifacts/scene.html",
+        "title": "interactive",
+        "kind": "plot",
+        "poster": "/sessions/sid/artifacts/scene.png",
+        "slot": "scene",
+    }
+    # A written report is a viz too, of kind "report" and with no poster.
+    assert events[2] == {
+        "type": "viz",
+        "url": "/sessions/sid/artifacts/report.html",
+        "title": "Run report",
+        "kind": "report",
+        "poster": None,
+        "slot": "report",
+    }
+
+
+def test_artifact_wire_events_live_plot_uses_live_url() -> None:
+    # A live-served plot carries a live_url (the session's Bonito server); the viz
+    # points there instead of the static export, but the poster is still served
+    # as a session artifact.
+    # A live plot's durable record is the PNG (mime image/png); the live_url is
+    # where the figure is actually served, so the viz points there, not at the PNG.
+    payloads = [
+        {
+            "path": "artifacts/reservoir.png",
+            "mime": "image/png",
+            "caption": "Reservoir",
+            "kind": "plot",
+            "poster": "artifacts/reservoir.png",
+            "slot": "reservoir",
+            "live_url": "http://127.0.0.1:9123/viz/reservoir",
+        },
+    ]
+    (event,) = artifact_wire_events(payloads, "sid")
+    assert event == {
+        "type": "viz",
+        "url": "http://127.0.0.1:9123/viz/reservoir",
+        "title": "Reservoir",
+        "kind": "plot",
+        "poster": "/sessions/sid/artifacts/reservoir.png",
+        "slot": "reservoir",
+    }
+
+
+def test_artifact_wire_events_replay_falls_back_to_poster() -> None:
+    # On resume the Julia process (and its Bonito server) is gone, so the recorded
+    # live_url is dead. Replaying with live=False must point the viz at the still-on
+    # -disk PNG poster, not the dead URL, so the plot is still viewable (static).
+    payloads = [
+        {
+            "path": "artifacts/reservoir.png",
+            "mime": "image/png",
+            "caption": "Reservoir",
+            "kind": "plot",
+            "poster": "artifacts/reservoir.png",
+            "slot": "reservoir",
+            "live_url": "http://127.0.0.1:9123/viz/reservoir",
+        },
+    ]
+    (event,) = artifact_wire_events(payloads, "sid", live=False)
+    assert event == {
+        "type": "viz",
+        "url": "/sessions/sid/artifacts/reservoir.png",  # the poster, not the dead live_url
+        "title": "Reservoir",
+        "kind": "plot",
+        "poster": "/sessions/sid/artifacts/reservoir.png",
+        "slot": "reservoir",
+    }
+
+
+def test_command_reconfigures_session(tmp_path: Path) -> None:
+    # A `command` message rebuilds the agent in place (model / approval policy).
+    # reconfigure is stubbed here (the real one rebuilds a provider-backed agent);
+    # a following unknown command, whose error we read, proves the first was
+    # processed in order.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        calls: list[dict] = []
+        manager.get(sid).reconfigure = lambda **kw: calls.append(kw)  # type: ignore[method-assign]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "command", "command": "set_model", "arg": "anthropic:c"})
+            ws.send_json({"type": "command", "command": "set_approval", "arg": "auto"})
+            ws.send_json({"type": "command", "command": "bogus"})
+            err = ws.receive_json()
+    assert calls == [{"model": "anthropic:c"}, {"approval_mode": "auto"}]
+    assert err["type"] == "error" and "bogus" in err["message"]
+
+
+def test_command_compact_and_add_dir(tmp_path: Path) -> None:
+    # /compact and /add-dir reply with a `notice`; the host methods are stubbed
+    # (the real ones summarize via a model / mutate the backend).
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        host = manager.get(sid)
+        host.add_dir = lambda arg: f"added:{arg}"  # type: ignore[method-assign]
+
+        async def fake_compact() -> str:
+            return "compacted:ok"
+
+        host.compact = fake_compact  # type: ignore[method-assign]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "command", "command": "add_dir", "arg": "/data"})
+            n1 = ws.receive_json()
+            ws.send_json({"type": "command", "command": "compact"})
+            n2 = ws.receive_json()
+    assert n1 == {"type": "notice", "text": "added:/data"}
+    assert n2 == {"type": "notice", "text": "compacted:ok"}
+
+
+def test_transcript_and_memory_endpoints(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        html = client.get(f"/sessions/{sid}/transcript")
+        assert html.status_code == 200 and "text/html" in html.headers["content-type"]
+        md = client.get(f"/sessions/{sid}/transcript", params={"format": "md"})
+        assert md.status_code == 200 and "markdown" in md.headers["content-type"]
+        mem = client.get(f"/sessions/{sid}/memory")
+        assert mem.status_code == 200 and "Memory" in mem.text
+        assert client.get("/sessions/nope/transcript").status_code == 404
+
+
+def test_context_endpoint_renders_panel(tmp_path: Path) -> None:
+    # /context renders the same panel as the TUI. It reads the trace from a fresh
+    # connection because the endpoint runs in a threadpool and the session's own
+    # SQLite connection is bound to the thread it was created on — a regression
+    # guard for the cross-thread error that returned a 500.
+    from jutul_agent.trace import TraceLog
+
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
+        with TraceLog(state_dir / "trace.sqlite") as log:  # own connection (test thread)
+            log.append("model_usage", {"input_tokens": 1200, "output_tokens": 80})
+        resp = client.get(f"/sessions/{sid}/context")
+        assert resp.status_code == 200
+        assert resp.json()["markdown"].strip()
+        assert client.get("/sessions/nope/context").status_code == 404
+
+
+def test_history_endpoint_shape(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/sessions/history").json()
+    assert isinstance(body.get("sessions"), list)
+    for s in body["sessions"]:
+        assert {"id", "title", "started", "sim"} <= set(s)
+
+
+def test_history_derives_title_when_none_stored(tmp_path: Path) -> None:
+    # A real conversation whose title file never landed (its titling never persisted)
+    # must still appear in history, derived from its first prompt, instead of
+    # vanishing. An abandoned new-chat (no prompt) is hidden.
+    from jutul_agent.session import sessions_root
+    from jutul_agent.trace import TraceLog
+
+    root = sessions_root()  # workspace_state_dir()/sessions under the autouse fixture
+    root.mkdir(parents=True, exist_ok=True)
+
+    convo = root / "2026-06-20-1835-aaaa"
+    convo.mkdir()
+    with TraceLog(convo / "trace.sqlite") as log:
+        log.append("session_start", {"session_id": convo.name, "simulator": "battmo"})
+        log.append("message_user", {"content": "Discharge the chen cell and plot the voltage"})
+
+    empty = root / "2026-06-20-1840-bbbb"
+    empty.mkdir()
+    with TraceLog(empty / "trace.sqlite") as log:
+        log.append("session_start", {"session_id": empty.name, "simulator": "battmo"})
+
+    with _client(echo_agent, tmp_path) as client:
+        sessions = client.get("/sessions/history").json()["sessions"]
+
+    by_id = {s["id"]: s for s in sessions}
+    assert "2026-06-20-1835-aaaa" in by_id  # the real conversation shows...
+    shown = by_id["2026-06-20-1835-aaaa"]
+    assert shown["title"].startswith("Discharge the chen cell")  # ...with a derived title
+    assert shown["sim"] == "battmo"
+    assert "2026-06-20-1840-bbbb" not in by_id  # the abandoned new-chat stays hidden
+
+
+def test_history_caps_by_last_use_not_creation(tmp_path: Path) -> None:
+    # The `limit` cap is applied AFTER sorting by last use, not before: an old-created
+    # but recently-used session must survive the cut, and a newest-created but
+    # least-recently-used one is dropped.
+    from jutul_agent.session import sessions_root
+    from jutul_agent.trace import TraceLog
+
+    root = sessions_root()
+    root.mkdir(parents=True, exist_ok=True)
+    # Appended oldest-id last, so id order (newest first) is A,B,C while activity
+    # order (latest last) is A,B,C — i.e. the oldest id, C, was used most recently.
+    for sid in ("2026-06-22-2300-aaaa", "2026-06-22-1200-bbbb", "2026-06-22-0100-cccc"):
+        d = root / sid
+        d.mkdir()
+        with TraceLog(d / "trace.sqlite") as log:
+            log.append("session_start", {"session_id": sid, "simulator": "battmo"})
+            log.append("message_user", {"content": f"work {sid[-4:]}"})
+
+    with _client(echo_agent, tmp_path) as client:
+        ids = [s["id"] for s in client.get("/sessions/history?limit=2").json()["sessions"]]
+
+    assert ids[0] == "2026-06-22-0100-cccc"  # oldest id, used most recently → top
+    assert "2026-06-22-2300-aaaa" not in ids  # newest id, used first → cut by the limit
+    assert len(ids) == 2
+
+
+def test_delete_refuses_a_session_open_in_a_connection(tmp_path: Path) -> None:
+    # Deleting a session a connection is driving would tear its kernel down under a
+    # running turn; refuse with 409. Once the socket closes (detaches), delete works.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream"):
+            assert client.delete(f"/sessions/{sid}").status_code == 409
+        assert client.delete(f"/sessions/{sid}").status_code == 200
+
+
+async def test_end_all_tool_streams_clears_state_and_cancels_flushes() -> None:
+    # A cancelled/errored turn leaves tool-stream state behind; _end_all_tool_streams
+    # must drop every per-call dict and cancel any pending trailing-flush task.
+    import asyncio
+    import contextlib
+
+    from jutul_agent.interfaces.server.app import _StreamState
+
+    st = _StreamState(_FakeWS(), None)  # type: ignore[arg-type]
+    st._tool_streams["c1"] = "partial output"
+    st._tool_render_at["c1"] = 1.0
+    st._tool_delta_wire["c1"] = {"type": "tool", "event": "delta", "tool_call_id": "c1"}
+    task = asyncio.create_task(asyncio.sleep(100))
+    st._tool_flush["c1"] = task
+
+    st._end_all_tool_streams()
+
+    assert st._tool_streams == {} and st._tool_flush == {} and st._tool_delta_wire == {}
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+
+
+def test_history_ordered_by_last_use_not_creation(tmp_path: Path) -> None:
+    # History is ordered by when each session was last used (its latest event), not
+    # by when it was created: a session with an older id but more recent activity
+    # comes first. This is the "order I last used it" the user expects.
+    from jutul_agent.session import sessions_root
+    from jutul_agent.trace import TraceLog
+
+    root = sessions_root()
+    root.mkdir(parents=True, exist_ok=True)
+
+    newer_id = root / "2026-06-22-2000-newr"  # newer id, but used earlier
+    newer_id.mkdir()
+    with TraceLog(newer_id / "trace.sqlite") as log:
+        log.append("session_start", {"session_id": newer_id.name, "simulator": "battmo"})
+        log.append("message_user", {"content": "older activity"})
+
+    older_id = root / "2026-06-22-1000-oldr"  # older id, but used just now
+    older_id.mkdir()
+    with TraceLog(older_id / "trace.sqlite") as log:  # appended after → later timestamp
+        log.append("session_start", {"session_id": older_id.name, "simulator": "battmo"})
+        log.append("message_user", {"content": "most recent activity"})
+
+    with _client(echo_agent, tmp_path) as client:
+        sessions = client.get("/sessions/history").json()["sessions"]
+
+    order = [s["id"] for s in sessions if s["id"].endswith(("-newr", "-oldr"))]
+    assert order == ["2026-06-22-1000-oldr", "2026-06-22-2000-newr"]
+
+
+def test_session_overview_reads_sim_first_prompt_and_last_activity(tmp_path: Path) -> None:
+    from jutul_agent.interfaces.server.app import _session_overview
+    from jutul_agent.trace import TraceLog
+
+    sd = tmp_path / "s1"
+    sd.mkdir()
+    with TraceLog(sd / "trace.sqlite") as log:
+        log.append("session_start", {"session_id": "s1", "simulator": "jutuldarcy"})
+        log.append("message_user", {"content": "build a 5-spot waterflood"})
+        log.append("message_user", {"content": "now plot it"})  # only the first is used
+    sim, first_prompt, last_active = _session_overview(sd)
+    assert (sim, first_prompt) == ("jutuldarcy", "build a 5-spot waterflood")
+    assert last_active and last_active >= "2026"  # the most recent event's timestamp
+
+    empty = tmp_path / "s2"
+    empty.mkdir()
+    with TraceLog(empty / "trace.sqlite") as log:
+        log.append("session_start", {"session_id": "s2", "simulator": "jutuldarcy"})
+    sim, first_prompt, _ = _session_overview(empty)
+    assert (sim, first_prompt) == ("jutuldarcy", None)
+
+
+def test_messages_endpoint_replays_conversation(tmp_path: Path) -> None:
+    from jutul_agent.trace import TraceLog
+
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
+        with TraceLog(state_dir / "trace.sqlite") as log:  # own connection (test thread)
+            log.append("message_user", {"content": "set up a reservoir"})
+            log.append("message_reasoning", {"content": "I'll build a small grid"})
+            log.append(
+                "tool_call",
+                {"id": "c1", "name": "run_julia", "args": {"code": "1+1"}},
+            )
+            log.append(
+                "tool_result",
+                {"tool_call_id": "c1", "name": "run_julia", "content": "2", "status": "success"},
+            )
+            log.append("message_assistant", {"content": "done — here it is"})
+        msgs = client.get(f"/sessions/{sid}/messages").json()["messages"]
+    assert {"type": "user", "text": "set up a reservoir"} in msgs
+    assert {"type": "reasoning", "text": "I'll build a small grid"} in msgs
+    assert {"type": "assistant", "text": "done — here it is"} in msgs
+    # A tool replays as a requested card followed by its finished result, so the
+    # resumed chat shows the full tool card with its output (not just text).
+    requested = next(m for m in msgs if m["type"] == "tool" and m["event"] == "requested")
+    assert requested["tool_call_id"] == "c1" and requested["args"] == {"code": "1+1"}
+    finished = next(m for m in msgs if m["type"] == "tool" and m["event"] == "finished")
+    assert finished["tool_call_id"] == "c1" and finished["content"] == "2"
+
+
+def test_messages_endpoint_finishes_resultless_tool_calls(tmp_path: Path) -> None:
+    # Some tool calls never record a result (e.g. a write_todos that ends a turn).
+    # Replay must still emit a terminal event so the card resolves instead of
+    # spinning forever on resume.
+    from jutul_agent.trace import TraceLog
+
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        state_dir = manager.get(sid).session.state_dir  # type: ignore[union-attr]
+        with TraceLog(state_dir / "trace.sqlite") as log:
+            log.append("tool_call", {"id": "t1", "name": "write_todos", "args": {"todos": []}})
+            # deliberately no tool_result for t1
+        msgs = client.get(f"/sessions/{sid}/messages").json()["messages"]
+    t1 = [m for m in msgs if m["type"] == "tool" and m["tool_call_id"] == "t1"]
+    assert [m["event"] for m in t1] == ["requested", "finished"]
+
+
+def test_first_turn_generates_llm_title(tmp_path: Path, monkeypatch: Any) -> None:
+    # After the first turn the server replaces the first-prompt title with a
+    # content-aware one (best-effort) and nudges the front end to refresh history.
+    from jutul_agent import session as session_mod
+    from jutul_agent.agent import titling
+
+    async def fake_title(model_id: Any, conversation: str) -> str:
+        return "Reservoir Sweep Study"
+
+    monkeypatch.setattr(titling, "generate_session_title", fake_title)
+
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "set up a small reservoir"})
+            events = _drain_turn(ws)
+            renamed = ws.receive_json()  # the post-turn history-refresh signal
+    assert events[-1]["type"] == "turn_end"
+    assert renamed["type"] == "ui" and renamed["action"] == "history_changed"
+    assert renamed["payload"]["title"] == "Reservoir Sweep Study"
+    # The new title is persisted, so a history listing shows it.
+    titles = [s.title for s in session_mod.list_sessions(state_root=tmp_path)]
+    assert "Reservoir Sweep Study" in titles
+
+
+def test_upload_writes_to_workspace(tmp_path: Path) -> None:
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        manager.get(sid).workspace = tmp_path  # type: ignore[union-attr]
+        resp = client.post(
+            f"/sessions/{sid}/upload",
+            files={"file": ("my data.csv", b"a,b\n1,2\n", "text/csv")},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["path"] == "uploads/my_data.csv"  # basename + sanitized
+    assert (tmp_path / "uploads" / "my_data.csv").read_bytes() == b"a,b\n1,2\n"
+
+
+@pytest.mark.parametrize("agent_factory", [echo_agent])
+def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
+    # The default manager (no injected factory) resolves the simulator registry,
+    # so an unknown name is a client error rather than a server crash.
+    with TestClient(create_app(SessionManager())) as client:
+        resp = client.post("/sessions", json={"sim": "does-not-exist"})
+    assert resp.status_code == 400
+
+
+def test_resume_rejects_malformed_session_id(tmp_path: Path) -> None:
+    # A client-supplied id that isn't the server-generated shape is refused before
+    # any disk access, so it can't become a path traversal into mkdir.
+    with _client(echo_agent, tmp_path) as client:
+        resp = client.post("/sessions/foo%24bar/resume", json={})
+    assert resp.status_code == 404
+
+
+def test_messages_rejects_malformed_session_id(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        resp = client.get("/sessions/foo%24bar/messages")
+    assert resp.status_code == 404
+
+
+def test_resume_refuses_when_session_in_use(tmp_path: Path) -> None:
+    # Re-resuming a session another connection holds would tear its live kernel
+    # down; the server returns 409 instead.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        manager.get(sid).attach()  # type: ignore[union-attr]  # simulate an active connection
+        resp = client.post(f"/sessions/{sid}/resume", json={})
+    assert resp.status_code == 409
+
+
+async def test_acquire_attaches_promotes_and_refuses_a_second_connection(tmp_path: Path) -> None:
+    # acquire() is the atomic claim a WebSocket makes: it attaches an idle live host
+    # (so eviction, which skips attached hosts, can't tear it down mid-connect), and
+    # returns None for a host that is missing or already attached elsewhere.
+    manager = _manager(echo_agent, tmp_path)
+    host = await manager.create(sim="demo")
+    sid = host.session_id
+
+    first = await manager.acquire(sid)
+    assert first is host and host.attached
+    assert await manager.acquire(sid) is None  # already attached: a second tab is refused
+    assert await manager.acquire("no-such-session") is None  # not live
+
+    host.detach()
+    assert await manager.acquire(sid) is host  # reattachable once idle again
+
+
+async def test_close_require_idle_refuses_an_attached_session(tmp_path: Path) -> None:
+    # A delete must not tear a kernel down under a live connection: with require_idle
+    # the check and the pop are one atomic step, raising rather than closing.
+    manager = _manager(echo_agent, tmp_path)
+    host = await manager.create(sim="demo")
+    sid = host.session_id
+    host.attach()
+    with pytest.raises(SessionBusyError):
+        await manager.close(sid, require_idle=True)
+    assert manager.get(sid) is host  # still registered, untouched
+    host.detach()
+    assert await manager.close(sid, require_idle=True) is True
+
+
+def test_respond_decision_without_message_sends_an_empty_message(tmp_path: Path) -> None:
+    # langchain's HITL reads decision["message"] by subscript for a respond (unlike
+    # reject), so the server must always include it. A respond with no text resolves
+    # the turn and the resume decision carries message="" rather than omitting it.
+    with _client(interrupt_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "please run"})
+            assert _drain_turn(ws)[-1]["type"] == "interrupt"
+            ws.send_json({"type": "decision", "decision": "respond"})  # no "message" field
+            resumed = _drain_turn(ws)
+            agent = client.app.state.manager.get(sid).agent  # type: ignore[attr-defined]
+        decision = next(iter(agent.resume_inputs[-1].resume.values()))["decisions"][0]
+    assert resumed[-1]["type"] == "turn_end"
+    assert decision["type"] == "respond"
+    assert decision["message"] == ""
+
+
+def test_resume_reattaches_to_a_live_idle_session(tmp_path: Path) -> None:
+    # Navigating back to a session that's still live (idle, not attached) must
+    # reattach to the existing host rather than rebuild it, so its Julia REPL
+    # state survives — and the response says the kernel was not restarted.
+    manager = _manager(echo_agent, tmp_path)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        before = manager.get(sid)
+        resp = client.post(f"/sessions/{sid}/resume", json={})
+        assert resp.status_code == 200
+        assert resp.json()["kernel_restarted"] is False
+        assert manager.get(sid) is before  # the same live host, not a rebuilt one

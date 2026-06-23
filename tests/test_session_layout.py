@@ -103,6 +103,78 @@ def test_adopt_title_renames_output_and_records(tmp_path: Path) -> None:
     session.trace.close()
 
 
+def test_existing_output_dir_prefers_the_folder_with_artifacts(tmp_path: Path) -> None:
+    # A stray empty ``<sid>/`` next to the real ``<sid>-<slug>/`` (the title slug)
+    # must not shadow it on resume, or the resumed session's artifacts 404. Prefer
+    # whichever folder actually holds the ``artifacts/``.
+    from jutul_agent.paths import session_output_dir
+    from jutul_agent.session import _existing_output_dir
+
+    sid = "2026-06-12-0101-abcd"
+    bare = session_output_dir(sid)  # workspace is the autouse tmp_path
+    slugged = bare.with_name(bare.name + "-do-a-thing")
+    (bare / "artifacts").mkdir(parents=True)  # stray, empty
+    (slugged / "artifacts").mkdir(parents=True)
+    (slugged / "artifacts" / "plot.png").write_bytes(b"x")  # the real output
+
+    assert _existing_output_dir(sid) == slugged
+
+
+def test_existing_output_dir_prefers_nonempty_dir_for_report_only_session(tmp_path: Path) -> None:
+    # A chat/report-only session keeps ``report.html`` at the dir root, not under
+    # ``artifacts/``. With a stray empty ``<sid>/`` beside the real ``<sid>-<slug>/``,
+    # the artifacts check matches neither, so it must fall back to the NON-EMPTY dir
+    # (the slug one holding the report), not the empty ``<sid>/`` that sorts first.
+    from jutul_agent.paths import session_output_dir
+    from jutul_agent.session import _existing_output_dir
+
+    sid = "2026-06-12-0202-bbbb"
+    bare = session_output_dir(sid)
+    slugged = bare.with_name(bare.name + "-report-only")
+    bare.mkdir(parents=True)  # stray, empty
+    slugged.mkdir(parents=True)
+    (slugged / "report.html").write_text("<html></html>", encoding="utf-8")  # the real output
+
+    assert _existing_output_dir(sid) == slugged
+
+
+def test_existing_output_dir_ignores_stray_with_empty_artifacts_subdir(tmp_path: Path) -> None:
+    # A stray ``<sid>/`` whose only content is an empty ``artifacts/`` subdir must
+    # not count as having output and win over the real ``<sid>-<slug>/`` that holds
+    # report.html at its root.
+    from jutul_agent.paths import session_output_dir
+    from jutul_agent.session import _existing_output_dir
+
+    sid = "2026-06-12-0303-cccc"
+    bare = session_output_dir(sid)
+    slugged = bare.with_name(bare.name + "-report")
+    (bare / "artifacts").mkdir(parents=True)  # stray: only an EMPTY artifacts/ subdir
+    slugged.mkdir(parents=True)
+    (slugged / "report.html").write_text("<html></html>", encoding="utf-8")
+
+    assert _existing_output_dir(sid) == slugged
+
+
+def test_retitle_overwrites_title_but_keeps_output_dir(tmp_path: Path) -> None:
+    from jutul_agent.session import read_session_title
+
+    session = _title_session(tmp_path)
+    session.adopt_title("Run a chen_2020 discharge and plot voltage")
+    out_after_adopt = session.output_dir  # carries the first-prompt slug
+
+    # An LLM title replaces the displayed/stored name without renaming the folder
+    # (no open handles disturbed) — only the title file and a trace event change.
+    session.retitle("Chen2020 CC Discharge Voltage")
+    assert session.title == "Chen2020 CC Discharge Voltage"
+    assert read_session_title(session.state_dir) == "Chen2020 CC Discharge Voltage"
+    assert session.output_dir == out_after_adopt  # folder slug unchanged
+    assert [e.kind for e in session.trace.iter_events()].count("session_title") == 2
+
+    session.retitle("   ")  # blank is a no-op
+    assert session.title == "Chen2020 CC Discharge Voltage"
+    session.trace.close()
+
+
 def test_adopt_title_without_usable_slug_keeps_dir(tmp_path: Path) -> None:
     session = _title_session(tmp_path)
     before = session.output_dir

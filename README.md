@@ -17,6 +17,13 @@ plots the results, and iterates: fixing mistakes and refining the next run.
   <a href="https://github.com/sintefmath/Mocca.jl"><img src="https://raw.githubusercontent.com/sintefmath/Mocca.jl/main/docs/src/assets/mocca_small_transparent.png" alt="Mocca" height="62"></a>
 </p>
 
+<p align="center">
+  <img src="docs/images/web-fimbul.png" alt="jutul-agent web UI: a Fimbul geothermal doublet with the 3D temperature field over time" width="47%">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/images/web-battmo.png" alt="jutul-agent web UI: a BattMo discharge-rate investigation with plots and a report" width="47%">
+</p>
+<p align="center"><sub>The browser UI (<code>jutul-agent web</code>): chat on the left; interactive plots and reports pinned in a canvas on the right. On the left, a Fimbul geothermal doublet showing the 3D temperature field around the wells over time. On the right, a BattMo C-rate study with voltage curves, an attempts map, and a written report.</sub></p>
+
 What makes it work for scientific computing:
 
 - A persistent Julia REPL per session. State, loaded packages, and compiled
@@ -66,25 +73,40 @@ Details in the
 
 ## First run
 
-jutul-agent works in the directory you launch it from: that directory
-becomes the workspace where it reads and writes files. Start it from a
-fresh project folder.
+jutul-agent works in the directory you launch it from: that folder becomes the
+workspace where it reads and writes files, bound to one simulator. Set up a fresh
+folder, then pick an interface.
 
 ```sh
 mkdir my-battery-run && cd my-battery-run
-jutul-agent init --sim battmo --precompile
-jutul-agent
+jutul-agent init --sim battmo
 ```
 
-```
-> Set up a constant-current discharge for the chen_2020 cell and plot the voltage curve.
+`init` precompiles the Julia env and the web-plotting stack up front (one-time, a
+few minutes), so the first session in any interface starts in seconds.
+
+`jutul-agent` has three interfaces — choose one explicitly (bare `jutul-agent`
+just lists them):
+
+```sh
+jutul-agent web      # browser UI: chat with interactive plots and reports
+jutul-agent tui      # terminal UI
+jutul-agent run "Plot a constant-current discharge of the chen_2020 cell"   # one headless turn
 ```
 
-`--sim` takes any simulator from the table above, and the workflow is the
-same for all of them. The first `--precompile` takes a while (Julia compiles
-the simulator and the plotting stack), after which sessions start in
-seconds. If anything fails, `jutul-agent doctor` diagnoses the setup
-and prints a fix per finding.
+`jutul-agent web` opens at <http://127.0.0.1:8742>; the agent runs the simulator,
+writes and runs Julia, and pins interactive plots and reports in a panel beside
+the chat. It is the same agent and session core as the terminal, so anything in
+one works in the other.
+
+`--sim` takes any simulator from the table above, and the workflow is the same
+for all of them. If anything fails, `jutul-agent doctor` diagnoses the setup and
+prints a fix per finding.
+
+One folder is bound to one simulator and its Julia environment; use another
+simulator from another folder. The web interface runs locally for a single
+trusted user — the [server interface guide](docs/server-interface.md) covers the
+HTTP/WebSocket protocol and embedding the agent in your own application.
 
 ## Documentation
 

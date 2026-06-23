@@ -35,12 +35,11 @@ geothermal physics through the same Fimbul/JutulDarcy API surface.
 
 ## Finding what you need
 
-Fimbul's source is read-only depot source at `pkgdir(Fimbul)`; get the path in
-`run_julia`, then browse it with the file tools (see the `workspace-and-source`
-skill):
+Fimbul's source is read-only depot source; its path is given to you up front, so
+browse it directly with the file tools (see the `workspace-and-source` skill):
 
 ```text
-# pkgdir(Fimbul) -> /.../Fimbul/<hash>
+# Fimbul source path is in your system prompt -> /.../Fimbul/<hash>
 glob("/.../Fimbul/examples/**/*.jl")              # analytical / production / storage
 grep("function egg_geothermal", path="/.../Fimbul/src")   # a case factory's source
 read_file("/.../Fimbul/examples/production/doublet_demo.jl")

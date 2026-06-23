@@ -435,7 +435,7 @@ def render_report(
     # turn settles (see Session.refresh_report_transcripts). A transcript hiccup
     # must never fail the report write.
     with contextlib.suppress(Exception):
-        write_sidecar_transcript(out.parent, event_list)
+        write_sidecar_transcript(out.parent, event_list, artifact_dirs=dirs)
 
     return doc
 
@@ -1064,11 +1064,22 @@ def _resolve_plot(path: str, artifact_dirs: Sequence[Path]) -> Path | None:
 _TRANSCRIPT_FILENAME = "transcript.html"
 
 
-def write_sidecar_transcript(report_dir: Path, events: Sequence[Event]) -> None:
-    """Write the transcript a report links to, beside the report (same folder)."""
+def write_sidecar_transcript(
+    report_dir: Path, events: Sequence[Event], artifact_dirs: Sequence[Path] = ()
+) -> None:
+    """Write the transcript a report links to, beside the report (same folder).
+
+    The sidecar sits inside the artifacts folder, so its recorded ``artifacts/…``
+    image paths don't resolve relative to it; inlining the images (resolved via
+    the report dir and any extra ``artifact_dirs``) makes the transcript show its
+    plots wherever it is opened.
+    """
     from jutul_agent.transcript.html import render_html
 
-    (report_dir / _TRANSCRIPT_FILENAME).write_text(render_html(list(events)), encoding="utf-8")
+    dirs = [report_dir, *artifact_dirs]
+    (report_dir / _TRANSCRIPT_FILENAME).write_text(
+        render_html(list(events), artifact_dirs=dirs), encoding="utf-8"
+    )
 
 
 def _render_footer(session_id: str) -> str:

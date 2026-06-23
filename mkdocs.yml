@@ -64,6 +64,8 @@ nav:
       - Approval and safety: approval.md
   - How it works:
       - Architecture: architecture.md
+      - The server interface: server-interface.md
+      - The web UI: web-ui.md
       - Turns: turns.md
       - The Julia kernel: julia-kernel.md
       - Filesystem: filesystem.md
@@ -71,6 +73,7 @@ nav:
       - Context handling: context.md
       - The trace database: trace.md
   - Extending the agent:
+      - Building your application: extending-for-your-application.md
       - Adding a simulator: adding-a-simulator.md
       - Improving the agent: improving-the-agent.md
   - Evaluation:

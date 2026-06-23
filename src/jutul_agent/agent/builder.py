@@ -31,6 +31,14 @@ from deepagents.backends import CompositeBackend
 from jutul_agent.agent.added_dirs import add_dir
 from jutul_agent.agent.approval import ApprovalMode, interrupt_on_for_mode, parse_approval_mode
 from jutul_agent.agent.backend import RecursiveGrepBackend, WorkspaceShellBackend
+from jutul_agent.agent.capabilities import (
+    Capability,
+    collect_prompt_fragments,
+    collect_skill_dirs,
+    collect_subagents,
+    collect_tools,
+    select_for_surface,
+)
 from jutul_agent.agent.context_editing import build_context_editing_middleware
 from jutul_agent.agent.memory import (
     build_memory_middleware,
@@ -57,7 +65,13 @@ from jutul_agent.session import Session
 from jutul_agent.simulators.base import SimulatorAdapter
 from jutul_agent.trace import TraceRecorder
 
-__all__ = ["PackageSource", "build_agent", "build_backend", "resolve_model"]
+__all__ = [
+    "PackageSource",
+    "build_agent",
+    "build_backend",
+    "resolve_model",
+    "resolve_package_sources",
+]
 
 # Re-exported from the light models module so importing it for these constants does
 # not pull the agent stack; kept here for the existing import sites.
@@ -78,6 +92,23 @@ class PackageSource:
     name: str
     path: Path
     writable: bool = False
+
+
+def resolve_package_sources(julia_project: Path) -> list[PackageSource]:
+    """The env's package source dirs as ``PackageSource``s, read-only by default.
+
+    One fast, no-compile Julia call (``Pkg.dependencies``); a ``Pkg.develop``
+    checkout is writable, a registry install is not. Returns ``[]`` on an
+    unresolved manifest. Shared by every interface so the read-only depot guard and
+    the simulator source-path prompt note are derived the same way everywhere; run
+    it off the event loop (``asyncio.to_thread``)."""
+    from jutul_agent.simulators.env_setup import resolve_env_package_sources
+
+    env = resolve_env_package_sources(julia_project)
+    return [
+        PackageSource(name=name, path=path, writable=is_dev)
+        for name, (path, is_dev) in sorted(env.items())
+    ]
 
 
 _provider_profiles_registered = False
@@ -270,6 +301,20 @@ def _set_profile_window(model: Any, model_id: str) -> None:
         pass
 
 
+def _primary_source_path(
+    adapter: SimulatorAdapter,
+    package_sources: Sequence[PackageSource] | None,
+) -> Path | None:
+    """The simulator's primary-package source dir from the resolved sources, if any.
+
+    Lets the system prompt hand the agent that path directly so it needn't run
+    ``using <Sim>; pkgdir(<Sim>)`` (loading the package just to find a known path).
+    ``None`` when sources weren't resolved, so the prompt falls back to ``pkgdir``.
+    """
+    name = adapter.primary_package
+    return next((src.path for src in package_sources or () if src.name == name), None)
+
+
 def _depot_readonly_roots(
     package_sources: Sequence[PackageSource] | None,
 ) -> tuple[Path, ...]:
@@ -358,6 +403,8 @@ def build_agent(
     approval_mode: ApprovalMode | str | None = None,
     package_sources: Sequence[PackageSource] | None = None,
     added_dirs: Sequence[str | Path] | None = None,
+    surface: str = "tui",
+    extensions: Sequence[Capability] = (),
 ) -> tuple[Any, CompositeBackend]:
     """Build the session agent and return it with its live ``CompositeBackend``.
 
@@ -380,22 +427,30 @@ def build_agent(
         artifacts_root=session.state_dir,
     )
 
+    # Compose the agent from layers: base tools/skills, the simulator, and any
+    # extension capabilities that apply to this surface (see agent.capabilities).
+    active = select_for_surface(list(extensions), surface)
+
     tools = [
         make_run_julia_tool(session),
         make_reset_julia_tool(session),
-        make_plot_julia_tool(session),
+        make_plot_julia_tool(session, surface=surface),
         make_recapture_tool(session),
         make_close_plots_tool(session),
         make_record_attempt_tool(session),
-        make_write_report_tool(session),
+        make_write_report_tool(session, surface=surface),
         make_remember_tool(memory_dir),
+        *collect_tools(active, session),
     ]
     mode = (
         approval_mode
         if isinstance(approval_mode, ApprovalMode)
         else parse_approval_mode(approval_mode)
     )
-    subagents = [factory(session) for factory in session.simulator.subagent_factories]
+    subagents = [
+        factory(session) for factory in session.simulator.subagent_factories
+    ] + collect_subagents(active, session)
+    skills = skill_sources(session.simulator) + collect_skill_dirs(active)
     model_spec = resolve_model(model)
     resolved_model = _resolve_model_for_agent(model_spec)
     agent = create_deep_agent(
@@ -407,8 +462,11 @@ def build_agent(
             open_windows=session.open_windows,
             resumed=session.resumed,
             workspace=workspace_root(),
+            primary_source=_primary_source_path(session.simulator, package_sources),
+            surface=surface,
+            extra_fragments=collect_prompt_fragments(active),
         ),
-        skills=skill_sources(session.simulator),
+        skills=skills,
         subagents=subagents,
         interrupt_on=interrupt_on_for_mode(mode),
         # Auto-compaction is deepagents' stock SummarizationMiddleware (installed

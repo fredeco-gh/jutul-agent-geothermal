@@ -18,12 +18,15 @@ one trace.
 
 ## Interfaces
 
-`jutul-agent` (no arguments) launches the Textual TUI. A positional prompt
-runs one headless turn instead, which is what scripts, CI, and the bench use.
-Subcommands handle the rest: `init` bootstraps a workspace, `doctor` diagnoses
-a broken setup, `transcript` renders a past session, `eval` runs bench suites.
-All of them live in `src/jutul_agent/interfaces/cli/`, and the TUI is
-`interfaces/tui/`.
+The interface is chosen explicitly (`jutul-agent` with no arguments prints the
+chooser): `web` serves the browser UI over an HTTP + WebSocket server, `tui` is
+the Textual terminal UI, and `run "<prompt>"` runs one headless turn, which is
+what scripts, CI, and the bench use. Subcommands handle the rest: `init`
+bootstraps a workspace, `doctor` diagnoses a broken setup, `transcript` renders
+a past session, `eval` runs bench suites. The CLI entry points live in
+`src/jutul_agent/interfaces/cli/`, the terminal UI in `interfaces/tui/`, and the
+server plus its bundled web app in `interfaces/server/` (its protocol has its
+own page: [the server interface](server-interface.md)).
 
 Every interface funnels into the same place: build a `Session`, build the
 agent, hand prompts to `TurnRunner` (`agent/turns.py`). The TurnRunner
@@ -38,8 +41,9 @@ state directory, the trace log, and a handle to the Julia kernel.
 
 `build_agent` (`agent/builder.py`) assembles a
 [deepagents](https://github.com/langchain-ai/deepagents) agent around the
-session: the system prompt, the custom tools, the filesystem, and the
-model. The agent loop itself (planning, tool dispatch, streaming) is
+session: the system prompt, the custom tools, the filesystem, the model, and
+any capability layers (see "Composition and extension seams"). The agent loop
+itself (planning, tool dispatch, streaming) is
 deepagents/langgraph: jutul-agent deliberately does not own a loop. Generic
 agent machinery is built and improved elsewhere at a pace not worth
 competing with. The value of this project is the scientific harness around
@@ -73,6 +77,45 @@ installed package source (each at its `pkgdir`), and folders added with
 backend; writes into the shared Julia depot (installed package source) are
 refused so the agent can study a package without corrupting it. Side-effecting
 tools go through the approval middleware (`ask`, `workspace`, or `auto` mode).
+
+## Composition and extension seams
+
+The agent for a session is *composed from layers* rather than hard-coded, so a
+simulator, a front end, or a host application can add to it without editing the
+core. `build_agent` assembles:
+
+1. **Base** — the always-present tools (`run_julia`, `plot_julia`, memory, …) and
+   the shared + active-simulator skill directories.
+2. **Simulator** — the active `SimulatorAdapter`'s skills, subagents, and domain
+   prompt (see "Simulators are data").
+3. **Surface** — the front end driving the session (`tui`, `web`, `cli`). It
+   selects which capabilities apply and tunes a few surface-specific tools and
+   prompt fragments (e.g. the web surface's interactive plotting).
+4. **Capabilities** — zero or more `Capability` objects (`agent/capabilities.py`),
+   the single unit of "extra behavior." Each can contribute tools, skill
+   directories, subagents, and a prompt fragment, optionally restricted to a
+   surface. `build_agent` takes a list of them and, for the active surface,
+   collects their contributions (`select_for_surface`, then `collect_tools` /
+   `collect_skill_dirs` / `collect_subagents` / `collect_prompt_fragments`) and
+   merges them with the base and simulator layers.
+
+Capabilities reach a session three ways: passed in directly, discovered from
+installed packages' `jutul_agent.extensions` entry points (`discover_extensions`),
+or built from a host application's declarative HTTP tool specs
+(`http_tool_capability`, which lets an app in any language expose its routines as
+tools over HTTP).
+
+Simulators are discovered separately by the registry (`simulators/registry.py`).
+`_discover` collects adapters from two sources: **bundled** subpackages under
+`jutul_agent.simulators` (found with `pkgutil`) and **installed** packages that
+publish a `SimulatorAdapter` under the `jutul_agent.simulators` entry-point group;
+an installed adapter overrides a bundled one of the same name. A broken adapter or
+capability is logged and skipped, never fatal.
+
+These are the extension points, and they are deliberately additive: new behavior
+is a `Capability` in the list `build_agent` composes (or one discovered alongside
+`discover_extensions`), and a new simulator is another adapter `_discover` finds.
+The agent loop, the server, and the kernel stay put.
 
 ## The Julia kernel
 
@@ -126,8 +169,8 @@ The shared `JutulAgent` Julia package (`julia_runtime/`) is synced into every
 env at bootstrap and carries cross-simulator runtime helpers, including the
 ensemble runner.
 
-Adding a simulator adds data in that folder plus a registry entry. No agent
-code changes.
+Adding a simulator adds data in that folder; the registry discovers it
+automatically. No agent code changes.
 
 ## Memory
 

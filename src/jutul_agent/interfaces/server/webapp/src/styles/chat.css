@@ -1,0 +1,737 @@
+/* The conversation surface: messages, reasoning and tool cards, canvas references,
+   notices and approvals, the working indicator, and the composer (with its slash and
+   model menus). */
+
+/* No CSS `scroll-behavior: smooth`: the auto-pin sets scrollTop on every streamed
+   chunk, and an animated scroll would still be mid-flight when the next chunk
+   measures "am I at the bottom", so it would lose the anchor. Intentional scrolls
+   pass {behavior:"smooth"} to scrollIntoView. */
+.conversation {
+  flex: 1;
+  overflow-y: auto;
+}
+.thread {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 1.5rem 1.1rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+}
+
+/* ---- Welcome ---- */
+.welcome {
+  margin: 14vh 0 0;
+  text-align: center;
+  color: var(--muted);
+}
+.welcome h1 {
+  font-size: 1.7rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5rem;
+}
+.welcome p {
+  max-width: 30rem;
+  margin: 0 auto;
+}
+.examples {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 30rem;
+  margin: 1.4rem auto 0;
+}
+.example {
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 11px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
+}
+.example:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--border) 50%, var(--accent));
+}
+
+/* ---- Messages ---- */
+.msg {
+  display: flex;
+  flex-direction: column;
+}
+.msg.user {
+  align-items: flex-end;
+}
+.msg.user .bubble {
+  background: var(--user-bg);
+  color: var(--user-text);
+  padding: 0.6rem 0.9rem;
+  border-radius: 16px 16px 4px 16px;
+  max-width: 85%;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.msg.assistant .markdown {
+  max-width: 100%;
+}
+
+/* ---- Reasoning + tool cards (collapsible) ---- */
+details.block {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 11px;
+  overflow: hidden;
+}
+details.block > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  user-select: none;
+}
+details.block > summary::-webkit-details-marker {
+  display: none;
+}
+details.block > summary::before {
+  content: "›";
+  display: inline-block;
+  transition: transform 0.15s;
+  color: var(--muted);
+  font-size: 1rem;
+}
+details.block[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.block .body {
+  padding: 0 0.85rem 0.75rem 1.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.tool-name {
+  font-weight: 600;
+  color: var(--text);
+  flex: none;
+}
+.tool-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.chip-status {
+  margin-left: auto;
+  font-size: 0.72rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-style: normal;
+}
+.chip-status.running {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chip-status.error {
+  background: #ef44441f;
+  color: #ef4444;
+}
+
+/* Code the agent ran (run_julia / execute / plot). */
+.tool-code {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  max-height: 340px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre;
+}
+.tool-code code {
+  font-family: inherit;
+}
+/* Captured kernel output, styled like a Julia REPL: its own terminal-ish panel so
+   ANSI colours read with full contrast, not washed out on the card surface. */
+.tool-output {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--term-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-args {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* A file path heading above an edit diff or written file. */
+.tool-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+/* record_attempt: rationale + a compact metrics/params grid + notes. */
+.attempt-rationale {
+  font-size: 0.86rem;
+  color: var(--text);
+  margin-bottom: 0.4rem;
+}
+.attempt-notes {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 0.4rem;
+}
+.tool-kv {
+  margin: 0.35rem 0;
+}
+.kv-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+.kv-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.1rem 0.7rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+.kv-key {
+  color: var(--muted);
+}
+.kv-val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+/* Plan / todo list (write_todos). */
+.todos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.todo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.todo-mark {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+  font-weight: 700;
+}
+.todo.completed .todo-mark {
+  color: #16a34a;
+}
+.todo.completed .todo-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.todo.in_progress .todo-mark {
+  color: var(--accent);
+}
+.todo.in_progress .todo-text {
+  color: var(--text);
+  font-weight: 600;
+}
+.todo.pending .todo-mark {
+  color: var(--muted);
+}
+.todo.pending .todo-text {
+  color: var(--text);
+}
+/* Edit diff (edit_file). */
+.tool-diff {
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.tool-diff .del {
+  color: #b91c1c;
+  background: #ef44441a;
+}
+.tool-diff .add {
+  color: #15803d;
+  background: #16a34a1a;
+}
+@media (prefers-color-scheme: dark) {
+  .tool-diff .del {
+    color: #fca5a5;
+  }
+  .tool-diff .add {
+    color: #86efac;
+  }
+}
+.reasoning .body {
+  font-family: var(--font);
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- Canvas references in the thread ---- */
+/* Inline result chip: a compact reference to a view that lives in the canvas. */
+.viz-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition:
+    border-color 0.12s,
+    background 0.12s,
+    transform 0.05s;
+}
+.viz-chip:hover {
+  border-color: color-mix(in srgb, var(--border) 45%, var(--accent));
+  background: var(--surface-2);
+}
+.viz-chip:active {
+  transform: translateY(1px);
+}
+.viz-chip.active {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent) inset,
+    var(--shadow);
+}
+.viz-chip .ico {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.viz-chip .ico.report {
+  background: #8b5cf61f;
+  color: #8b5cf6;
+}
+.viz-chip .info {
+  flex: 1;
+  min-width: 0;
+}
+.viz-chip .t {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.viz-chip .s {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.viz-chip .go {
+  color: var(--muted);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+.viz-chip:hover .go {
+  color: var(--accent);
+}
+
+/* Static image artifact card (the saved PNG record). */
+.art-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.art-card .head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.art-card .head .grow {
+  flex: 1;
+}
+.art-card img {
+  width: 100%;
+  display: block;
+  cursor: zoom-in;
+  background: #fff;
+}
+.art-card a.file {
+  display: block;
+  padding: 0.6rem 0.8rem;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+/* ---- Notices, approvals, errors ---- */
+.approval {
+  border: 1px solid color-mix(in srgb, var(--border) 50%, #f59e0b);
+  background: #f59e0b12;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+}
+.approval .title {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.approval-detail {
+  margin: 0 0 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.approval .buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+.approval-hint {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Error card (a failed turn) with an optional retry. */
+.error-card {
+  border: 1px solid color-mix(in srgb, var(--border) 45%, #ef4444);
+  background: #ef44440f;
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.error-card .err-msg {
+  flex: 1;
+  color: #b91c1c;
+  font-size: 0.88rem;
+  word-break: break-word;
+}
+@media (prefers-color-scheme: dark) {
+  .error-card .err-msg {
+    color: #fca5a5;
+  }
+}
+
+/* A host-app interface update (ui message): a transparency note in the thread. */
+.ui-note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+}
+.ui-note .ui-action {
+  font-weight: 600;
+  color: var(--text);
+}
+.ui-note .ui-payload {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  opacity: 0.85;
+}
+
+/* System notes (slash-command feedback), the help card, and the /context panel. */
+.sys-note {
+  align-self: center;
+  max-width: var(--maxw);
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0.3rem 0.85rem;
+  white-space: pre-line; /* multi-line notes keep their line breaks */
+}
+.sys-note.warn {
+  color: #b45309;
+  background: #f59e0b1a;
+  border-color: #f59e0b55;
+}
+.help-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.7rem 0.9rem;
+  box-shadow: var(--shadow);
+}
+.help-title {
+  font-weight: 650;
+  margin-bottom: 0.4rem;
+}
+.help-row {
+  display: flex;
+  gap: 0.8rem;
+  font-size: 0.85rem;
+  padding: 0.12rem 0;
+}
+.help-name {
+  flex: none;
+  min-width: 13rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+.help-desc {
+  color: var(--muted);
+}
+.context-card {
+  align-self: center;
+  max-width: var(--maxw);
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 0.6rem 0.95rem;
+  box-shadow: var(--shadow);
+  font-size: 0.84rem;
+}
+.context-card code {
+  font-family: var(--mono);
+  white-space: pre;
+}
+.context-card ul {
+  margin: 0.3rem 0;
+  padding-left: 1.1rem;
+}
+.context-card li {
+  margin: 0.05rem 0;
+}
+
+/* ---- Working indicator (the "thinking" dots) ---- */
+.working {
+  display: flex;
+  gap: 5px;
+  padding: 0.5rem 0.1rem;
+}
+.working span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.3;
+  animation: blink 1.2s infinite;
+}
+.working span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.working span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+/* ---- Composer ---- */
+.composer-wrap {
+  padding: 0.6rem 1.1rem 0.9rem;
+  background: linear-gradient(to top, var(--bg) 60%, transparent);
+  position: relative;
+}
+.composer {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 0.5rem 0.5rem 0.5rem 0.9rem;
+  box-shadow: var(--shadow);
+}
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--border) 40%, var(--accent));
+}
+/* The text input: a seamless, borderless field inside the composer shell. */
+.composer textarea {
+  flex: 1;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  max-height: 200px;
+  padding: 0.3rem 0;
+}
+.attach {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.attach:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.send {
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: #fff;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  transition:
+    opacity 0.12s,
+    transform 0.05s;
+}
+.send:hover {
+  filter: brightness(1.06);
+}
+.send:active {
+  transform: scale(0.96);
+}
+.send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* While a turn runs the send button becomes a stop button. */
+.send.stop {
+  background: var(--muted);
+}
+.send.stop svg {
+  display: none;
+}
+.send.stop::after {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: #fff;
+}
+.hint {
+  max-width: var(--maxw);
+  margin: 0.35rem auto 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+/* Slash-command autocomplete and the model picker, floated above the composer. */
+.slash-menu {
+  max-width: var(--maxw);
+  margin: 0 auto 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.slash-item {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+}
+.slash-item.active,
+.slash-item:hover {
+  background: var(--surface-2);
+}
+.slash-item .slash-name {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--accent);
+  min-width: 13rem;
+}
+.slash-item .slash-desc {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.slash-head {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 0.45rem 0.8rem 0.2rem;
+}
+/* The model picker can be long, so let it scroll. */
+.model-menu {
+  max-height: min(60vh, 28rem);
+  overflow-y: auto;
+}
+.model-provider {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.35rem 0.8rem 0.1rem;
+  text-transform: capitalize;
+}
