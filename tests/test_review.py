@@ -419,6 +419,8 @@ def test_passed_ignores_non_grade_metric_scorers():
     """Metric scorers (counts, not CORRECT/INCORRECT) don't gate the verdict."""
     import types
 
+    pytest.importorskip("inspect_ai")  # _passed grades via inspect_ai (the eval extra)
+
     from jutul_agent.review.eval_link import _passed
 
     def g(v):
