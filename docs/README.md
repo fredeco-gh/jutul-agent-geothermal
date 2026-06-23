@@ -19,7 +19,7 @@ fixing mistakes and refining the next run.</p>
 <div class="ja-terminal">
 <div class="ja-terminal-bar"><span></span><span></span><span></span>
 <div class="ja-terminal-title">jutul-agent · my-battery-run</div></div>
-<pre><code><span class="ja-t-dim">$</span> jutul-agent
+<pre><code><span class="ja-t-dim">$</span> jutul-agent tui
 <span class="ja-t-prompt">&gt;</span> Set up a constant-current discharge for the
   chen_2020 cell and plot the voltage curve.
 
@@ -28,6 +28,14 @@ fixing mistakes and refining the next run.</p>
 <span class="ja-t-ok">saved</span> artifacts/voltage_curve.png</code></pre>
 </div>
 </div>
+
+<p align="center">
+  <img src="images/web-fimbul.png" alt="jutul-agent web UI: a Fimbul geothermal doublet with the 3D temperature field over time" width="47%">
+  &nbsp;&nbsp;&nbsp;
+  <img src="images/web-battmo.png" alt="jutul-agent web UI: a BattMo discharge-rate investigation with plots and a report" width="47%">
+</p>
+<p align="center" markdown><small>The browser UI (`jutul-agent web`): chat on the left; interactive plots and
+reports pinned in a canvas on the right.</small></p>
 
 <div class="grid cards" markdown>
 

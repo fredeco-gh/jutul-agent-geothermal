@@ -29,6 +29,11 @@ ecosystem, built on Deep Agents.
 - Python style (matches CI): `uv run ruff check .` then `uv run ruff format .`
 - After editing Python, run `uv run ruff format` on touched paths (or rely on
   format-on-save / pre-commit if installed).
+- Web UI (React + TypeScript in `interfaces/server/webapp`): `npm install`, then
+  `npm test` (vitest) and `npm run typecheck`. It ships **pre-built** — after any
+  change under `webapp/src`, run `npm run build` and commit the regenerated
+  `interfaces/server/web_dist`. That committed bundle is what the server serves,
+  so end users install with `uv`/`pip` and never need Node.
 
 ## Continuous integration
 
@@ -82,7 +87,10 @@ and check on staged `.py` files. To verify the whole tree like CI:
   (HTML transcript, markdown transcript, investigation report).
 - `src/jutul_agent/interfaces/tui/approval.py`: HITL decision policy and the
   approval card markdown.
-- `src/jutul_agent/interfaces/`: `cli` and the Textual `tui` package.
+- `src/jutul_agent/interfaces/`: `cli`, the Textual `tui`, and the `server`
+  (FastAPI REST + per-session WebSocket). The browser UI is a React + TypeScript
+  app in `server/webapp/` (see its README), built into `server/web_dist/`
+  (committed and shipped, so an install needs no Node).
 - `tests/`: end-to-end, chat, CLI, and tool coverage. `tests/integration/`
   needs Julia; `tests/live/` needs an LLM provider key.
 
