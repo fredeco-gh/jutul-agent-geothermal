@@ -10,6 +10,7 @@ general-purpose-subagent disable.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from jutul_agent.simulators.base import SimulatorAdapter
@@ -21,6 +22,9 @@ def assemble_session_prompt(
     open_windows: bool = True,
     resumed: bool = False,
     workspace: Path | None = None,
+    primary_source: str | Path | None = None,
+    surface: str = "tui",
+    extra_fragments: Sequence[str] = (),
 ) -> str:
     sections = [
         f"Active simulator: {adapter.display_name} ({adapter.name}).",
@@ -36,17 +40,57 @@ def assemble_session_prompt(
             f"Working directory: {workspace}\nThis is the user's workspace and the "
             "working directory for the file tools, `execute`, and the Julia REPL."
         )
-    sections += [
-        _tool_guide(adapter),
-        _ground_rules(),
-        _display_note(open_windows),
-    ]
+    if primary_source is not None:
+        # The simulator package's source path, already resolved at session start.
+        # Stated so the agent reads it straight away instead of running
+        # `using <Sim>; pkgdir(<Sim>)`, which loads the package (seconds, the first
+        # time) only to discover a path we already have. Omitted for the attribution
+        # hash (a per-install path would destabilize it).
+        sections.append(_source_note(adapter, primary_source))
+    sections += [_tool_guide(adapter), _ground_rules()]
+    # The web surface renders plots/reports in the app, so its surface note is the
+    # complete display guidance; the terminal display note would contradict it
+    # (it forbids claiming interactivity, which the browser does provide).
+    if surface == "web":
+        sections.append(_surface_note(surface))
+    else:
+        sections.append(_display_note(open_windows))
     if resumed:
         sections.append(_resume_note())
     hints = adapter.domain_hints.strip()
     if hints:
         sections.append("Simulator hints:\n" + hints)
+    sections += [fragment.strip() for fragment in extra_fragments if fragment.strip()]
     return "\n\n".join(sections) + "\n"
+
+
+def _surface_note(surface: str) -> str | None:
+    """Tell the agent which front end it is driving, when that changes behaviour.
+
+    The terminal is the default and needs no note. On the web the agent talks to
+    an application that can show richer output and expose interface controls, so
+    say so; the specific controls arrive as extension tools.
+    """
+
+    if surface == "web":
+        return (
+            "Interface: you are driving a web application, not a terminal. Your "
+            "replies, plots, and reports appear in that app, and the user reads them "
+            "there; there is no desktop window.\n"
+            "Plots: make every figure with `plot_julia` — build one with Makie (e.g. "
+            "`heatmap`, `lines`, `surface`, `contourf`) or call the simulator's native "
+            "interactive plotter. It renders as an interactive figure in a side panel "
+            "the user can rotate, zoom, and pan, and it stays pinned there so you can "
+            "refer back to it. When a native plotter would otherwise open a desktop "
+            "window (e.g. a reservoir or results viewer), pass `window = false` so "
+            "it returns the figure for the browser. A figure built in `run_julia` is "
+            "shown to no one — always go through `plot_julia`.\n"
+            "Reports: `write_report` opens a written report in that same side panel "
+            "(not a desktop window); use it when the user wants a written summary.\n"
+            "Some tools may update the application's interface directly; use them when "
+            "the task calls for it."
+        )
+    return None
 
 
 def _resume_note() -> str:
@@ -93,8 +137,26 @@ def _display_note(open_windows: bool) -> str:
     )
 
 
-def _tool_guide(adapter: SimulatorAdapter) -> str:
+def _source_note(adapter: SimulatorAdapter, primary_source: str | Path) -> str:
+    """State the simulator package's already-resolved source path.
+
+    So the agent greps/reads it directly instead of paying ``using <Sim>`` just to
+    call ``pkgdir`` for a path we already know; ``pkgdir`` stays the way to locate
+    *other* packages' source.
+    """
     primary = adapter.primary_package
+    return (
+        f"{adapter.display_name}'s package source is already on disk at:\n"
+        f"  {primary_source}\n"
+        f"Read it directly with `read_file`, `glob`, and `grep` (its `src/`, "
+        f"`examples/`, `docs/`). Do not run `using {primary}` or `pkgdir({primary})` "
+        f"just to find it — that loads the package (slow the first time) for a path "
+        f"you already have. Use `pkgdir(<Package>)` in `run_julia` only to locate a "
+        f"different package's source."
+    )
+
+
+def _tool_guide(adapter: SimulatorAdapter) -> str:
     return (
         "You operate in the user's *workspace* (their current working "
         "directory). Two tool families:\n"
@@ -107,7 +169,7 @@ def _tool_guide(adapter: SimulatorAdapter) -> str:
         "from the workspace. Use them to create real implementation files the "
         "user can inspect and edit, and to read installed package source: every "
         "package the environment resolves has its source on disk at the path "
-        f"`pkgdir(<Package>)` returns (e.g. `pkgdir({primary})` in `run_julia`); "
+        "`pkgdir(<Package>)` returns (via `run_julia`); "
         "`read_file`, `glob`, and `grep` that path to study its "
         "`examples/`, `docs/`, and `src/`. Installed source is read-only (the "
         "shared depot); `Pkg.develop` a package to edit it. See the "
@@ -126,12 +188,12 @@ def _tool_guide(adapter: SimulatorAdapter) -> str:
         "draws a figure nobody can see. See the `plotting-basics` skill. Prefer "
         "the simulator's documented native plotters (the per-simulator skill names "
         "them); you may also build a `Figure` inline, and you don't need to return "
-        "it or avoid `display`. Plotting runs on GLMakie like normal Julia: in an "
-        "interactive session `plot_julia` opens a live window the user can "
-        "rotate/zoom/step and also saves a PNG; headless runs just save the PNG. "
-        "Give related plots a stable `slot`: the same slot refreshes one window "
-        "in place, distinct slots get distinct windows, and "
-        "`recapture_plot(slot=...)` / `close_plots(slot=...)` address that window. "
+        "it or avoid `display`. Plotting runs on GLMakie like normal Julia; whether "
+        "the user sees a live window, an in-app panel, or just the saved PNG depends "
+        "on this session and is described below. "
+        "Give related plots a stable `slot`: the same slot refreshes one plot "
+        "in place, distinct slots are distinct plots, and "
+        "`recapture_plot(slot=...)` / `close_plots(slot=...)` address that plot. "
         "Pass `view=true` only when you need to see the result yourself (verify a "
         "fit, diagnose an anomaly), not for every plot. Don't repeat artifact "
         "paths in prose."

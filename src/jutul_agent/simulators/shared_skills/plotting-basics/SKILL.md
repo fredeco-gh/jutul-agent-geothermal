@@ -53,25 +53,33 @@ plot_julia(code="<your plot code>", view=true)   # then reason about what you se
 
 ## How the user sees a plot
 
-In an interactive session `plot_julia` **opens a live Makie window** for the user,
-a real plot window they can rotate, zoom, and step; a PNG is saved too. There's no
-separate "interactive" mode, just plot. (Headless and one-shot runs can't show a
-window and only save the PNG.)
+`plot_julia` shows the figure to the user and saves a PNG record. *How* it is shown
+depends on the interface you are driving (your interface note states it): a live
+Makie window on the desktop they can rotate, zoom, and step; an interactive figure
+pinned in a side panel on the web; or just the saved PNG on a headless/one-shot
+run. You always just call `plot_julia` — you don't manage that difference, and
+there's no separate "interactive" mode.
 
-- `view` is for **you**, not the user — it returns the image to you; it opens
-  nothing for them.
-- Pass `window=false` only to compute/inspect a plot without opening a window.
+- `view` is for **you**, not the user — it returns the image to you; it shows
+  them nothing extra.
+- Pass `window=false` only to compute/inspect a plot without surfacing it.
+- Don't force a backend or window from a plotter's own kwargs (e.g. `gui=true`):
+  that opens a separate desktop window outside `plot_julia`. Just call the plotter
+  normally — the tool already shows the figure the right way for the interface.
 - If the user says they can't see a plot, you probably built it in `run_julia`
   (use `plot_julia`) or set `window=false` — fix that, don't just re-describe it.
 
-## Windows: slots, recapture, close
+## Slots, recapture, close
 
-Each plot opens a window keyed by its `slot`:
+Each plot is keyed by its `slot` — the same `slot` refreshes that view in place
+(reuse it when iterating so you don't spawn a new view per attempt), and distinct
+plots get distinct slots (`slot="reservoir"`, `slot="wells"`) so they stay
+addressable as separate views. This applies on every interface (a desktop window,
+or a tab in the web side panel).
 
-- **Reuse** a window: the same `slot` refreshes that one window in place — use this
-  when iterating so you don't spawn a window per attempt.
-- **Separate** windows: give distinct plots distinct slots (`slot="reservoir"`,
-  `slot="wells"`) so they open as separate windows you can address individually.
+Recapture and close act on **desktop plot windows** (they don't apply on the web,
+where the figure stays live in the browser):
+
 - **Recapture** after the user rotates/zooms/steps a window:
   `recapture_plot(slot="reservoir")` re-renders that plot's figure at its current
   state and returns the image. Omit `slot` for the most recent. It renders the
