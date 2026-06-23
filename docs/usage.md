@@ -22,10 +22,11 @@ Either way, `jutul-agent upgrade` keeps it current (see
 [Upgrading](#upgrading)).
 
 API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
-your environment or a `.env`. jutul-agent also prompts for a missing key and
-saves it to the user-global `.env`. Local models through
-[Ollama](https://ollama.com) need no key. `jutul-agent doctor`
-verifies the whole setup and prints a fix per finding.
+your environment or a `.env`, but you don't have to manage that file: run
+`jutul-agent key <provider>` to set or replace a key (or just `jutul-agent
+key` to see what's set), and the TUI and web UI prompt for a missing key on
+their own. Local models through [Ollama](https://ollama.com) need no key.
+`jutul-agent doctor` verifies the whole setup and prints a fix per finding.
 
 Prefer a clone for hacking on jutul-agent itself? See
 [development](development.md), where you run commands as `uv run jutul-agent`.
@@ -133,6 +134,7 @@ jutul-agent tui
 | Command | Effect |
 |---|---|
 | `/model` | Open the model selector (or `/model <provider:model>`) |
+| `/key` | Show provider key status (or `/key <provider>` to set or replace one) |
 | `/approval-mode` | Set approval policy: `ask`, `workspace`, `auto` |
 | `/add-dir <path>` | Add an extra folder |
 | `/context` | Show context usage: tokens held vs the model's window |

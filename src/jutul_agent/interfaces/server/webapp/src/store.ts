@@ -5,7 +5,7 @@
 
 import { createStore } from "zustand/vanilla";
 
-import type { HistoryEntry, ModelInfo, SimDetails } from "./api";
+import type { CredentialInfo, HistoryEntry, ModelInfo, SimDetails } from "./api";
 import { formatTokens } from "./format";
 import type { InterruptAction, ReplayMessage, ServerMessage } from "./protocol";
 import { HISTORY_CHANGED, SIDE_OUTPUT_TYPES } from "./protocol";
@@ -55,6 +55,20 @@ export interface PendingInterrupt {
   allowlist: string[];
 }
 
+/** A provider whose key the server is waiting on (a blocking key prompt). */
+export interface CredentialPrompt {
+  provider: string;
+  label: string;
+  env_var: string;
+}
+
+/** State of the API-keys modal: open in "manage" mode (required null) or because a
+ *  specific provider's key is needed before the session/model switch can proceed. */
+export interface ApiKeysModal {
+  open: boolean;
+  required: CredentialPrompt | null;
+}
+
 export interface SessionState {
   // identity / config
   sessionId: string | null;
@@ -90,6 +104,9 @@ export interface SessionState {
   // history + retry
   history: HistoryEntry[];
   lastPrompt: string;
+  // provider API keys (status + the key-prompt modal)
+  credentials: CredentialInfo[];
+  apiKeys: ApiKeysModal;
 }
 
 export interface SessionActions {
@@ -102,6 +119,9 @@ export interface SessionActions {
   setContextWindow: (window: number | null) => void;
   setHistory: (history: HistoryEntry[]) => void;
   setWarming: (on: boolean) => void;
+  setCredentials: (credentials: CredentialInfo[]) => void;
+  openApiKeys: (required: CredentialPrompt | null) => void;
+  closeApiKeys: () => void;
   reset: () => void;
   // composer-driven
   addUser: (text: string) => void;
@@ -147,6 +167,8 @@ const initialState: SessionState = {
   history: [],
   lastPrompt: "",
   bottomPin: 0,
+  credentials: [],
+  apiKeys: { open: false, required: null },
 };
 
 function viewIdOf(msg: { slot?: string | null; url: string }): string {
@@ -454,6 +476,9 @@ export function createSessionStore() {
         set((s) => ({ contextWindow: window, ...usageLabels(s.inputTokens, window) })),
       setHistory: (history) => set({ history }),
       setWarming: (on) => set({ warming: on }),
+      setCredentials: (credentials) => set({ credentials }),
+      openApiKeys: (required) => set({ apiKeys: { open: true, required } }),
+      closeApiKeys: () => set({ apiKeys: { open: false, required: null } }),
 
       reset: () =>
         set((s) => ({
@@ -465,6 +490,8 @@ export function createSessionStore() {
           models: s.models,
           contextWindow: s.contextWindow,
           history: s.history,
+          // key status is account-wide, not per-session; keep it across a reset
+          credentials: s.credentials,
           // a reconnect resets the thread mid-recovery; keep the bar until the socket
           // reopens (the new socket's onopen clears it)
           reconnecting: s.reconnecting,

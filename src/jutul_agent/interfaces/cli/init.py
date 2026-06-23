@@ -213,9 +213,11 @@ def _maybe_prompt_for_provider_key(config: WorkspaceConfig) -> None:
     info = provider_info(model_id)
     label = info.label if info else model_id
     if not sys.stdin.isatty():
+        provider = model_id.partition(":")[0]
         print(
-            f"\nNote: {label} needs {env_var}, which isn't set. Add it to your shell, "
-            "a .env, or launch `jutul-agent` and pick a model to be prompted for it.",
+            f"\nNote: {label} needs {env_var}, which isn't set. Set it with "
+            f"`jutul-agent key {provider}`, add it to your shell or a .env, or launch "
+            "`jutul-agent` and pick a model to be prompted for it.",
             file=sys.stderr,
         )
         return
@@ -229,7 +231,10 @@ def _maybe_prompt_for_provider_key(config: WorkspaceConfig) -> None:
         print()
         return
     if not value:
-        print("Skipped. Set it later via the model selector, a .env, or your shell.")
+        print(
+            "Skipped. Set it later with `jutul-agent key <provider>`, the model selector, "
+            "a .env, or your shell."
+        )
         return
     path = store_credential(env_var, value)
     print(f"Saved {env_var} to {path}.")

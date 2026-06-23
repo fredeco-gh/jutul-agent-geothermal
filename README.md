@@ -66,9 +66,9 @@ uv tool install git+https://github.com/SINTEF-agentlab/jutul-agent
 Upgrade any time with `jutul-agent upgrade`.
 
 API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
-your environment or a `.env`. jutul-agent also prompts for a missing key and
-saves it. Local models through [Ollama](https://ollama.com) need no key.
-Details in the
+your environment or a `.env`, or just run `jutul-agent key <provider>` to save
+one (the TUI and web UI also prompt for a missing key). Local models through
+[Ollama](https://ollama.com) need no key. Details in the
 [installation and usage guide](https://sintef-agentlab.github.io/jutul-agent/usage/).
 
 ## First run

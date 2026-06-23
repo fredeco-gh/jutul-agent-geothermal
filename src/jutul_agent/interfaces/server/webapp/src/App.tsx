@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ApiKeys } from "./components/ApiKeys";
 import { Canvas } from "./components/Canvas";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
@@ -87,6 +88,7 @@ export function App() {
           <Composer />
         </div>
         <Canvas />
+        <ApiKeys />
       </div>
     </SessionProvider>
   );

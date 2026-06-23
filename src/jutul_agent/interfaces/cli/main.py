@@ -10,6 +10,7 @@ Dispatched on the first argument. The interface is chosen explicitly — bare
 Setup and utilities:
 
 - ``jutul-agent init|setup [--sim <name>]``  bootstrap the current workspace.
+- ``jutul-agent key [<provider>]``           view or set provider API keys.
 - ``jutul-agent doctor``                     diagnose the workspace setup.
 - ``jutul-agent upgrade``                    update the install to the latest.
 - ``jutul-agent transcript [<id>]``         render a session trace.
@@ -59,6 +60,7 @@ INTERFACE_CHOOSER = """jutul-agent — pick an interface:
   jutul-agent run "<prompt>"   Run a single turn headlessly and print the result.
 
 Set up a folder first:  jutul-agent init --sim <name>
+Set an API key:         jutul-agent key <provider>
 More commands:           doctor, upgrade, transcript, sessions, review, eval  (add -h for options)
 """
 
@@ -115,6 +117,12 @@ def main(argv: list[str] | None = None) -> int:
         args = init_cmd.build_parser(prog=f"jutul-agent {sub}").parse_args(argv[1:])
         apply_workspace_flags(args)
         return init_cmd.run(args)
+
+    if argv and argv[0] in ("key", "keys", "auth"):
+        from jutul_agent.interfaces.cli import key as key_cmd
+
+        args = key_cmd.build_parser(prog=f"jutul-agent {argv[0]}").parse_args(argv[1:])
+        return key_cmd.run(args)
 
     if argv and argv[0] == "doctor":
         args = doctor_cmd.build_parser().parse_args(argv[1:])

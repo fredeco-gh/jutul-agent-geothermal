@@ -104,6 +104,21 @@ Each finding comes with a fix.
 |---|---|
 | `--sim <name>` | Simulator to check against (default: workspace config / auto-detect) |
 
+## jutul-agent key
+
+View and set the provider API keys jutul-agent saves (in the global `.env`).
+Run it from anywhere; it needs no workspace or Julia. This is the way to add a
+key on a pip-only install, or to replace a wrong or expired one.
+
+```sh
+jutul-agent key                # list which keys are set, and where each comes from
+jutul-agent key openai         # prompt for the OpenAI key and save it (hidden input)
+jutul-agent key --show         # list status only, never prompt
+```
+
+The status flags a key that the process environment or a project `.env`
+overrides, since those take precedence over the saved one.
+
 ## jutul-agent upgrade
 
 Upgrade jutul-agent to the latest version, doing the right thing for how it

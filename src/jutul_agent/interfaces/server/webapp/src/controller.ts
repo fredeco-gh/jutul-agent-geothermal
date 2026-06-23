@@ -5,9 +5,9 @@
 
 import type { StoreApi } from "zustand/vanilla";
 
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import { HISTORY_CHANGED, type ServerMessage } from "./protocol";
-import type { SessionStore } from "./store";
+import type { CredentialPrompt, SessionStore } from "./store";
 import { Transport } from "./transport";
 
 export interface SlashCommand {
@@ -39,6 +39,18 @@ const RESTARTED_NOTE =
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The credential prompt carried by a `credential_required` API error, or null. */
+function credentialRequiredOf(e: unknown): CredentialPrompt | null {
+  if (!(e instanceof ApiError) || !e.detail || typeof e.detail !== "object") return null;
+  const d = e.detail as Record<string, unknown>;
+  if (d.error !== "credential_required") return null;
+  return {
+    provider: String(d.provider ?? ""),
+    label: String(d.label ?? ""),
+    env_var: String(d.env_var ?? ""),
+  };
+}
+
 export class Controller {
   readonly transport: Transport;
   private notifyAsked = false;
@@ -56,6 +68,9 @@ export class Controller {
   // Bumped per reenter so a superseding one (e.g. a sidebar switch during a reconnect)
   // makes the older flow bail instead of the two clobbering each other's socket.
   private reenterSeq = 0;
+  // What to do once a missing API key is saved: re-run the action the key blocked
+  // (start the session, or apply the model switch). Cleared when the modal closes.
+  private keyRetry: (() => void) | null = null;
 
   constructor(private store: StoreApi<SessionStore>) {
     this.transport = new Transport(
@@ -80,17 +95,26 @@ export class Controller {
   // --- startup --------------------------------------------------------------
 
   async init(): Promise<void> {
-    const [sims, models] = await Promise.all([api.simulators(), api.models()]);
+    const [sims, models, credentials] = await Promise.all([
+      api.simulators(),
+      api.models(),
+      api.credentials(),
+    ]);
     const names = sims.simulators || [];
     this.store.setState({
       sim: sims.default || names[0] || "jutuldarcy",
       simDetails: sims.details || {},
       model: models.default ?? null,
       models: models.models || [],
+      credentials,
     });
     this.refreshHistory();
     this.refreshContextWindow();
     await this.startSession();
+  }
+
+  async refreshCredentials(): Promise<void> {
+    this.s.setCredentials(await api.credentials());
   }
 
   async refreshContextWindow(): Promise<void> {
@@ -113,7 +137,16 @@ export class Controller {
       this.store.setState({ meta: this.meta() });
       this.transport.open(session_id);
       this.flushQueuedPrompt();
-    } catch {
+    } catch (e) {
+      const required = credentialRequiredOf(e);
+      if (required) {
+        // The model has no API key yet: prompt for it, then start the session. Any
+        // queued prompt is kept so it sends once the key lands and the socket opens.
+        this.store.setState({ meta: "waiting for an API key", busy: false, working: false });
+        this.keyRetry = () => void this.startSession();
+        this.s.openApiKeys(required);
+        return;
+      }
       this.store.setState({ meta: "could not start a session" });
       if (this.queuedPrompt) {
         this.queuedPrompt = null;
@@ -137,6 +170,10 @@ export class Controller {
       if (!msg.cancelled) this.notifyDone("The agent finished your turn.");
     } else if (msg.type === "ui" && msg.action === HISTORY_CHANGED) {
       this.refreshHistory();
+    } else if (msg.type === "credential_required") {
+      // The server refused a model switch for want of a key (the UI usually catches
+      // this before sending; this covers any path that slips through). Prompt for it.
+      this.s.openApiKeys({ provider: msg.provider, label: msg.label, env_var: msg.env_var });
     }
   }
 
@@ -236,6 +273,14 @@ export class Controller {
       this.s.addSysNote("Finish the current turn before changing the model.", "warn");
       return;
     }
+    // Prompt for a missing key before switching, so the switch doesn't bounce off
+    // the server's guard. After the key is saved, retry this same switch.
+    const required = this.credentialMissingFor(id);
+    if (required) {
+      this.keyRetry = () => this.setModel(id);
+      this.s.openApiKeys(required);
+      return;
+    }
     // Apply to the UI only if the command actually went out, so a send that fails
     // (socket down) doesn't leave the UI showing a model the server never switched to.
     if (!this.sendCommand("set_model", id)) return;
@@ -243,6 +288,41 @@ export class Controller {
     this.store.setState({ meta: this.meta() });
     this.s.addSysNote(`Switched the model to ${id}.`);
     this.refreshContextWindow();
+  }
+
+  // --- API keys -------------------------------------------------------------
+
+  /** The provider whose key is missing for `id`, or null if the model needs none
+   *  (a local model, or an unknown provider the server guard will handle). */
+  private credentialMissingFor(id: string): CredentialPrompt | null {
+    const provider = this.s.models.find((m) => m.id === id)?.provider ?? id.split(":")[0];
+    const cred = this.s.credentials.find((c) => c.provider === provider);
+    if (!cred || cred.is_set) return null;
+    return { provider: cred.provider, label: cred.label, env_var: cred.env_var };
+  }
+
+  /** Open the keys modal in "manage" mode (change a key at any time). */
+  openKeys(): void {
+    this.s.openApiKeys(null);
+  }
+
+  /** Save a provider's key. Returns an error message on failure, else null. */
+  async submitCredential(provider: string, value: string): Promise<string | null> {
+    try {
+      await api.setCredential(provider, value);
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+    await this.refreshCredentials();
+    return null;
+  }
+
+  /** Close the keys modal. With `retry`, re-run the action the key was blocking. */
+  closeKeys(retry: boolean): void {
+    const resume = this.keyRetry;
+    this.keyRetry = null;
+    this.s.closeApiKeys();
+    if (retry) resume?.();
   }
 
   setApproval(mode: string): void {
