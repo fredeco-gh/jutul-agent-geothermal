@@ -422,3 +422,126 @@
     width: 100%;
   }
 }
+
+/* --- Modal dialog (the API-keys prompt) --------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #00000055;
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  padding: 1rem;
+}
+
+.modal {
+  width: 540px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.3rem 1.3rem;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.api-keys-banner {
+  margin: 0.4rem 0 0.8rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.api-keys-sub {
+  margin: 0.3rem 0 0.9rem;
+  color: var(--muted);
+}
+
+.api-keys-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.api-keys-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.api-keys-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.api-keys-name {
+  font-weight: 600;
+}
+.api-keys-var {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.api-keys-status {
+  font-size: 0.78rem;
+  margin-left: auto;
+}
+.api-keys-status.ok {
+  color: var(--accent);
+}
+.api-keys-status.missing {
+  color: var(--muted);
+}
+.api-keys-status.warn {
+  color: #b45309;
+}
+
+.api-keys-entry {
+  display: flex;
+  gap: 0.5rem;
+}
+.api-keys-entry input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+}
+.api-keys-entry input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.api-keys-entry .btn:disabled,
+.modal-foot .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.api-keys-error {
+  margin: 0.8rem 0 0;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}

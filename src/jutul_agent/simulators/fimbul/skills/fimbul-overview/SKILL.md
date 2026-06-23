@@ -26,7 +26,7 @@ that returns a `JutulCase` for a named example geometry:
 ```julia
 using Fimbul, JutulDarcy
 case = egg_geothermal_doublet()        # case object
-result = simulate_reservoir(case)      # run it
+result = simulate_reservoir(case; info_level = 1)  # run it; info_level = 2 if convergence struggles
 T = result.states[end][:Temperature]   # final-state temperature field
 ```
 

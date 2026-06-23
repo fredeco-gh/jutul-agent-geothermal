@@ -935,6 +935,52 @@ class TUIApp(App[None]):
         await self._auto_approve_pending_if_allowed()
         self._refresh_prompt_guide()
 
+    async def _command_key(self, arg: str) -> None:
+        """View provider API keys, or set one (``/key openai``).
+
+        Setting a key here works even when the provider's key is already present,
+        so it is the way to replace a wrong or expired one without leaving the app.
+        """
+        from jutul_agent.credentials import key_status, provider_by_name, user_env_path
+
+        if not arg:
+            lines = [f"API keys are saved in {user_env_path()}", ""]
+            for st in key_status():
+                if not st.is_set:
+                    detail = "not set"
+                elif st.source == "environment":
+                    detail = f"set in your environment ({st.masked})"
+                elif st.shadowed:
+                    detail = f"saved, overridden by your environment ({st.masked})"
+                else:
+                    detail = f"saved ({st.masked})"
+                lines.append(f"  {st.label:<10} {st.env_var:<20} {detail}")
+            lines.append("")
+            lines.append("Set or replace one with `/key <provider>`, e.g. `/key openai`.")
+            await self._note("\n".join(lines))
+            return
+
+        info = provider_by_name(arg)
+        if info is None or info.key_env_var is None:
+            from jutul_agent.credentials import key_providers
+
+            known = ", ".join(p.name for p in key_providers())
+            await self._note(f"unknown provider `{arg}`. Known: {known}.")
+            return
+
+        env_var = info.key_env_var
+
+        def _on_key(key: str | None) -> None:
+            if not key:
+                self.run_worker(self._note(f"`{info.label}` key unchanged."), name="key-note")
+                return
+            from jutul_agent.credentials import store_credential
+
+            store_credential(env_var, key)
+            self.run_worker(self._note(f"Saved {env_var} to {user_env_path()}."), name="key-note")
+
+        self.push_screen(ApiKeyModal(env_var=env_var, provider_label=info.label), _on_key)
+
     async def _note(self, text: str) -> None:
         await self._log.mount(MessageBlock("System", "system", text))
         self._jump_to_latest()

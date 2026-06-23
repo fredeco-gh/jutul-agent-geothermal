@@ -59,6 +59,7 @@ export type ServerMessage =
     }
   | { type: "notice"; text: string }
   | { type: "ui"; action: string; payload: Record<string, unknown> }
+  | { type: "credential_required"; provider: string; label: string; env_var: string }
   | { type: "error"; message: string };
 
 export type ServerMessageType = ServerMessage["type"];

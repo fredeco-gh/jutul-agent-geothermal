@@ -2,10 +2,11 @@
 // (model · session), the warming hint, the context-usage figure, and a "Views"
 // button to reopen the canvas after it was closed.
 
-import { useSel } from "../context";
+import { useController, useSel } from "../context";
 import { MenuIcon, ViewsIcon } from "../icons";
 
 export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+  const controller = useController();
   const sim = useSel((s) => s.sim);
   const details = useSel((s) => s.simDetails);
   const meta = useSel((s) => s.meta);
@@ -48,6 +49,13 @@ export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             <ViewsIcon /> Views <span className="count">{viewCount}</span>
           </button>
         ) : null}
+        <button
+          className="ghost keys-btn"
+          title="Set or change provider API keys"
+          onClick={() => controller.openKeys()}
+        >
+          Keys
+        </button>
       </div>
     </header>
   );

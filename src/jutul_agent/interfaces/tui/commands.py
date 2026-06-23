@@ -56,6 +56,11 @@ BASE_COMMANDS: tuple[SlashCommandSpec, ...] = (
         "set approval policy for this session",
         "[ask|workspace|auto]",
     ),
+    SlashCommandSpec(
+        "/key",
+        "view provider API keys, or set one (e.g. /key openai)",
+        "[provider]",
+    ),
     SlashCommandSpec("/quit", "exit the TUI"),
 )
 

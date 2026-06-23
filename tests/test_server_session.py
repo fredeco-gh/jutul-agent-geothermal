@@ -59,6 +59,18 @@ def _drain_turn(ws: Any) -> list[dict]:
             return events
 
 
+@pytest.fixture(autouse=True)
+def _provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Placeholder keys so the create-session credential guard doesn't depend on the
+    host environment. These tests drive fake agents, never a real provider; a session
+    creates with the default model (openai), so without a key the guard would 400
+    here on CI (no keys) but pass on a dev box. Tests of the missing-key path clear
+    the relevant key themselves.
+    """
+    for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(var, "test-key")
+
+
 def test_models_endpoint(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         body = client.get("/models").json()
@@ -77,6 +89,65 @@ def test_models_endpoint_reports_the_launch_default_model(tmp_path: Path) -> Non
         assert c.get("/models").json()["default"] == "provider:custom"
     with TestClient(create_app(_manager(echo_agent, tmp_path))) as c:
         assert c.get("/models").json()["default"] == DEFAULT_MODEL
+
+
+def test_credentials_endpoint_lists_providers(tmp_path: Path) -> None:
+    with _client(echo_agent, tmp_path) as client:
+        body = client.get("/credentials").json()
+    assert "path" in body
+    providers = {p["provider"]: p for p in body["providers"]}
+    assert {"openai", "anthropic", "google_genai"} <= set(providers)
+    # The placeholder keys read as set; only masked previews cross the wire.
+    assert providers["openai"]["is_set"] and providers["openai"]["masked"]
+
+
+def test_post_credentials_saves_and_is_reflected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with _client(echo_agent, tmp_path) as client:
+        before = {p["provider"]: p for p in client.get("/credentials").json()["providers"]}
+        assert not before["anthropic"]["is_set"]
+        ok = client.post("/credentials", json={"provider": "anthropic", "value": "sk-newkey-1234"})
+        assert ok.status_code == 200 and ok.json()["env_var"] == "ANTHROPIC_API_KEY"
+        after = {p["provider"]: p for p in client.get("/credentials").json()["providers"]}
+        assert after["anthropic"]["is_set"] and after["anthropic"]["source"] == "file"
+        # Unknown providers are rejected, not written.
+        assert (
+            client.post("/credentials", json={"provider": "bogus", "value": "x"}).status_code == 400
+        )
+
+
+def test_create_session_requires_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A new session on a model whose key is missing is refused with a structured error
+    # (the UI shows a key prompt on it), before any kernel is stood up.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = create_app(
+        _manager(echo_agent, tmp_path), default_sim="demo", default_model="openai:gpt-5.4"
+    )
+    with TestClient(app) as client:
+        resp = client.post("/sessions", json={})
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert detail["error"] == "credential_required" and detail["env_var"] == "OPENAI_API_KEY"
+        # A keyless local model still creates fine.
+        assert client.post("/sessions", json={"model": "ollama:qwen3"}).status_code == 200
+
+
+def test_set_model_prompts_for_missing_key_over_ws(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "demo", "model": "ollama:qwen3"}).json()[
+            "session_id"
+        ]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "command", "command": "set_model", "arg": "openai:gpt-5.4"})
+            msg = ws.receive_json()
+    assert msg["type"] == "credential_required" and msg["env_var"] == "OPENAI_API_KEY"
 
 
 def test_simulators_endpoint(tmp_path: Path) -> None:

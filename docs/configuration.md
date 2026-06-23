@@ -35,9 +35,25 @@ Set it from the TUI model selector with `Ctrl+A` (save for all workspaces).
 
 Keys are read from the process environment, a `.env` in the working
 directory, and the user-global `<state home>/.env`, in that order of
-precedence. The global file is what the interactive key prompts write to
-(`init` and the model selector), with owner-only permissions. Recognized:
+precedence. The global file is what the interactive key prompts write to,
+with owner-only permissions. Recognized:
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`. Ollama needs none.
+
+You never have to find or edit that file by hand. Set or change a key in
+whichever interface you use:
+
+- **Command line:** `jutul-agent key` lists which provider keys are set (and
+  where each comes from); `jutul-agent key <provider>` (e.g. `jutul-agent key
+  openai`) prompts for a key and saves it. This is the way to replace a wrong
+  or expired key, and it needs no checkout, workspace, or Julia.
+- **Terminal UI:** `/key` shows the same status; `/key <provider>` opens a
+  prompt to set or replace one.
+- **Web UI:** if the selected model has no key, a dialog asks for it before the
+  session starts; the top-bar **Keys** button opens the same dialog any time.
+
+Because the process environment and a project `.env` take precedence over the
+saved file, a key set there shadows the saved one. The status views flag this
+so a stale shell variable can't silently override a key you just changed.
 
 ## Environment variables
 

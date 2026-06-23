@@ -32,6 +32,7 @@ from jutul_agent.trace.messages import content_to_str
 
 __all__ = [
     "artifact_to_wire",
+    "credential_required_to_wire",
     "interrupt_to_wire",
     "notice_to_wire",
     "to_wire",
@@ -40,6 +41,23 @@ __all__ = [
     "usage_to_wire",
     "viz_to_wire",
 ]
+
+
+def credential_required_to_wire(*, provider: str, label: str, env_var: str) -> dict[str, Any]:
+    """A model switch that needs a provider key the server doesn't have yet.
+
+    The front end shows a key prompt, POSTs the key to ``/credentials``, then
+    retries the switch. The same shape is used as the ``detail`` of the HTTP 400
+    that ``POST /sessions`` raises when the new session's model has no key.
+    """
+
+    return {
+        "type": "credential_required",
+        "error": "credential_required",
+        "provider": provider,
+        "label": label,
+        "env_var": env_var,
+    }
 
 
 def to_wire(event: Any) -> dict[str, Any] | None:

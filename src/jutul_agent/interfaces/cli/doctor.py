@@ -165,8 +165,8 @@ def _check_model_and_key(report: _Report, model_id: str) -> None:
             FAIL,
             "Provider API key",
             f"{env_var} not set for {label}",
-            "Add it to your shell or .env, or launch the TUI and pick a model "
-            "(you'll be prompted to enter and save the key).",
+            f"Set it with `jutul-agent key {provider_of(model_id) or '<provider>'}`, add it to "
+            "your shell or .env, or pick a model in the app to be prompted for it.",
         )
 
 

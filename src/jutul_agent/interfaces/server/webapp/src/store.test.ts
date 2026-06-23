@@ -213,4 +213,30 @@ describe("reset", () => {
     expect(state().sim).toBe("battmo");
     expect(state().model).toBe("anthropic:claude");
   });
+
+  it("keeps the provider key status across a reset (it is account-wide)", () => {
+    state().setCredentials([
+      {
+        provider: "openai",
+        label: "OpenAI",
+        env_var: "OPENAI_API_KEY",
+        is_set: true,
+        masked: "sk-***z",
+        source: "file",
+        shadowed: false,
+      },
+    ]);
+    state().reset();
+    expect(state().credentials).toHaveLength(1);
+  });
+});
+
+describe("api-keys modal", () => {
+  it("opens with a required provider and closes back to empty", () => {
+    const required = { provider: "openai", label: "OpenAI", env_var: "OPENAI_API_KEY" };
+    state().openApiKeys(required);
+    expect(state().apiKeys).toEqual({ open: true, required });
+    state().closeApiKeys();
+    expect(state().apiKeys).toEqual({ open: false, required: null });
+  });
 });

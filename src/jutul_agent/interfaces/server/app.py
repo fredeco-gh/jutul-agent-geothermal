@@ -92,6 +92,13 @@ class ResumeSessionRequest(BaseModel):
     workspace: str | None = None
 
 
+class CredentialRequest(BaseModel):
+    # ``provider`` is a catalog name, label, or model id; the server resolves it
+    # to the provider's key variable so the UI never sends a raw env-var name.
+    provider: str
+    value: str
+
+
 def _request_extensions(tools: list[HttpToolSpec] | None) -> list:
     """Turn declared HTTP tool specs into a host-app capability, if any were sent."""
     if not tools:
@@ -175,6 +182,47 @@ def create_app(
 
         return {"model": model or DEFAULT_MODEL, "window": context_window(model or DEFAULT_MODEL)}
 
+    @app.get("/credentials")
+    def list_credentials() -> dict[str, Any]:
+        """Which provider keys are configured, so the UI can prompt for a missing one.
+
+        The masked previews are safe to show (a few characters, the rest hidden)
+        and let the user confirm which key is saved; full secrets never cross the
+        wire. ``shadowed`` flags a saved key that an environment value overrides.
+        """
+        from jutul_agent.credentials import key_status, user_env_path
+
+        return {
+            "path": str(user_env_path()),
+            "providers": [
+                {
+                    "provider": st.provider,
+                    "label": st.label,
+                    "env_var": st.env_var,
+                    "is_set": st.is_set,
+                    "masked": st.masked,
+                    "source": st.source,
+                    "shadowed": st.shadowed,
+                }
+                for st in key_status()
+            ],
+        }
+
+    @app.post("/credentials")
+    def set_credential(req: CredentialRequest) -> dict[str, Any]:
+        """Save a provider's API key to the global ``.env`` and use it immediately."""
+        from jutul_agent.credentials import store_credential_for_provider
+
+        try:
+            info, path = store_credential_for_provider(req.provider, req.value)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"unknown provider {req.provider!r}"
+            ) from exc
+        except ValueError as exc:  # empty key
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"provider": info.name, "env_var": info.key_env_var, "path": str(path)}
+
     @app.get("/simulators")
     def list_simulators() -> dict[str, Any]:
         from jutul_agent.simulators import registry
@@ -211,6 +259,30 @@ def create_app(
                 ),
             )
         return default_sim
+
+    def _require_credential(model: str | None) -> None:
+        """Raise a structured 400 if ``model``'s provider needs a key we don't have.
+
+        Resolves the same effective model a new session would use (the request's,
+        else the server default, else the catalog default), so the guard matches
+        what the kernel would actually load.
+        """
+        from jutul_agent.credentials import missing_credential
+        from jutul_agent.models import DEFAULT_MODEL, provider_info
+
+        effective = model or DEFAULT_MODEL
+        env_var = missing_credential(effective)
+        if env_var is None:
+            return
+        info = provider_info(effective)
+        raise HTTPException(
+            status_code=400,
+            detail=protocol.credential_required_to_wire(
+                provider=info.name if info else "",
+                label=info.label if info else effective,
+                env_var=env_var,
+            ),
+        )
 
     def _workspace_for(requested: str | None) -> Path | None:
         """The folder a session runs in: an explicit request, else the server's folder.
@@ -284,6 +356,9 @@ def create_app(
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
         sim = _bound_sim(req.sim)
+        # Refuse before standing up the kernel if the model has no key: the UI
+        # shows a key prompt on this structured error, then retries the create.
+        _require_credential(req.model or default_model)
         try:
             host = await manager.create(
                 sim=sim,
@@ -822,6 +897,23 @@ class _StreamState:
         arg = str(message.get("arg") or "")
         try:
             if command == "set_model":
+                # Mirror the TUI: a model whose key is missing prompts for it
+                # instead of failing the switch. The UI saves the key, then retries.
+                from jutul_agent.credentials import missing_credential
+                from jutul_agent.models import provider_info
+
+                env_var = missing_credential(arg)
+                if env_var is not None:
+                    info = provider_info(arg)
+                    await _safe_send(
+                        self._ws,
+                        protocol.credential_required_to_wire(
+                            provider=info.name if info else "",
+                            label=info.label if info else arg,
+                            env_var=env_var,
+                        ),
+                    )
+                    return
                 self._host.reconfigure(model=arg)
             elif command == "set_approval":
                 self._host.reconfigure(approval_mode=arg)

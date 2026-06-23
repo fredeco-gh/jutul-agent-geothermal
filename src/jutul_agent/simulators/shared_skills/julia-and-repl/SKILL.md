@@ -33,6 +33,14 @@ ordinary shell work (grep, find, ls, git, …).
 Construct the smallest piece first, evaluate it, look at the result, then
 extend. Do not dump a full script into the REPL and hope.
 
+## Reuse expensive results
+
+Run a simulation (or any expensive call) as the last statement of its own
+`run_julia` call and bind it to a name, so the result persists in the REPL.
+Read or post-process it in a separate call. If that later step errors, fix the
+read and reuse the saved result; do not re-run a simulation that already
+succeeded.
+
 ## Live introspection beats memory
 
 - `@doc f` - docstring.

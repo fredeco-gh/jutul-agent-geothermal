@@ -5,6 +5,10 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Fimbul = "cac51d78-27de-4708-bd2b-bd13a82f652b"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
+# HYPRE backs JutulDarcy's CPR pressure preconditioner. It should arrive
+# transitively via JutulDarcy, but the Fimbul stack has resolved without it, so
+# list it directly to guarantee it is installed and loadable.
+HYPRE = "b5ffcf37-a2bd-41ab-a3da-4bd9bc8ad771"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 LayeredLayouts = "f4a74d36-062a-4d48-97cd-1356bad1de4e"
 NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
