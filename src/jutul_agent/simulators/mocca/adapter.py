@@ -31,4 +31,10 @@ MOCCA = SimulatorAdapter(
         'package at `joinpath(pkgdir(Mocca), "..", "models", "json")`.'
     ),
     review_hints=("Adsorption/separation: mole fractions, purities and recoveries lie in 0..1."),
+    example_prompts=(
+        "Run the direct column breakthrough example and plot the outlet composition over time.",
+        "Simulate a 4-stage VSA cycle and report the CO2 purity and recovery.",
+        "Walk me through setting up a custom cyclic VSA process.",
+        "Compare breakthrough curves for two different feed compositions.",
+    ),
 )

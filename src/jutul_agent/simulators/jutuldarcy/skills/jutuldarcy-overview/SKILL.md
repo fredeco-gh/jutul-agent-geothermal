@@ -56,12 +56,12 @@ you intended; the printed hints name the likely fix (e.g.
 ## Finding what you need
 
 Example layout and APIs change between versions, so find them on disk rather
-than guessing. Get the installed source path with `pkgdir(JutulDarcy)` in
-`run_julia` (it is read-only depot source), then browse it with the file tools
-(see the `workspace-and-source` skill):
+than guessing. JutulDarcy's source path is given to you up front (read-only
+depot source); browse it directly with the file tools (see the
+`workspace-and-source` skill):
 
 ```text
-# pkgdir(JutulDarcy) -> /.../JutulDarcy/<hash>
+# JutulDarcy source path is in your system prompt -> /.../JutulDarcy/<hash>
 glob("/.../JutulDarcy/examples/**/*.jl")                 # discover layout
 grep("setup_well", path="/.../JutulDarcy/src")           # find an API
 read_file("/.../JutulDarcy/examples/introduction/wells_intro.jl")

@@ -32,12 +32,11 @@ A simulation is four parts you compose in order:
 
 ## Finding what you need
 
-BattMo's source is read-only depot source at the path `pkgdir(BattMo)` returns;
-get it in `run_julia`, then browse it with the file tools (see the
-`workspace-and-source` skill):
+BattMo's source is read-only depot source; its path is given to you up front, so
+browse it directly with the file tools (see the `workspace-and-source` skill):
 
 ```text
-# pkgdir(BattMo) -> /.../BattMo/<hash>
+# BattMo source path is in your system prompt -> /.../BattMo/<hash>
 glob("/.../BattMo/examples/beginner_tutorials/*.jl")    # best starting point
 grep("load_cell_parameters", path="/.../BattMo/src")    # locate APIs and uses
 read_file("/.../BattMo/examples/beginner_tutorials/2_run_a_simulation.jl")
