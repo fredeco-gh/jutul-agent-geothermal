@@ -38,13 +38,21 @@ def _slugify_title(title: str) -> str:
     return slug
 
 
+def truncate_title(text: str, max_chars: int = _TITLE_MAX_CHARS) -> str:
+    """Trim ``text`` to at most ``max_chars`` on a word boundary, with an ellipsis
+    (counted within the limit) when it had to be cut."""
+    if len(text) <= max_chars:
+        return text
+    # Leave room for the ellipsis so the result never exceeds max_chars, even when
+    # the cut falls mid-word (no space to break on).
+    head = text[: max_chars - 1]
+    return (head.rsplit(" ", 1)[0] or head) + "…"
+
+
 def derive_session_title(prompt: str) -> str:
     """A short human-readable title from the session's first prompt."""
     first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
-    first_line = re.sub(r"\s+", " ", first_line)
-    if len(first_line) > _TITLE_MAX_CHARS:
-        first_line = first_line[:_TITLE_MAX_CHARS].rsplit(" ", 1)[0] + "…"
-    return first_line
+    return truncate_title(re.sub(r"\s+", " ", first_line))
 
 
 def read_session_title(state_dir: Path) -> str | None:
@@ -152,14 +160,37 @@ def write_last_session(session_id: str, *, state_root: Path | None = None) -> No
 def _existing_output_dir(session_id: str) -> Path | None:
     """The session's existing output dir, accounting for an adopted title slug.
 
-    ``adopt_title`` renames ``sessions/<sid>/`` to ``sessions/<sid>-<slug>/``,
-    so a resumed session has to find its folder by prefix.
+    ``adopt_title`` renames ``sessions/<sid>/`` to ``sessions/<sid>-<slug>/``, so a
+    resumed session finds its folder by prefix. Both names can end up on disk (a
+    stray empty ``<sid>/`` next to the real ``<sid>-<slug>/``); prefer the one that
+    actually holds the session's output — its ``artifacts/`` for a plotting session,
+    else any non-empty dir (a chat-only session keeps ``report.html`` at the root,
+    not under ``artifacts/``) — so a resumed plot or report still resolves rather
+    than the empty stray dir winning just because it sorts first.
     """
     base = session_output_dir(session_id)
+    candidates: list[Path] = []
     if base.is_dir():
-        return base
-    matches = sorted(base.parent.glob(base.name + "-*")) if base.parent.is_dir() else []
-    return next((m for m in matches if m.is_dir()), None)
+        candidates.append(base)
+    if base.parent.is_dir():
+        candidates += [m for m in sorted(base.parent.glob(base.name + "-*")) if m.is_dir()]
+    if not candidates:
+        return None
+
+    def _has_artifacts(d: Path) -> bool:
+        art = d / "artifacts"
+        return art.is_dir() and any(art.iterdir())
+
+    def _has_output(d: Path) -> bool:
+        # Real output: a file at the root (e.g. report.html) or a non-empty subdir.
+        # A stray dir whose only entry is an empty ``artifacts/`` must not count.
+        return any(e.is_file() or (e.is_dir() and any(e.iterdir())) for e in d.iterdir())
+
+    return (
+        next((c for c in candidates if _has_artifacts(c)), None)
+        or next((c for c in candidates if _has_output(c)), None)
+        or candidates[0]
+    )
 
 
 def _ensure_jutul_agent_gitignore(output_dir: Path) -> None:
@@ -336,6 +367,23 @@ class Session:
         except OSError:
             return
         self.output_dir = target
+
+    def retitle(self, title: str) -> None:
+        """Replace the session title after it was first adopted (e.g. an LLM one).
+
+        Unlike ``adopt_title`` this overwrites an existing title: it updates the
+        title file that session listings read and records a trace event. The
+        output-directory slug is deliberately left as the first-prompt one, so
+        nothing on disk has to be renamed (and no open handles are disturbed);
+        only the displayed name changes. Best-effort and a no-op for empty input.
+        """
+        title = re.sub(r"\s+", " ", title).strip()
+        if not title or title == self.title:
+            return
+        self.title = title
+        with contextlib.suppress(OSError):
+            (self.state_dir / TITLE_FILENAME).write_text(title + "\n", encoding="utf-8")
+        self.trace.append("session_title", {"session_id": self.session_id, "title": title})
 
     def note_report(self, report_path: Path) -> None:
         """Remember a report so its sidecar transcript is refreshed at turn end.

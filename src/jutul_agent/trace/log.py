@@ -73,6 +73,38 @@ class TraceLog:
         ).fetchall()
         return [Event(id=r[0], timestamp=r[1], kind=r[2], payload=json.loads(r[3])) for r in rows]
 
+    def events_after(self, event_id: int) -> list[Event]:
+        """Events newer than ``event_id`` (ordered by id).
+
+        For incremental polling — e.g. flushing the side outputs produced since the
+        last flush — so a long trace is not re-read and re-decoded each time."""
+        rows = self._conn.execute(
+            "SELECT id, timestamp, kind, payload_json FROM events WHERE id > ? ORDER BY id",
+            (event_id,),
+        ).fetchall()
+        return [Event(id=r[0], timestamp=r[1], kind=r[2], payload=json.loads(r[3])) for r in rows]
+
+    def max_id(self) -> int:
+        """The id of the most recent event, or 0 if the trace is empty (cheap, by PK)."""
+        row = self._conn.execute("SELECT id FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        return row[0] if row else 0
+
+    def first_payload(self, kind: str) -> dict[str, Any] | None:
+        """The payload of the earliest event of ``kind`` (uses the kind index), or None."""
+        row = self._conn.execute(
+            "SELECT payload_json FROM events WHERE kind = ? ORDER BY id LIMIT 1", (kind,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def last_timestamp(self) -> str | None:
+        """ISO timestamp of the most recent event — the session's last activity, or None.
+
+        A cheap ``ORDER BY id DESC LIMIT 1`` (the primary key), so it stays fast on a
+        long trace and is a reliable "last used" signal where a file mtime is not
+        (WAL appends don't touch the main db file's mtime)."""
+        row = self._conn.execute("SELECT timestamp FROM events ORDER BY id DESC LIMIT 1").fetchone()
+        return row[0] if row else None
+
     def close(self) -> None:
         self._conn.close()
 

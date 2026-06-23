@@ -1,0 +1,405 @@
+"""One running session, with everything it needs to take a turn.
+
+A ``SessionHost`` owns a ``Session`` (its Julia kernel, trace, and directories),
+the agent built for it, and the ``TurnRunner`` that drives a turn. ``start``
+builds all of that the way the CLI does; ``aclose`` tears it down. Holding the
+kernel and the checkpointer open for the session's lifetime is what lets a
+server keep many sessions alive at once and resume them later.
+
+The constructor takes a ready-made session and agent so tests can wrap fakes;
+``start`` is the production path that stands up a real kernel.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import sys
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
+
+from jutul_agent.agent.turns import TurnRunner
+
+if TYPE_CHECKING:
+    from contextlib import AsyncExitStack
+    from pathlib import Path
+
+    from jutul_agent.agent.capabilities import Capability
+    from jutul_agent.session import Session
+    from jutul_agent.simulators.base import SimulatorAdapter
+
+
+class SessionHost:
+    """A live session plus its agent and turn runner."""
+
+    def __init__(
+        self,
+        *,
+        session: Session,
+        agent: Any,
+        backend: Any | None = None,
+        exit_stack: AsyncExitStack | None = None,
+        checkpointer: Any | None = None,
+        model: str | None = None,
+        approval_mode: str | None = None,
+        surface: str = "web",
+        extensions: Sequence[Capability] = (),
+        workspace: Path | None = None,
+        package_sources: Sequence[Any] = (),
+    ) -> None:
+        self.session = session
+        self.agent = agent
+        self.backend = backend
+        self.workspace = workspace
+        self._exit_stack = exit_stack
+        self._runner: TurnRunner | None = None
+        # Kept so the agent can be rebuilt in place (e.g. /model, /approval-mode)
+        # without restarting the kernel — the same checkpointer keeps the history
+        # and the same session keeps the live Julia state.
+        self._checkpointer = checkpointer
+        self._model = model
+        self._approval_mode = approval_mode
+        self._surface = surface
+        self._extensions = list(extensions)
+        # The resolved env package sources: kept so an in-place rebuild keeps the
+        # read-only depot guard and the simulator's source-path prompt note.
+        self._package_sources = list(package_sources)
+        # Set once a content-aware (LLM) title has been generated for this session,
+        # so the server only attempts it on the first turn.
+        self.titled = False
+        # At most one live WebSocket drives a session at a time: two would run
+        # turns against the one kernel concurrently and corrupt its state. ``attach``
+        # claims the session for a connection; ``detach`` releases it on disconnect.
+        self._attached = False
+        # Background Julia warm-up (load warm package, set GLMakie offscreen); held
+        # so it can be cancelled on teardown. Set by ``start``.
+        self._warmup_task: Any | None = None
+
+    def attach(self) -> bool:
+        """Claim this session for a connection; ``False`` if one already holds it."""
+        if self._attached:
+            return False
+        self._attached = True
+        return True
+
+    def detach(self) -> None:
+        """Release the session so a later connection can attach."""
+        self._attached = False
+
+    @property
+    def attached(self) -> bool:
+        """Whether a live connection currently holds this session."""
+        return self._attached
+
+    @property
+    def model(self) -> str | None:
+        """The session's model spec (``provider:model``), or ``None`` for the default."""
+        return self._model
+
+    @property
+    def approval_mode(self) -> str | None:
+        """The session's human-in-the-loop policy, or ``None`` for the default."""
+        return self._approval_mode
+
+    def reconfigure(self, *, model: str | None = None, approval_mode: str | None = None) -> None:
+        """Rebuild the agent in place with a new model and/or approval policy.
+
+        The kernel, checkpointer, and session are untouched, so conversation
+        history and the live Julia REPL survive the switch; only the agent graph
+        and its turn runner are replaced."""
+        from jutul_agent.agent.added_dirs import added_dirs
+        from jutul_agent.agent.builder import build_agent
+
+        new_model = model if model is not None else self._model
+        new_approval = approval_mode if approval_mode is not None else self._approval_mode
+        # Rebuilding makes a fresh backend, so carry the added folders (launch
+        # --add-dir and any runtime /add-dir) over or the switch would silently
+        # drop the agent's access to them.
+        carried = [entry.path for entry in added_dirs(self.backend)] if self.backend else []
+        # Build first, then commit the new values — only once it succeeds. A value
+        # build_agent rejects (e.g. an unknown approval mode) must leave the host
+        # consistent with the agent still running, not reporting a model/approval it
+        # never applied (which a same-value reattach would then take as "unchanged").
+        agent, backend = build_agent(
+            self.session,
+            model=new_model,
+            checkpointer=self._checkpointer,
+            approval_mode=new_approval,
+            surface=self._surface,
+            extensions=self._extensions,
+            added_dirs=carried or None,
+            package_sources=self._package_sources or None,
+        )
+        self.agent, self.backend = agent, backend
+        self._model, self._approval_mode = new_model, new_approval
+        self._runner = None  # rebuilt lazily against the new agent
+
+    @property
+    def memory_dir(self):
+        """The workspace memory directory for this session (created if needed)."""
+        from jutul_agent.agent.memory import ensure_memory_dir
+        from jutul_agent.paths import workspace_memory_dir
+
+        return ensure_memory_dir(self.session.memory_dir(workspace_memory=workspace_memory_dir()))
+
+    async def compact(self) -> str:
+        """Summarize older turns to free context; return a human-readable result."""
+        from jutul_agent.agent.summarization import MANUAL_KEEP_MESSAGES, compact_thread
+        from jutul_agent.models import DEFAULT_MODEL
+
+        # The summarizer needs a concrete model spec; ``_model`` is None when the
+        # session uses the default, so fall back to it (else compact hits a None).
+        result = await compact_thread(
+            self.agent,
+            thread_id=self.session.session_id,
+            model=self._model or DEFAULT_MODEL,
+            backend=self.backend,
+            trace=self.session.trace,
+        )
+        if result is None:
+            return (
+                f"Nothing to compact yet — the conversation is within the newest "
+                f"{MANUAL_KEEP_MESSAGES} messages."
+            )
+        extra = " The summarized turns were saved and can be reopened." if result.offloaded else ""
+        return (
+            f"Compacted: summarized {result.messages_summarized} older messages and kept the "
+            f"{result.messages_kept} most recent.{extra}"
+        )
+
+    def add_dir(self, path: str) -> str:
+        """Give the agent read/write access to another folder; return a result note."""
+        from jutul_agent.agent.added_dirs import AddDirError, add_dir, added_dirs
+        from jutul_agent.paths import workspace_root
+
+        if not path:
+            dirs = added_dirs(self.backend)
+            if not dirs:
+                return "Usage: /add-dir <path>. Adds a folder the agent can read and edit."
+            return "Added folders:\n" + "\n".join(f"  {e.path}" for e in dirs)
+        try:
+            entry = add_dir(self.backend, path, workspace=workspace_root())
+        except AddDirError as exc:
+            return f"Could not add folder: {exc}"
+        return f"Added folder: {entry.path}. The agent can read and edit it from its next turn."
+
+    @property
+    def session_id(self) -> str:
+        return self.session.session_id
+
+    @property
+    def runner(self) -> TurnRunner:
+        """The turn runner for this session, built once and reused."""
+        if self._runner is None:
+            self._runner = TurnRunner(
+                self.agent,
+                thread_id=self.session.session_id,
+                trace=self.session.trace,
+            )
+        return self._runner
+
+    async def aclose(self) -> None:
+        """Tear down the kernel and checkpointer, then close the session."""
+        if self._warmup_task is not None and not self._warmup_task.done():
+            self._warmup_task.cancel()
+            # Await the cancellation before closing the kernel: warm-up may be mid-eval,
+            # whose shielded interrupt/restart recovery would otherwise race the kernel
+            # teardown below (the CLI path awaits here too).
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._warmup_task
+        if self._exit_stack is not None:
+            await self._exit_stack.aclose()
+            self._exit_stack = None
+        with contextlib.suppress(Exception):
+            self.session.finalize()
+
+    @classmethod
+    async def start(
+        cls,
+        *,
+        simulator: SimulatorAdapter,
+        model: str | None = None,
+        session_id: str | None = None,
+        resume: bool = False,
+        approval_mode: str | None = None,
+        workspace: Path | None = None,
+        state_root: Path | None = None,
+        julia_project: Path | None = None,
+        threads: str | None = None,
+        add_dirs: Sequence[Path] = (),
+        ephemeral_memory: bool = False,
+        prepare_env: bool = True,
+        surface: str = "web",
+        extensions: Sequence[Capability] = (),
+    ) -> SessionHost:
+        """Stand up a real session: prepare the env, start the kernel, build the agent.
+
+        Mirrors the CLI's session bootstrap. The Julia kernel and the SQLite
+        checkpointer are entered on an ``AsyncExitStack`` held by the host, so
+        they stay open until ``aclose``. The agent is composed for the ``web``
+        surface from the capabilities installed packages publish plus any passed
+        in (e.g. a host application's declared tools).
+        """
+
+        from contextlib import AsyncExitStack
+
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        from jutul_agent.agent.builder import build_agent
+        from jutul_agent.agent.capabilities import discover_extensions
+        from jutul_agent.julia.requirements import require_julia
+        from jutul_agent.julia.threads import (
+            HYPRE_THREADS_ENV_VAR,
+            blas_thread_env,
+            resolve_compute_threads,
+            resolve_hypre_threads,
+        )
+        from jutul_agent.juliakernel import JuliaKernel, KernelConfig
+        from jutul_agent.paths import workspace_root
+        from jutul_agent.session import Session, default_session_id, session_dir
+        from jutul_agent.simulators.env_setup import prepare_workspace_env
+        from jutul_agent.workspace import resolve_julia_project
+
+        require_julia()
+        ws = workspace or workspace_root()
+        project = julia_project or resolve_julia_project(ws)
+        # A caller can supply a pre-provisioned env (and skip preparation); the
+        # default path prepares the workspace env from the simulator template.
+        # Run it off the event loop: the first session for a simulator can spend
+        # minutes precompiling, and a blocking call here would freeze the whole
+        # server (it serves every session from one event loop) so even the page
+        # would stop loading. Threaded, the server stays responsive while the
+        # creating request waits.
+        if prepare_env:
+            import asyncio as _asyncio
+
+            await _asyncio.to_thread(
+                prepare_workspace_env,
+                simulator,
+                workspace=ws,
+                julia_project=project,
+                sim_name=simulator.name,
+            )
+
+        sid = session_id or default_session_id()
+        sdir = session_dir(sid, state_root=state_root)
+        sdir.mkdir(parents=True, exist_ok=True)
+
+        compute_threads = resolve_compute_threads(threads)
+        env = {
+            **blas_thread_env(compute_threads),
+            HYPRE_THREADS_ENV_VAR: str(resolve_hypre_threads()),
+        }
+
+        stack = AsyncExitStack()
+        try:
+            # The web surface stacks the WGLMakie/Bonito overlay on top of the
+            # workspace env so interactive plots work without putting those heavy
+            # packages in the base (TUI/CLI) env, and gives the kernel a GL context
+            # so native plotters (whose methods live in the GLMakie extension) load.
+            # Both are best-effort: without them the session still runs with the
+            # agent's inline plots / static PNGs.
+            if surface == "web":
+                import asyncio as _asyncio
+
+                from jutul_agent.interfaces.server.web_overlay import (
+                    WebOverlayError,
+                    ensure_web_overlay,
+                    load_path_for,
+                )
+
+                try:
+                    overlay = await _asyncio.to_thread(ensure_web_overlay)
+                    env["JULIA_LOAD_PATH"] = load_path_for(project, overlay)
+                except WebOverlayError as exc:
+                    print(f"warning: {exc}", file=sys.stderr)
+                _add_headless_display(stack, env)
+
+            kernel_config = KernelConfig(
+                julia_project=project,
+                stderr_file=sdir / "julia-startup.log",
+                cwd=ws,
+                env=env,
+                threads=str(compute_threads),
+            )
+            julia = await stack.enter_async_context(JuliaKernel(kernel_config))
+            if resume:
+                session = Session.resume(
+                    julia=julia,
+                    simulator=simulator,
+                    session_id=sid,
+                    state_root=state_root,
+                    ephemeral_memory=ephemeral_memory,
+                )
+            else:
+                session = Session.create(
+                    julia=julia,
+                    simulator=simulator,
+                    session_id=sid,
+                    state_root=state_root,
+                    ephemeral_memory=ephemeral_memory,
+                )
+            ckpt_path = session.state_dir / "checkpoints.sqlite"
+            checkpointer = await stack.enter_async_context(
+                AsyncSqliteSaver.from_conn_string(str(ckpt_path))
+            )
+            all_extensions = [*discover_extensions(), *extensions]
+            # Resolve the env's package source dirs (one fast, no-compile call): it
+            # gives the agent the simulator's source path up front — so it needn't
+            # `using <Sim>; pkgdir(<Sim>)` to find it — and guards the read-only depot.
+            from jutul_agent.agent.builder import resolve_package_sources
+
+            package_sources = await asyncio.to_thread(resolve_package_sources, project)
+            agent, backend = build_agent(
+                session,
+                model=model,
+                checkpointer=checkpointer,
+                approval_mode=approval_mode,
+                surface=surface,
+                extensions=all_extensions,
+                added_dirs=add_dirs or None,
+                package_sources=package_sources,
+            )
+        except BaseException:
+            await stack.aclose()
+            raise
+
+        host = cls(
+            session=session,
+            agent=agent,
+            backend=backend,
+            exit_stack=stack,
+            checkpointer=checkpointer,
+            model=model,
+            approval_mode=approval_mode,
+            surface=surface,
+            extensions=all_extensions,
+            workspace=ws,
+            package_sources=package_sources,
+        )
+        # Warm the kernel in the background like the CLI does: load the warm package
+        # and set GLMakie offscreen so a native plotter can't pop an OS window on a
+        # machine with a display. Best-effort and cancelled on teardown.
+        from jutul_agent.simulators.warmup import start_warmup
+
+        host._warmup_task = start_warmup(julia, simulator.warm_package)
+        return host
+
+
+def _add_headless_display(stack: AsyncExitStack, env: dict[str, str]) -> None:
+    """Start an Xvfb for this session (headless boxes) and set ``DISPLAY`` in ``env``.
+
+    GLMakie needs a GL context just to load, which is what makes the native
+    plotters' methods available for WGLMakie to render. On a machine with a real
+    display this is a no-op; the Xvfb is tied to the session's exit stack.
+    """
+    from jutul_agent.display import managed_display, should_wrap_xvfb
+
+    if not should_wrap_xvfb():
+        return
+    try:
+        display = stack.enter_context(managed_display())
+    except Exception as exc:  # missing/slow Xvfb must not break the session
+        print(f"warning: could not start a virtual display for plotting ({exc}).", file=sys.stderr)
+        return
+    env["DISPLAY"] = display
