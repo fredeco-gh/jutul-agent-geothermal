@@ -53,6 +53,12 @@ you intended; the printed hints name the likely fix (e.g.
 `convert_to_si(val, "millidarcy")`). Then simulate the validated case:
 `result = simulate_reservoir(case)`.
 
+Treat these warnings as stop-and-fix signals, not noise. Do not run past an
+unphysical value (or one the solver flags during the run, such as an unreasonable
+pressure) by forcing the solve through; fix the input it points to first. When a
+value was only a rough guess (a rate, an injected volume), pick a physically
+reasonable one rather than preserving the guess.
+
 ## Finding what you need
 
 Example layout and APIs change between versions, so find them on disk rather
