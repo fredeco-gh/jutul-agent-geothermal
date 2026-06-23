@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -872,6 +873,10 @@ class _StreamState:
         # Tool categories the user chose to "always allow" this session; future
         # matching interrupts auto-approve without asking again (like the TUI).
         self._allowlist = ToolAllowlist()
+        # ui_events queued since the last prompt (e.g. the user clicking something
+        # in an embedded host-app view) — folded into the next prompt's text so the
+        # agent knows about them without a reply firing on every single event.
+        self._pending_ui_events: list[Any] = []
 
     async def handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -882,7 +887,9 @@ class _StreamState:
         elif kind == "cancel":
             await self.cancel_turn()
         elif kind == "ui_event":
-            self._host.session.trace.append("ui_event", {"payload": message.get("payload")})
+            payload = message.get("payload")
+            self._host.session.trace.append("ui_event", {"payload": payload})
+            self._pending_ui_events.append(payload)
         elif kind == "command":
             await self._handle_command(message)
         else:
@@ -946,8 +953,22 @@ class _StreamState:
         # well in the history list. Idempotent (only the first prompt sets it).
         with contextlib.suppress(Exception):
             self._host.session.adopt_title(text)
+        text = self._with_pending_ui_events(text)
         runner = self._host.runner
         self._spawn(lambda: runner.run_prompt(text, on_message=self._on_message))
+
+    def _with_pending_ui_events(self, text: str) -> str:
+        """Prepend any ui_events queued since the last prompt to ``text``.
+
+        The envelope is generic (see docs/server-interface.md) — whatever shape
+        a host app's front end posts as a `ui_event` payload is dumped as-is, so
+        this stays agnostic of any one app's event names or fields.
+        """
+        if not self._pending_ui_events:
+            return text
+        events, self._pending_ui_events = self._pending_ui_events, []
+        notes = "\n".join(f"- {json.dumps(payload)}" for payload in events)
+        return f"[UI events since your last message]\n{notes}\n\n{text}"
 
     async def _start_decision(self, message: dict[str, Any]) -> None:
         if self._busy():
