@@ -38,12 +38,41 @@ def _render_extension() -> Path:
     return EXT_RENDERED
 
 
+async def _host_factory(
+    *, sim, model, approval_mode, workspace=None, resume, session_id, extensions=()
+):
+    """Stand up a normal fimbul session, with the geothermal-viz capability added.
+
+    Mirrors manager.py's default host factory (same simulator lookup, same
+    ``SessionHost.start`` call with the caller's workspace/approval_mode honoured)
+    but prepends ``geothermal_viz_capability()`` to ``extensions`` — this is the
+    seam a future tool gets added through, not a one-off wiring just for the map.
+    """
+    from capability import geothermal_viz_capability
+
+    from jutul_agent.interfaces.server.session_host import SessionHost
+    from jutul_agent.simulators import registry
+
+    adapter = registry.get(sim)
+    return await SessionHost.start(
+        simulator=adapter,
+        model=model,
+        approval_mode=approval_mode,
+        workspace=workspace,
+        resume=resume,
+        session_id=session_id,
+        extensions=[geothermal_viz_capability(), *extensions],
+    )
+
+
 def create_geothermal_app():
     from fastapi.middleware.cors import CORSMiddleware
 
     from jutul_agent.interfaces.server.app import create_app
+    from jutul_agent.interfaces.server.manager import SessionManager
 
     app = create_app(
+        SessionManager(host_factory=_host_factory),
         ui=True,
         default_sim="fimbul",
         extra_static={"/host-extension.js": _render_extension()},
