@@ -7,10 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jutul_agent.agent.approval import (
+    SUPPORTED_APPROVAL_DECISIONS,
+    allowed_decisions_for_interrupt,
+    review_config_map,
+)
 from jutul_agent.interfaces.tui._rendering import fenced_block, truncate_preview
 from jutul_agent.paths import resolve_in_workspace
 from jutul_agent.tool_labels import tool_label
 
+# The decision helpers now live in agent.approval (shared with the server
+# interface); re-exported here so the TUI's existing import sites keep working.
 __all__ = [
     "SUPPORTED_APPROVAL_DECISIONS",
     "ApprovalCard",
@@ -20,36 +27,6 @@ __all__ = [
     "render_interrupt_cards",
     "truncate_preview",
 ]
-
-SUPPORTED_APPROVAL_DECISIONS = frozenset({"approve", "reject", "respond"})
-
-
-def allowed_decisions_for_interrupt(value: Any) -> frozenset[str]:
-    """Return the intersection of decisions allowed across an interrupt's actions.
-
-    An interrupt payload may bundle multiple ``action_requests``; each can
-    declare its own ``allowed_decisions`` in a sibling ``review_configs``
-    block. The TUI can only resume an interrupt with a decision every action
-    accepts, so we intersect. Empty / malformed payloads fall back to all
-    supported decisions, matching deepagents' default.
-    """
-
-    if not isinstance(value, dict):
-        return SUPPORTED_APPROVAL_DECISIONS
-
-    config_map = _review_config_map(value.get("review_configs"))
-    action_requests = value.get("action_requests")
-    if not isinstance(action_requests, list):
-        return SUPPORTED_APPROVAL_DECISIONS
-
-    shared: frozenset[str] | None = None
-    for action in action_requests:
-        if not isinstance(action, dict):
-            continue
-        action_name = str(action.get("name") or "")
-        allowed = config_map.get(action_name, SUPPORTED_APPROVAL_DECISIONS)
-        shared = allowed if shared is None else shared & allowed
-    return shared if shared is not None else SUPPORTED_APPROVAL_DECISIONS
 
 
 @dataclass(frozen=True)
@@ -75,7 +52,7 @@ def render_interrupt_cards(
     a parallel ``review_configs`` list of allowed-decision policies.
     """
 
-    config_map = _review_config_map(value.get("review_configs"))
+    config_map = review_config_map(value.get("review_configs"))
     cards: list[ApprovalCard] = []
     for action in value["action_requests"]:
         tool_name = str(action.get("name") or "tool")
@@ -253,21 +230,6 @@ def compute_unified_diff(before: str, after: str, display_path: str) -> str | No
     if not diff_lines:
         return None
     return "\n".join(diff_lines)
-
-
-def _review_config_map(review_configs: Any) -> dict[str, frozenset[str]]:
-    config_map: dict[str, frozenset[str]] = {}
-    if not isinstance(review_configs, list):
-        return config_map
-
-    for review in review_configs:
-        if not isinstance(review, dict):
-            continue
-        action_name = review.get("action_name")
-        allowed = review.get("allowed_decisions")
-        if isinstance(action_name, str) and isinstance(allowed, list):
-            config_map[action_name] = frozenset(str(item) for item in allowed)
-    return config_map
 
 
 def _tool_target(tool_name: str, tool_args: dict[str, Any]) -> str | None:

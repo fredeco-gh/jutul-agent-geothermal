@@ -29,7 +29,6 @@ import contextlib
 import json
 import urllib.parse
 import urllib.request
-from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -45,7 +44,9 @@ from jutul_agent.agent.added_dirs import AddDirError, add_dir, added_dirs
 from jutul_agent.agent.approval import (
     ApprovalMode,
     ToolAllowlist,
+    build_resume_payload,
     parse_approval_mode,
+    pending_allowed_decisions,
     should_auto_approve_interrupt,
 )
 from jutul_agent.agent.turns import (
@@ -55,11 +56,7 @@ from jutul_agent.agent.turns import (
     TurnRunResult,
     TurnToolEvent,
 )
-from jutul_agent.interfaces.tui.approval import (
-    SUPPORTED_APPROVAL_DECISIONS,
-    allowed_decisions_for_interrupt,
-    render_interrupt_cards,
-)
+from jutul_agent.interfaces.tui.approval import render_interrupt_cards
 from jutul_agent.interfaces.tui.approval_menu import ApprovalMenu, build_approval_options
 from jutul_agent.interfaces.tui.commands import (
     ALL_COMMANDS,
@@ -1680,28 +1677,13 @@ class TUIApp(App[None]):
 
     def _pending_allowed_decisions(self) -> frozenset[str]:
         """Decisions every pending interrupt accepts, scoped to what the TUI can do."""
-
-        shared: frozenset[str] | None = None
-        for interrupt in self._pending_interrupts:
-            allowed = allowed_decisions_for_interrupt(interrupt.value)
-            shared = allowed if shared is None else shared & allowed
-        if shared is None:
-            return frozenset()
-        return shared & SUPPORTED_APPROVAL_DECISIONS
+        return pending_allowed_decisions(self._pending_interrupts)
 
     def _build_resume_payload(
         self,
         decision: dict[str, str],
     ) -> dict[str, dict[str, list[dict[str, str]]]]:
-        payload: dict[str, dict[str, list[dict[str, str]]]] = {}
-        for interrupt in self._pending_interrupts:
-            value = interrupt.value if isinstance(interrupt.value, dict) else {}
-            action_requests = value.get("action_requests")
-            count = len(action_requests) if isinstance(action_requests, list) else 1
-            payload[interrupt.interrupt_id] = {
-                "decisions": [deepcopy(decision) for _ in range(count)]
-            }
-        return payload
+        return build_resume_payload(self._pending_interrupts, decision)
 
     def _new_tool_block(
         self,
