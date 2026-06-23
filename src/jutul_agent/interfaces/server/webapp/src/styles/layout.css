@@ -1,0 +1,424 @@
+/* App frame: the three panes (sidebar, conversation column, canvas), the top bar,
+   the sidebar, and the canvas chrome. Structure and positioning only; the content
+   inside the conversation and canvas is styled in chat.css. */
+
+/* Two-pane workspace: conversation (left, flexes) + canvas (right, closable). */
+.workspace {
+  display: flex;
+  height: 100vh;
+  min-width: 0;
+}
+.app {
+  flex: 1 1 0;
+  min-width: 320px; /* never let the canvas squeeze the conversation away */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+/* Drag-a-file overlay on the conversation pane. */
+.app.dropping {
+  position: relative;
+}
+.app.dropping::after {
+  content: "Drop a file to add it to this session";
+  position: absolute;
+  inset: 0.5rem;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  color: var(--accent);
+  font-weight: 650;
+  pointer-events: none;
+}
+
+/* ---- Top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(8px);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 50%, #22d3ee));
+}
+/* This folder's simulator, shown as a static chip (one folder = one simulator). */
+.sim-chip {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  white-space: nowrap;
+}
+.meta {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.usage {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.views-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.views-btn .count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  padding: 0.02rem 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+/* "Warming up Julia" hint shown in the top bar until the first turn lands. */
+.warming {
+  font-size: 0.74rem;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.warming::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: blink 1.2s infinite;
+}
+
+/* Thin bar under the top bar while the socket is being re-established. */
+.reconnecting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex: none;
+  padding: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ---- Sidebar: collapsible session history, full height ---- */
+.sidebar {
+  flex: 0 0 256px;
+  width: 256px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 60%, var(--bg));
+  overflow: hidden;
+  transition:
+    flex-basis 0.18s ease,
+    width 0.18s ease;
+}
+.sidebar.collapsed {
+  flex-basis: 0;
+  width: 0;
+  border-right: 0;
+}
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  min-height: 53px;
+  flex: none;
+  padding: 0.7rem 0.95rem;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-head .brand {
+  white-space: nowrap;
+}
+.sidebar-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  margin: 0.7rem 0.7rem 0.4rem;
+  padding: 0.5rem 0.7rem;
+  flex: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.sidebar-new:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--border) 50%, var(--accent));
+}
+.sidebar-section {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 0.5rem 1rem 0.3rem;
+  white-space: nowrap;
+  flex: none;
+}
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0.5rem 0.7rem;
+}
+.history-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding: 0.5rem 0.6rem;
+}
+.history-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 9px;
+  padding: 0.45rem 0.6rem;
+  cursor: pointer;
+  margin-bottom: 0.1rem;
+}
+.history-item:hover {
+  background: var(--surface-2);
+}
+.history-item.current {
+  background: var(--accent-soft);
+}
+.h-title {
+  font-size: 0.86rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.h-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Canvas: the persistent right-side view panel ---- */
+.canvas {
+  flex: 0 1 var(--canvas-w);
+  min-width: 360px;
+  max-width: 64%;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+/* `display: flex` above beats the browser's default [hidden] rule, so re-assert it
+   when the panel is closed (the React component toggles the `hidden` attribute). */
+.canvas[hidden] {
+  display: none;
+}
+.canvas-grip {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.canvas-grip:hover,
+.canvas-grip.dragging {
+  background: linear-gradient(to right, transparent, var(--accent-soft));
+}
+.canvas-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  min-height: 48px;
+  border-bottom: 1px solid var(--border);
+}
+.canvas-tabs {
+  flex: 1;
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.canvas-tabs::-webkit-scrollbar {
+  height: 5px;
+}
+.canvas-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.32rem 0.55rem;
+  border-radius: 9px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid transparent;
+  background: transparent;
+  white-space: nowrap;
+  max-width: 220px;
+  cursor: pointer;
+}
+.tab:hover {
+  background: var(--surface-2);
+}
+.tab.active {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+}
+.tab .tab-ico {
+  display: flex;
+  flex: none;
+  opacity: 0.85;
+}
+.tab .tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab .tab-close {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.tab:hover .tab-close,
+.tab.active .tab-close {
+  opacity: 0.7;
+}
+.tab .tab-close:hover {
+  opacity: 1;
+  background: var(--border);
+}
+.canvas-actions {
+  display: flex;
+  gap: 0.15rem;
+  flex: none;
+}
+.canvas-body {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+}
+.canvas-body iframe,
+.canvas-body img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: none;
+  background: #fff;
+}
+.canvas-body img {
+  object-fit: contain;
+  padding: 1rem;
+}
+.canvas-body iframe.active,
+.canvas-body img.active {
+  display: block;
+}
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 2rem;
+}
+.canvas-loading {
+  position: absolute;
+  inset: 0;
+  display: none;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.canvas-loading.on {
+  display: flex;
+}
+
+/* ---- Responsive ---- */
+/* On a narrow screen the sidebar overlays the conversation instead of squeezing it. */
+@media (max-width: 760px) {
+  .sidebar {
+    position: absolute;
+    z-index: 70;
+    box-shadow: var(--shadow);
+  }
+}
+/* Medium and narrow screens: three columns get cramped, so the canvas overlays the
+   conversation (full width on a phone, a wide panel on a laptop). The grip is hidden
+   since there is nothing to resize against. */
+@media (max-width: 1024px) {
+  .canvas {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(640px, 100%);
+    max-width: 100%;
+    min-width: 0;
+    z-index: 40;
+    box-shadow: -8px 0 24px #0000001a;
+  }
+  .canvas-grip {
+    display: none;
+  }
+}
+@media (max-width: 680px) {
+  .canvas {
+    width: 100%;
+  }
+}
