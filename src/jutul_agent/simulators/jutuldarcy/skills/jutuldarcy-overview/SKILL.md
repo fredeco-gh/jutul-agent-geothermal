@@ -50,8 +50,10 @@ likely fail — fix them before running. **Warnings** flag values outside the us
 range (permeability that looks like millidarcy left unconverted, time steps that
 look like days not seconds, rates that look per-day) — reconcile each against what
 you intended; the printed hints name the likely fix (e.g.
-`convert_to_si(val, "millidarcy")`). Then simulate the validated case:
-`result = simulate_reservoir(case)`.
+`convert_to_si(val, "millidarcy")`). Then simulate the validated case with
+progress visible: `result = simulate_reservoir(case; info_level = 1)`. Prefer
+`info_level = 1` so you can see the run progress; use `info_level = 2` for a
+case that may struggle to converge, to watch the nonlinear iterations.
 
 Treat these warnings as stop-and-fix signals, not noise. Do not run past an
 unphysical value (or one the solver flags during the run, such as an unreasonable
@@ -85,7 +87,7 @@ the classic SPE benchmark decks ship with GeoEnergyIO's test data:
 ```julia
 pth = GeoEnergyIO.test_input_file_path("SPE1", "SPE1.DATA")
 case = setup_case_from_data_file(pth)
-result = simulate_reservoir(case)
+result = simulate_reservoir(case; info_level = 1)
 ```
 
 ## Result unpacking

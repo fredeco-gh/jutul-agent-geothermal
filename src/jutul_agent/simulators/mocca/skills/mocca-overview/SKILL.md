@@ -50,7 +50,7 @@ states, timesteps = Mocca.simulate_process(
     case;
     timestep_selector_cfg = ts_config,
     output_substates = true,
-    info_level = 0,
+    info_level = 1,            # see progress; use 2 if convergence struggles
 )
 ```
 
