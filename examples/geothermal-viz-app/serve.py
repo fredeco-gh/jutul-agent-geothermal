@@ -61,7 +61,7 @@ async def _host_factory(
         workspace=workspace,
         resume=resume,
         session_id=session_id,
-        extensions=[geothermal_viz_capability(), *extensions],
+        extensions=[geothermal_viz_capability(GEOTHERMAL_VIZ_ORIGIN), *extensions],
     )
 
 
