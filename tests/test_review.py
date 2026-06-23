@@ -392,6 +392,8 @@ def test_eval_review_context_combines_expected_and_verdict(tmp_path):
 def test_link_eval_results_writes_verdict_onto_session(_state_home):
     import types
 
+    pytest.importorskip("inspect_ai")  # _passed grades via inspect_ai (the eval extra)
+
     from jutul_agent.review.discovery import session_eval_result
     from jutul_agent.review.eval_link import link_eval_results
     from jutul_agent.trace import TraceLog

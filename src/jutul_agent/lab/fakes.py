@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -554,6 +555,10 @@ class ScriptedV3Agent:
     ) -> None:
         self._events = events
         self.inputs: list[Any] = []
+        # Interrupts left pending in the (mock) graph state, for aget_state: a prompt
+        # that interrupts records them, a resume clears them. Lets a test exercise the
+        # reconnect path that re-surfaces a pending approval.
+        self._pending_interrupts: list[Any] = []
 
     @property
     def resume_inputs(self) -> list[Command]:
@@ -561,8 +566,22 @@ class ScriptedV3Agent:
 
     async def astream_events(self, stream_input, **_kwargs):
         self.inputs.append(stream_input)
-        events = self._events(stream_input) if callable(self._events) else self._events
+        source = self._events(stream_input) if callable(self._events) else self._events
+        events = list(source)
+        if isinstance(stream_input, Command):
+            self._pending_interrupts = []
+        else:
+            self._pending_interrupts = [
+                itp
+                for event in events
+                if event.get("kind") == "values"
+                for itp in (event.get("interrupts") or [])
+            ]
         return _build_typed_run(events)
+
+    async def aget_state(self, _config):
+        """Mock state snapshot exposing any interrupts left pending (see astream_events)."""
+        return SimpleNamespace(interrupts=list(self._pending_interrupts), tasks=())
 
 
 def interrupt_agent(

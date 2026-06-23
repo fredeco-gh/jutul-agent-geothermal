@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from jutul_agent.eval.solver import STORE_SESSION_ID
+# The store key the eval solver stamps on each sample. Mirrored here as a literal
+# so importing this module (e.g. for `jutul-agent review`) does not pull in the
+# eval stack, which needs the optional ``[eval]`` extra. Kept in sync with
+# ``jutul_agent.eval.solver.STORE_SESSION_ID``.
+STORE_SESSION_ID = "jutul/session_id"
 
 
 def _passed(scores: dict | None) -> bool:
