@@ -552,7 +552,6 @@ export function createSessionStore() {
       closeCanvas: () => set({ canvasOpen: false }),
 
       removeView: (id) => {
-        const existed = !!get().views[id];
         set((s) => {
           if (!s.views[id]) return {};
           const views = { ...s.views };
@@ -569,8 +568,10 @@ export function createSessionStore() {
         });
         // Host-app hook: a view removed this way (the tab's own close, not "close
         // panel") is gone for good unless something re-adds it — lets a host app
-        // offer its own way back (e.g. a button that re-pins it).
-        if (existed && typeof window !== "undefined") window.onJutulViewClosed?.(id);
+        // offer its own way back (e.g. a button that re-pins it). Called
+        // unconditionally, whether or not the id matched, to match the original
+        // behavior exactly.
+        window.onJutulViewClosed?.(id);
       },
 
       pinDoc: (url, title, slot) =>

@@ -18,7 +18,7 @@ import {
   toolPolicy,
   type ToolPolicy,
 } from "../toolPolicy";
-import type { ThreadItem } from "../store";
+import type { ThreadItem, ViewKind } from "../store";
 
 // --- shared building blocks -------------------------------------------------
 
@@ -248,7 +248,7 @@ export const ToolCard = memo(function ToolCard({ item }: { item: ToolItem }) {
 
 // --- canvas references ------------------------------------------------------
 
-export function VizChip({ viewId, title, viewKind }: { viewId: string; title: string; viewKind: "plot" | "report" | "image" }) {
+export function VizChip({ viewId, title, viewKind }: { viewId: string; title: string; viewKind: ViewKind }) {
   const openView = useSel((s) => s.openView);
   const active = useSel((s) => s.canvasOpen && s.activeView === viewId);
   return (
