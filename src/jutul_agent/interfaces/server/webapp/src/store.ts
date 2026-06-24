@@ -11,6 +11,12 @@ import type { InterruptAction, ReplayMessage, ServerMessage } from "./protocol";
 import { HISTORY_CHANGED, SIDE_OUTPUT_TYPES } from "./protocol";
 import { toolPolicy } from "./toolPolicy";
 
+// Each "delta" event carries one new fragment of streamed output, not the
+// cumulative text, so the card must append rather than replace (mirrors the
+// TUI's `ToolBlock.append_output`). Capped so a long-running stream can't grow
+// the render unbounded; rendering tolerates a truncated escape at the cut.
+const STREAM_RENDER_CAP = 256 * 1024;
+
 export type ViewKind = "plot" | "report" | "image" | "map";
 
 export interface View {
@@ -284,7 +290,11 @@ export function createSessionStore() {
 
         if (msg.event === "delta") {
           if (msg.content != null && policy.rawOutput !== false) {
-            items = update({ output: msg.content });
+            items = items.map((it) =>
+              it.kind === "tool" && it.toolCallId === cid
+                ? { ...it, output: (it.output + msg.content).slice(-STREAM_RENDER_CAP) }
+                : it,
+            );
           }
         } else if (msg.event === "finished") {
           const patch: Partial<Extract<ThreadItem, { kind: "tool" }>> = { status: "done" };

@@ -60,6 +60,13 @@ describe("tool lifecycle", () => {
     expect(tools[0]).toMatchObject({ status: "done", output: "2", args: { code: "1+1" } });
   });
 
+  it("appends successive deltas instead of replacing the streamed output", () => {
+    state().handle({ type: "tool", event: "requested", name: "run_julia", tool_call_id: "1", args: { code: "1+1" } });
+    state().handle({ type: "tool", event: "delta", name: "run_julia", tool_call_id: "1", content: "line one\n" });
+    state().handle({ type: "tool", event: "delta", name: "run_julia", tool_call_id: "1", content: "line two\n" });
+    expect(byKind("tool")[0]).toMatchObject({ status: "running", output: "line one\nline two\n" });
+  });
+
   it("honours per-tool policy: read_file shows a line note, not raw output", () => {
     state().handle({ type: "tool", event: "requested", name: "read_file", tool_call_id: "r", args: { file_path: "a.jl" } });
     state().handle({ type: "tool", event: "finished", name: "read_file", tool_call_id: "r", content: "l1\nl2\nl3" });

@@ -8,6 +8,8 @@ from typing import Any
 
 from langchain_core.messages import ToolMessage
 
+from jutul_agent.trace.messages import content_to_str
+
 # Some langgraph paths stringify ``[ToolMessage(content='...', ...)]``
 # instead of returning the structured object. The regex below pulls the
 # original content back out of that repr.
@@ -28,6 +30,13 @@ def normalize_tool_output(value: Any) -> str:
         if value and all(isinstance(item, ToolMessage) for item in value):
             parts = [normalize_tool_output(item) for item in value]
             return "\n".join(part for part in parts if part)
+        # A multimodal tool result (text + image content blocks, e.g.
+        # view_simulation_result's vision return) — project just the prose,
+        # the same way an assistant message's content blocks are flattened,
+        # rather than JSON-dumping the whole list (which would embed the
+        # image's full base64 payload into the chat).
+        if value and all(isinstance(item, dict) and "type" in item for item in value):
+            return content_to_str(value)
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, dict):
         return json.dumps(value, ensure_ascii=False)
