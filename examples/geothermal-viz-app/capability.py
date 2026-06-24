@@ -54,6 +54,12 @@ _EXACT_FIELDS = ("brønnNr", "brønnParkNr")
 # Matched next, as a substring, so a vaguer request still has a chance to resolve.
 _LOOSE_FIELDS = (*_EXACT_FIELDS, "brønnpOmrNavn", "beskrivelse", "oppdragstaker")
 
+# Same idea, but restricted to the well-park identifier itself — excludes
+# `brønnNr` so a well-park lookup can't accidentally land on an unrelated well
+# whose own number happens to match the park identifier given.
+_PARK_EXACT_FIELDS = ("brønnParkNr",)
+_PARK_LOOSE_FIELDS = ("brønnParkNr", "brønnpOmrNavn", "beskrivelse", "oppdragstaker")
+
 # Cached per map origin rather than per call: the dataset only changes when
 # geothermal-viz's data-processing script reruns and its server restarts, so
 # refetching the whole file on every `go_to_well` call would be wasted work.
@@ -74,17 +80,23 @@ async def _load_well_features(map_origin: str) -> list[dict[str, Any]]:
     return features
 
 
-def _find_well(features: list[dict[str, Any]], identifier: str) -> dict[str, Any] | None:
+def _find_well(
+    features: list[dict[str, Any]],
+    identifier: str,
+    *,
+    exact_fields: tuple[str, ...] = _EXACT_FIELDS,
+    loose_fields: tuple[str, ...] = _LOOSE_FIELDS,
+) -> dict[str, Any] | None:
     needle = str(identifier).strip().lower()
     if not needle:
         return None
     for feature in features:
         props = feature.get("properties", {})
-        if any(str(props.get(f, "")).lower() == needle for f in _EXACT_FIELDS):
+        if any(str(props.get(f, "")).lower() == needle for f in exact_fields):
             return feature
     for feature in features:
         props = feature.get("properties", {})
-        if any(needle in str(props.get(f, "")).lower() for f in _LOOSE_FIELDS):
+        if any(needle in str(props.get(f, "")).lower() for f in loose_fields):
             return feature
     return None
 
@@ -138,6 +150,54 @@ def _make_go_to_well_tool(session: Session, map_origin: str):
         return f"Found well '{identifier}' and moved the map to it."
 
     return go_to_well
+
+
+def _make_go_to_well_park_tool(session: Session, map_origin: str):
+    @tool
+    async def go_to_well_park(identifier: str) -> str:
+        """Fly the map to a well park itself and select it, as if the user
+        clicked it directly — use this when asked about a well *park* rather
+        than one of the individual wells inside it.
+
+        Args:
+            identifier: A well-park number (e.g. "12345"), or other identifying
+                text (area name, contractor, description) to match loosely if
+                no park number matches exactly.
+        """
+        try:
+            features = await _load_well_features(map_origin)
+        except Exception as exc:
+            return f"Could not reach geothermal-viz's data API to look up well parks: {exc}"
+        # Well parks are their own feature ("layer" == "BrønnPark"), with their
+        # own coordinates — distinct from the individual wells that merely
+        # reference one via `brønnParkNr`. Restricting the search to that
+        # layer is what actually lands on the park itself; without it, an
+        # ordinary well sharing the same park number (the data lists those
+        # before any park feature) would match first instead.
+        parks = [f for f in features if f.get("properties", {}).get("layer") == "BrønnPark"]
+        feature = _find_well(
+            parks,
+            identifier,
+            exact_fields=_PARK_EXACT_FIELDS,
+            loose_fields=_PARK_LOOSE_FIELDS,
+        )
+        if feature is None:
+            return (
+                f"No well park matching '{identifier}' was found in the loaded "
+                "borehole data — tell the user it doesn't exist rather than "
+                "saying you moved the map."
+            )
+        lon, lat = feature["geometry"]["coordinates"]
+        # Reuses the same `go_to_well` UI action: the map only ever flies to and
+        # selects one feature regardless of whether it's a well or a well park,
+        # so no new action/dispatch case is needed.
+        session.trace.append(
+            "ui",
+            {"action": "go_to_well", "payload": {"lon": lon, "lat": lat, "feature": feature}},
+        )
+        return f"Found well park '{identifier}' and moved the map to it."
+
+    return go_to_well_park
 
 
 # ---------------------------------------------------------------------------
@@ -827,9 +887,12 @@ def make_run_simulation_action(simulation_jl_path: str):
 _PROMPT_FRAGMENT = (
     "This app embeds the geothermal-viz map (a MapLibre view of Norwegian "
     "borehole data) next to the chat, always visible. Call `set_map_view` to fly "
-    "it to a raw location, or `go_to_well` to fly to and select a specific well "
-    "by its number or other identifying text — it tells you directly if no such "
-    "well exists, so trust its return value rather than assuming success. The "
+    "it to a raw location, `go_to_well` to fly to and select a specific well "
+    "by its number or other identifying text, or `go_to_well_park` to do the "
+    "same for a well park itself (e.g. when asked about a BTES site as a "
+    "whole, not one of its individual wells) — both tell you directly if no "
+    "such well/park exists, so trust their return value rather than assuming "
+    "success. The "
     "user can also click things on the map themselves (e.g. selecting a well); "
     "when they do, a note describing it is prepended to their next message as "
     "'[UI events since your last message]', so you'll see it as part of what "
@@ -857,6 +920,7 @@ def geothermal_viz_capability(map_origin: str, simulation_jl_path: str) -> Capab
         tools=(
             _make_set_map_view_tool,
             lambda session: _make_go_to_well_tool(session, map_origin),
+            lambda session: _make_go_to_well_park_tool(session, map_origin),
             lambda session: _make_run_simulation_tool(session, simulation_jl_path),
             lambda session: _make_view_simulation_result_tool(session, simulation_jl_path),
         ),
