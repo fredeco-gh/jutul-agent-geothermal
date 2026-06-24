@@ -10,6 +10,7 @@ GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
 # list it directly to guarantee it is installed and loadable.
 HYPRE = "b5ffcf37-a2bd-41ab-a3da-4bd9bc8ad771"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 LayeredLayouts = "f4a74d36-062a-4d48-97cd-1356bad1de4e"
 NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
 Jutul = "2b460a1a-8a2b-45b2-b125-b5c536396eb9"

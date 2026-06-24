@@ -13,5 +13,8 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- A host app's bridge script, if one is being served at this path; 404s
+         harmlessly otherwise. See examples/geothermal-viz-app for one consumer. -->
+    <script src="/host-extension.js" onerror="this.remove()"></script>
   </body>
 </html>

@@ -56,6 +56,9 @@ export type ServerMessage =
       kind: string;
       poster?: string | null;
       slot?: string | null;
+      /** A host app pinning its own always-open view (e.g. a map), outside any
+       *  actual turn, isn't a conversation event worth a chat reference. */
+      silent?: boolean;
     }
   | { type: "notice"; text: string }
   | { type: "ui"; action: string; payload: Record<string, unknown> }
@@ -70,7 +73,12 @@ export type ClientMessage =
   | { type: "decision"; decision: string; message?: string }
   | { type: "cancel" }
   | { type: "command"; command: "set_model" | "set_approval" | "add_dir" | "compact"; arg: string }
-  | { type: "ui_event"; payload: unknown };
+  | { type: "ui_event"; payload: unknown }
+  // A host-app-defined operation a front end triggers directly, bypassing the
+  // model entirely (see jutul_agent.interfaces.server.app.ActionHandler) — for
+  // when the front end already has exact, structured inputs and there is
+  // nothing for the model to decide, unlike a normal tool call.
+  | { type: "action"; name: string; args?: Record<string, unknown> };
 
 /**
  * One recorded item from `GET /sessions/{id}/messages`, replayed to reconstruct a

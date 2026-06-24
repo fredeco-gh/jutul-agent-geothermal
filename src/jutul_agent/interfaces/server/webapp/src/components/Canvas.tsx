@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 
-import { isImageView, panelFor } from "../canvas/registry";
+import { isImageView, panelFor, setAllFramesInert } from "../canvas/registry";
 import { useSel } from "../context";
 import { BackIcon, CloseIcon, KindIcon, PopoutIcon } from "../icons";
 
@@ -34,6 +34,10 @@ export function Canvas() {
   const onResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     document.body.style.userSelect = "none";
+    // An iframe'd view is a separate browsing context, so it swallows mousemove
+    // the instant the cursor crosses into it; disable pointer events on every
+    // mounted iframe for the drag's duration so this window keeps tracking it.
+    setAllFramesInert(true);
     const move = (ev: MouseEvent) => {
       // Store the width as a fraction of the viewport, so the split stays
       // proportional across window resizes and screen changes.
@@ -42,6 +46,7 @@ export function Canvas() {
     };
     const up = () => {
       document.body.style.userSelect = "";
+      setAllFramesInert(false);
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };

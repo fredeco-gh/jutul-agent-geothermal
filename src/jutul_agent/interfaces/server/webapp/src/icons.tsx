@@ -37,9 +37,19 @@ export function ImageIcon() {
   );
 }
 
+export function MapIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" {...stroke}>
+      <path d="M9 18l-6 3V5l6-3 6 3 6-3v16l-6 3-6-3z" />
+      <path d="M9 2v16M15 5v16" />
+    </svg>
+  );
+}
+
 export function KindIcon({ kind }: { kind: ViewKind }) {
   if (kind === "report") return <ReportIcon />;
   if (kind === "image") return <ImageIcon />;
+  if (kind === "map") return <MapIcon />;
   return <PlotIcon />;
 }
 
@@ -47,6 +57,7 @@ export const KIND_LABEL: Record<ViewKind, string> = {
   plot: "Interactive plot",
   report: "Report",
   image: "Image",
+  map: "Map",
 };
 
 export function MenuIcon() {

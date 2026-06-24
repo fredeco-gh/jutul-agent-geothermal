@@ -3,8 +3,9 @@
 // message goes through (inject scripted wire events, open views, inspect state)
 // without coupling tests to React internals.
 
+import { getFrame } from "./canvas/registry";
 import type { Controller } from "./controller";
-import type { ReplayMessage, ServerMessage } from "./protocol";
+import type { ClientMessage, ReplayMessage, ServerMessage } from "./protocol";
 import type { SessionStore } from "./store";
 import type { StoreApi } from "zustand/vanilla";
 
@@ -15,9 +16,19 @@ export interface JutulDebug {
   openView: (id: string) => void;
   closeCanvas: () => void;
   setMeta: (meta: string) => void;
-  send: (text: string) => void;
+  // A plain string is typed into the composer as if a user sent it (existing
+  // debug/screenshot-harness behavior); a raw ClientMessage goes straight onto
+  // the socket — the hook a host app's bridge script uses to relay its own
+  // events (a ui_event, or a direct action) to the agent.
+  send: (msg: string | ClientMessage) => void;
   runSlash: (text: string) => void;
   state: () => SessionStore;
+  // Pins a view (e.g. a host app's embedded page) into the canvas exactly like a
+  // server-pushed viz message does — the supported way to add one from outside.
+  onViz: (msg: Omit<Extract<ServerMessage, { type: "viz" }>, "type">) => void;
+  // The DOM node for a pinned iframe view, by id — for a host app that needs to
+  // postMessage into its own embedded page's contentWindow.
+  getFrame: (id: string) => HTMLIFrameElement | null;
 }
 
 declare global {
@@ -37,8 +48,13 @@ export function installDebug(store: StoreApi<SessionStore>, controller: Controll
     openView: (id) => store.getState().openView(id),
     closeCanvas: () => store.getState().closeCanvas(),
     setMeta: (meta) => store.setState({ meta }),
-    send: (text) => controller.send(text),
+    send: (msg) => {
+      if (typeof msg === "string") controller.send(msg);
+      else controller.transport.send(msg);
+    },
     runSlash: (text) => controller.runSlash(text),
     state: () => store.getState(),
+    onViz: (msg) => store.getState().pinView(msg),
+    getFrame: (id) => getFrame(id) ?? null,
   };
 }

@@ -11,7 +11,7 @@ import type { InterruptAction, ReplayMessage, ServerMessage } from "./protocol";
 import { HISTORY_CHANGED, SIDE_OUTPUT_TYPES } from "./protocol";
 import { toolPolicy } from "./toolPolicy";
 
-export type ViewKind = "plot" | "report" | "image";
+export type ViewKind = "plot" | "report" | "image" | "map";
 
 export interface View {
   id: string;
@@ -137,6 +137,20 @@ export interface SessionActions {
   closeCanvas: () => void;
   removeView: (id: string) => void;
   pinDoc: (url: string, title: string, slot: string) => void;
+  pinView: (msg: Omit<Extract<ServerMessage, { type: "viz" }>, "type">) => void;
+}
+
+declare global {
+  interface Window {
+    /** Host-app hook: called once a new socket opens for a session (a fresh
+     *  start, a switch, or a reconnect) — newChat()/resumeSession() wipe every
+     *  pinned view first, so a host app's always-open view (e.g. a map) needs
+     *  telling to come back; nothing else would re-pin it. */
+    onJutulSessionStart?: () => void;
+    /** Host-app hook: a view was removed via its own tab close (not "close
+     *  panel") — lets a host app offer its own way back (e.g. a re-pin button). */
+    onJutulViewClosed?: (id: string) => void;
+  }
 }
 
 export type SessionStore = SessionState & SessionActions;
@@ -306,12 +320,18 @@ export function createSessionStore() {
     const onViz = (msg: Extract<ServerMessage, { type: "viz" }>) => {
       finalizeAssistant();
       const id = viewIdOf(msg);
-      const kind: ViewKind = msg.kind === "report" ? "report" : "plot";
-      const title = msg.title || (kind === "report" ? "Report" : "Interactive plot");
+      const kind: ViewKind =
+        msg.kind === "report" ? "report" : msg.kind === "map" ? "map" : "plot";
+      const title =
+        msg.title || (kind === "report" ? "Report" : kind === "map" ? "Map" : "Interactive plot");
       upsertView({ id, url: msg.url, title, kind, poster: msg.poster ?? null, nonce: 0 }, true);
-      set((s) => ({
-        items: [...s.items, { kind: "viz-chip", id: nextId(), viewId: id, title, viewKind: kind }],
-      }));
+      // A host app pinning its own always-open view (e.g. a map), outside any
+      // actual turn, isn't a conversation event worth a chat reference.
+      if (!msg.silent) {
+        set((s) => ({
+          items: [...s.items, { kind: "viz-chip", id: nextId(), viewId: id, title, viewKind: kind }],
+        }));
+      }
       get().openView(id);
     };
 
@@ -531,7 +551,8 @@ export function createSessionStore() {
 
       closeCanvas: () => set({ canvasOpen: false }),
 
-      removeView: (id) =>
+      removeView: (id) => {
+        const existed = !!get().views[id];
         set((s) => {
           if (!s.views[id]) return {};
           const views = { ...s.views };
@@ -545,10 +566,21 @@ export function createSessionStore() {
             canvasOpen = canvasOpen && activeView !== null;
           }
           return { views, viewOrder, activeView, canvasOpen };
-        }),
+        });
+        // Host-app hook: a view removed this way (the tab's own close, not "close
+        // panel") is gone for good unless something re-adds it — lets a host app
+        // offer its own way back (e.g. a button that re-pins it).
+        if (existed && typeof window !== "undefined") window.onJutulViewClosed?.(id);
+      },
 
       pinDoc: (url, title, slot) =>
         onViz({ type: "viz", url, title, kind: "report", slot, poster: null }),
+
+      // Pins a view (e.g. a host app's embedded page) into the canvas exactly like
+      // a server-pushed viz message does — the supported way to add one from
+      // outside, since it also updates the tab-strip order, unlike touching
+      // `views`/`openView` directly would.
+      pinView: (msg) => onViz({ type: "viz", ...msg }),
     };
   });
 }

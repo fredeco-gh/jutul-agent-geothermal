@@ -26,6 +26,25 @@ export function registerPanel(kind: string, panel: Panel): void {
   registry[kind] = panel;
 }
 
+// Each mounted IframePanel's actual DOM node, keyed by view id — a host app
+// embedding e.g. a map needs to postMessage into its iframe's contentWindow,
+// which the view's plain data object (no DOM ref) can't give it.
+const frames = new Map<string, HTMLIFrameElement>();
+
+export function getFrame(id: string): HTMLIFrameElement | undefined {
+  return frames.get(id);
+}
+
+/** Toggle pointer-events on every mounted iframe: while dragging the canvas
+ *  resize grip, an iframe'd view (a plot, report, or an embedded map) would
+ *  otherwise swallow mousemove the instant the cursor crosses into it — it's a
+ *  separate browsing context, so those events never reach the window's own
+ *  listener. Disabling pointer events for the drag's duration keeps the
+ *  cursor's moves landing on the window throughout. */
+export function setAllFramesInert(inert: boolean): void {
+  for (const frame of frames.values()) frame.style.pointerEvents = inert ? "none" : "";
+}
+
 /** A view renders as an image when it is a true image OR its URL points at one —
  *  on resume a live plot falls back to its PNG poster, which must not sit in an
  *  iframe (that shows the browser's bare, mis-sized image viewer). */
@@ -65,6 +84,10 @@ export function IframePanel({ view, active, reloadToken, onLoaded }: PanelProps)
   };
   return (
     <iframe
+      ref={(node) => {
+        if (node) frames.set(view.id, node);
+        else frames.delete(view.id);
+      }}
       className={active ? "active" : ""}
       title={view.title}
       loading="lazy"

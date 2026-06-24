@@ -70,6 +70,11 @@ export class Transport {
     // The kernel warms in the background on a fresh/resumed session until the
     // first turn lands; show the hint until any message arrives.
     this.store.getState().setWarming(true);
+    // Host-app hook: a fresh/resumed/switched session wipes every pinned view
+    // (the controller resets the store before getting here), so a host app's
+    // always-open view (e.g. a map) needs telling to come back — nothing else
+    // would re-pin it after a session switch.
+    window.onJutulSessionStart?.();
   }
 
   close(): void {
