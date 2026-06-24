@@ -89,6 +89,34 @@ particular is pinned to a known-good version: it moves fast, and its
 middleware/streaming internals have broken us before. Treat any deepagents
 bump as a change that needs the live smoke and a TUI pilot pass.
 
+## Releasing
+
+The package version is derived from git tags by hatch-vcs, so a release is a
+tag rather than a manual version bump. A tag `vX.Y.Z` builds as version
+`X.Y.Z`; commits past the latest tag build as a `.devN` pre-release. The
+runtime reads the version back through `importlib.metadata`
+(`jutul_agent.__version__`), and the update checker compares it against the
+latest release published on PyPI.
+
+Publishing is automated by `.github/workflows/release.yml`, which runs when a
+GitHub Release is published: it builds the sdist and wheel, verifies the built
+version equals the release tag, and uploads to PyPI with trusted publishing
+(OIDC), so no API token is stored in the repository. Trusted publishing is
+configured once on PyPI (a publisher for owner `SINTEF-agentlab`, repository
+`jutul-agent`, workflow `release.yml`, environment `pypi`) against a GitHub
+Environment of the same name.
+
+Cutting a release:
+
+1. Make sure `main` is at the commit to ship and CI is green.
+2. Create a GitHub Release with the tag `vX.Y.Z` targeting `main` (the UI
+   creates the tag), and write the release notes.
+3. Publishing the release triggers the workflow, which builds and uploads to
+   PyPI.
+4. Verify with `uv tool install --reinstall jutul-agent`, then check that
+   `jutul-agent --version` reports `X.Y.Z` and the new release shows on the
+   PyPI project page.
+
 ## The docs site
 
 The documentation in `docs/` doubles as an MkDocs Material site

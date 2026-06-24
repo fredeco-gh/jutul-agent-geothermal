@@ -14,12 +14,10 @@ Install jutul-agent as a uv tool. This puts a `jutul-agent` command on your
 PATH that runs from any folder:
 
 ```sh
-uv tool install git+https://github.com/SINTEF-agentlab/jutul-agent
+uv tool install jutul-agent
 ```
 
-Once the package is on PyPI this shortens to `uv tool install jutul-agent`.
-Either way, `jutul-agent upgrade` keeps it current (see
-[Upgrading](#upgrading)).
+`jutul-agent upgrade` keeps it current (see [Upgrading](#upgrading)).
 
 API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`) can go in
 your environment or a `.env`, but you don't have to manage that file: run
@@ -28,7 +26,7 @@ key` to see what's set), and the TUI and web UI prompt for a missing key on
 their own. Local models through [Ollama](https://ollama.com) need no key.
 `jutul-agent doctor` verifies the whole setup and prints a fix per finding.
 
-Prefer a clone for hacking on jutul-agent itself? See
+Prefer a clone for working on jutul-agent itself? See
 [development](development.md), where you run commands as `uv run jutul-agent`.
 
 ## Workspaces
@@ -93,7 +91,7 @@ only rebuilt from them on request. When a workspace's env was built from an
 older template, launch (and `jutul-agent doctor`) say so; rebuild it with:
 
 ```sh
-jutul-agent init --sim <name> --force --precompile
+jutul-agent init --sim <name> --force
 ```
 
 ## Adding folders
@@ -271,6 +269,6 @@ Common cases:
 - "Julia failed to start before the kernel was ready": the Julia subprocess
   crashed during startup. The message includes Julia's own error and the
   path to `julia-startup.log`. This is usually a stale env, rebuilt with
-  `init --sim <name> --force --precompile`.
+  `init --sim <name> --force`.
 - Headless Linux without `xvfb`: simulation works, plotting errors. Install
   it (`sudo apt-get install -y xvfb`).
