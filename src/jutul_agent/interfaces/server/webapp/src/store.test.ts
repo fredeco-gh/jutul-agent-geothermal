@@ -100,6 +100,23 @@ describe("canvas views", () => {
     expect(state().canvasOpen).toBe(false);
     expect(state().activeView).toBeNull();
   });
+
+  it("re-pinning a removed view under the same slot brings it back without a new chip", () => {
+    state().handle({ type: "viz", url: "/a", kind: "report", slot: "rep", title: "My report" });
+    expect(byKind("viz-chip")).toHaveLength(1);
+
+    state().removeView("slot:rep");
+    expect(state().views["slot:rep"]).toBeUndefined();
+    expect(state().canvasOpen).toBe(false);
+
+    // What the chip's "Open" click does once the chip's view is gone: re-pin
+    // it under the same id, silently (no second chip for the same click).
+    state().pinView({ url: "/a", title: "My report", kind: "report", slot: "rep", silent: true });
+    expect(state().views["slot:rep"]).toBeDefined();
+    expect(state().activeView).toBe("slot:rep");
+    expect(state().canvasOpen).toBe(true);
+    expect(byKind("viz-chip")).toHaveLength(1); // still just the original chip
+  });
 });
 
 describe("artifacts", () => {

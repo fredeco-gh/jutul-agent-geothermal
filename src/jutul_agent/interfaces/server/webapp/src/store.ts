@@ -46,7 +46,7 @@ export type ThreadItem =
       output: string;
       note?: string;
     }
-  | { kind: "viz-chip"; id: string; viewId: string; title: string; viewKind: ViewKind }
+  | { kind: "viz-chip"; id: string; viewId: string; title: string; viewKind: ViewKind; url: string }
   | { kind: "artifact-image"; id: string; viewId: string; url: string; title: string }
   | { kind: "artifact-file"; id: string; url: string; caption: string }
   | { kind: "sys-note"; id: string; text: string; level?: "warn" }
@@ -339,7 +339,7 @@ export function createSessionStore() {
       // actual turn, isn't a conversation event worth a chat reference.
       if (!msg.silent) {
         set((s) => ({
-          items: [...s.items, { kind: "viz-chip", id: nextId(), viewId: id, title, viewKind: kind }],
+          items: [...s.items, { kind: "viz-chip", id: nextId(), viewId: id, title, viewKind: kind, url: msg.url }],
         }));
       }
       get().openView(id);

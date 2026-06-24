@@ -248,11 +248,26 @@ export const ToolCard = memo(function ToolCard({ item }: { item: ToolItem }) {
 
 // --- canvas references ------------------------------------------------------
 
-export function VizChip({ viewId, title, viewKind }: { viewId: string; title: string; viewKind: ViewKind }) {
+export function VizChip({ viewId, title, viewKind, url }: { viewId: string; title: string; viewKind: ViewKind; url: string }) {
+  const exists = useSel((s) => !!s.views[viewId]);
   const openView = useSel((s) => s.openView);
+  const pinView = useSel((s) => s.pinView);
   const active = useSel((s) => s.canvasOpen && s.activeView === viewId);
+  const onClick = () => {
+    if (exists) {
+      openView(viewId);
+      return;
+    }
+    // The tab was closed (or the session reconnected, which wipes every pinned
+    // view): nothing to switch to, so re-pin it under the same id instead — a
+    // server `viz` message and a host app's `pinView` both derive that id from
+    // `slot` (else the url), so reconstructing it from `viewId` lands on the
+    // same one `openView` would have used had the view still existed.
+    const slot = viewId.startsWith("slot:") ? viewId.slice("slot:".length) : undefined;
+    pinView({ url, title, kind: viewKind, slot, silent: true });
+  };
   return (
-    <button className={`viz-chip${active ? " active" : ""}`} onClick={() => openView(viewId)}>
+    <button className={`viz-chip${active ? " active" : ""}`} onClick={onClick}>
       <span className={`ico ${viewKind}`}>
         <KindIcon kind={viewKind} />
       </span>

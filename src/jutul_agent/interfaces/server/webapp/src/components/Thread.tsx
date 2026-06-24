@@ -65,7 +65,7 @@ const ThreadItemView = memo(function ThreadItemView({ item }: { item: ThreadItem
     case "tool":
       return <ToolCard item={item} />;
     case "viz-chip":
-      return <VizChip viewId={item.viewId} title={item.title} viewKind={item.viewKind} />;
+      return <VizChip viewId={item.viewId} title={item.title} viewKind={item.viewKind} url={item.url} />;
     case "artifact-image":
       return <ArtifactImageCard viewId={item.viewId} url={item.url} title={item.title} />;
     case "artifact-file":
