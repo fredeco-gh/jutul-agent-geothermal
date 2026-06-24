@@ -91,7 +91,7 @@ only rebuilt from them on request. When a workspace's env was built from an
 older template, launch (and `jutul-agent doctor`) say so; rebuild it with:
 
 ```sh
-jutul-agent init --sim <name> --force --precompile
+jutul-agent init --sim <name> --force
 ```
 
 ## Adding folders
@@ -269,6 +269,6 @@ Common cases:
 - "Julia failed to start before the kernel was ready": the Julia subprocess
   crashed during startup. The message includes Julia's own error and the
   path to `julia-startup.log`. This is usually a stale env, rebuilt with
-  `init --sim <name> --force --precompile`.
+  `init --sim <name> --force`.
 - Headless Linux without `xvfb`: simulation works, plotting errors. Install
   it (`sudo apt-get install -y xvfb`).

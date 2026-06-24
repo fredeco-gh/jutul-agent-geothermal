@@ -125,7 +125,7 @@ Upgrade jutul-agent to the latest version, doing the right thing for how it
 was installed: a tool install runs `uv tool upgrade jutul-agent`; a dev
 checkout is pointed at `git pull && uv sync`. After upgrading, rebuild any
 workspace env that was set up with an older version
-(`jutul-agent init --sim <name> --force --precompile`).
+(`jutul-agent init --sim <name> --force`).
 
 ```sh
 jutul-agent upgrade           # upgrade to the latest

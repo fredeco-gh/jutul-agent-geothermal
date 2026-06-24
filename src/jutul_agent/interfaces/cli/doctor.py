@@ -278,7 +278,7 @@ def _check_simulator_installed(report: _Report, project: Path | None, sim_name: 
         FAIL,
         f"{pkg} resolved in env",
         f"{pkg} is in Project.toml but not in Manifest.toml (env not instantiated)",
-        f"Run `jutul-agent init --sim {sim_name} --precompile` to install it.",
+        f"Run `jutul-agent init --sim {sim_name}` to install it.",
     )
 
 
@@ -306,7 +306,7 @@ def _check_env_template_current(
             WARN,
             "Env template current",
             "built from an older template than the installed jutul-agent",
-            f"Rebuild it with `jutul-agent init --sim {sim_name} --force --precompile`.",
+            f"Rebuild it with `jutul-agent init --sim {sim_name} --force`.",
         )
     else:
         report.line(PASS, "Env template current")
@@ -369,7 +369,7 @@ def _check_julia_runs(report: _Report, project: Path) -> None:
         FAIL,
         "Julia runs in env",
         "Julia exited with an error in this env",
-        "Run `jutul-agent init --sim <name> --precompile --force` to rebuild the env.",
+        "Run `jutul-agent init --sim <name> --force` to rebuild the env.",
     )
     if tail:
         print("        Julia said:", file=sys.stderr)

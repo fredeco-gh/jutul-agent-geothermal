@@ -127,7 +127,7 @@ def test_reconcile_warns_on_drift(tmp_path: Path, capsys) -> None:
 
     env_setup._reconcile_env_template(_adapter(module_dir), workspace, env_dir, "test")
     err = capsys.readouterr().err
-    assert "older" in err and "init --force --precompile" in err
+    assert "older" in err and "init --force" in err
 
 
 def test_reconcile_silent_when_current(tmp_path: Path, capsys) -> None:

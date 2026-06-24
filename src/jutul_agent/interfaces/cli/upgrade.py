@@ -26,7 +26,7 @@ from jutul_agent.update_check import (
 # existing workspace envs are only rebuilt from it on request.
 _REBUILD_HINT = (
     "If a workspace was set up with an older version, rebuild its Julia env with "
-    "`jutul-agent init --sim <name> --force --precompile`."
+    "`jutul-agent init --sim <name> --force`."
 )
 
 

@@ -40,7 +40,7 @@ of the active simulator.
 on first use. To force a refresh after updating the template:
 
 ```sh
-uv run jutul-agent init --sim <name> --force --precompile
+uv run jutul-agent init --sim <name> --force
 ```
 
 To dev-link the simulator package against a local checkout:

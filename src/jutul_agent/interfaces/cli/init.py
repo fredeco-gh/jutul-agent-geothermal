@@ -164,7 +164,7 @@ def _ensure_web_overlay() -> str:
 
 
 def _note_headless_plotting() -> None:
-    """After --precompile, note when GLMakie can't render here (headless, no xvfb).
+    """After precompiling, note when GLMakie can't render here (headless, no xvfb).
 
     The plot warm-up is best-effort and silently skipped on a headless box, so
     without this the user wouldn't learn that plotting needs xvfb until a plot
