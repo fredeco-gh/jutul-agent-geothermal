@@ -81,10 +81,23 @@
   };
 
   // Inbound: anything the map page posts back becomes a ui_event on the live
-  // session socket, exactly like a host app's own interface would emit one.
+  // session socket, exactly like a host app's own interface would emit one —
+  // EXCEPT a simulation run request, which needs to actually execute right
+  // now with these exact parameters, not just be queued for the agent to read
+  // on its next message. That one is sent as a direct `action` instead (see
+  // capability.py's run_simulation_action), bypassing the model entirely.
   window.addEventListener("message", (event) => {
     if (event.origin !== mapOrigin) return;
-    window.jutulDebug.send({ type: "ui_event", payload: event.data });
+    const data = event.data;
+    if (data && data.event === "simulationRunRequested") {
+      window.jutulDebug.send({
+        type: "action",
+        name: "run_simulation",
+        args: { case_type: data.caseType, parameters: data.parameters },
+      });
+      return;
+    }
+    window.jutulDebug.send({ type: "ui_event", payload: data });
   });
 
   openMap();

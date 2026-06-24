@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -34,9 +34,25 @@ from jutul_agent.agent.approval import (
 from jutul_agent.interfaces.server import protocol
 from jutul_agent.interfaces.server.manager import SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
+from jutul_agent.session import Session
 
 # The bundled web UI lives next to this module.
 WEB_DIR = Path(__file__).resolve().parent / "web"
+
+# A direct, host-app-defined action a front end can trigger without going through
+# the model: it gets the live session, the request's args, a way to send wire
+# messages straight to this connection (e.g. synthetic tool-call events so a
+# long-running action still looks like a normal tool call in the chat), and a way
+# to queue a note for the model's *next* prompt (see ``_with_pending_ui_events``).
+ActionHandler = Callable[
+    [
+        "Session",
+        dict[str, Any],
+        "Callable[[dict[str, Any]], Awaitable[None]]",
+        "Callable[[Any], None]",
+    ],
+    Awaitable[None],
+]
 
 
 class HttpToolSpecModel(BaseModel):
@@ -89,8 +105,15 @@ def create_app(
     ui: bool = True,
     default_sim: str | None = None,
     extra_static: dict[str, Path] | None = None,
+    actions: dict[str, ActionHandler] | None = None,
 ) -> FastAPI:
+    """``actions`` are host-app-defined operations a front end can trigger directly,
+    bypassing the model entirely (see ``ActionHandler``) — for when the front end
+    already has exact, structured inputs and there is nothing for the model to
+    decide, unlike a normal tool call.
+    """
     manager = manager or SessionManager()
+    actions = actions or {}
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -439,7 +462,7 @@ def create_app(
 
     @app.websocket("/sessions/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str) -> None:
-        await _serve_stream(websocket, manager.get(session_id))
+        await _serve_stream(websocket, manager.get(session_id), actions=actions)
 
     # Registered before the catch-all UI mount below: a host app's extra file (e.g.
     # a bridge script) needs its own route to win, since a Mount("/") matches every
@@ -574,7 +597,12 @@ def _resolve_artifact(host: SessionHost, path: str):
     return target
 
 
-async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
+async def _serve_stream(
+    websocket: WebSocket,
+    host: SessionHost | None,
+    *,
+    actions: dict[str, ActionHandler] | None = None,
+) -> None:
     await websocket.accept()
     if host is None:
         await _safe_send(websocket, {"type": "error", "message": "no such session"})
@@ -590,7 +618,7 @@ async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
         await websocket.close()
         return
 
-    state = _StreamState(websocket, host)
+    state = _StreamState(websocket, host, actions=actions)
     try:
         while True:
             try:
@@ -611,9 +639,16 @@ async def _serve_stream(websocket: WebSocket, host: SessionHost | None) -> None:
 class _StreamState:
     """Per-connection turn state: at most one turn in flight, plus pending approvals."""
 
-    def __init__(self, websocket: WebSocket, host: SessionHost) -> None:
+    def __init__(
+        self,
+        websocket: WebSocket,
+        host: SessionHost,
+        *,
+        actions: dict[str, ActionHandler] | None = None,
+    ) -> None:
         self._ws = websocket
         self._host = host
+        self._actions = actions or {}
         self._pending: list[Any] = []
         self._turn: asyncio.Task[None] | None = None
         # Held so the fire-and-forget titling task isn't garbage-collected mid-run.
@@ -628,6 +663,10 @@ class _StreamState:
         # in an embedded host-app view) — folded into the next prompt's text so the
         # agent knows about them without a reply firing on every single event.
         self._pending_ui_events: list[Any] = []
+        # A direct action (see ActionHandler) running in the background, so a long
+        # one (e.g. a simulation) doesn't block this connection from handling
+        # anything else meanwhile, same as a real turn.
+        self._action_task: asyncio.Task[None] | None = None
 
     async def handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
@@ -643,8 +682,41 @@ class _StreamState:
             self._pending_ui_events.append(payload)
         elif kind == "command":
             await self._handle_command(message)
+        elif kind == "action":
+            await self._start_action(message)
         else:
             await _safe_send(self._ws, {"type": "error", "message": f"unknown message {kind!r}"})
+
+    async def _start_action(self, message: dict[str, Any]) -> None:
+        """Run a registered ``ActionHandler`` directly — no model, no tool call.
+
+        For a front end that already has exact, structured inputs (e.g. parameters
+        chosen in its own UI) and nothing for the model to decide. Guarded by the
+        same busy check as a prompt: the action and a turn share one Julia kernel,
+        so only one of either may run at a time.
+        """
+        name = str(message.get("name") or "")
+        handler = self._actions.get(name)
+        if handler is None:
+            await _safe_send(self._ws, {"type": "error", "message": f"unknown action {name!r}"})
+            return
+        if self._busy():
+            await _safe_send(self._ws, {"type": "error", "message": "a turn is already running"})
+            return
+        raw_args = message.get("args")
+        args = raw_args if isinstance(raw_args, dict) else {}
+        self._action_task = asyncio.create_task(self._run_action(handler, args))
+
+    async def _run_action(self, handler: ActionHandler, args: dict[str, Any]) -> None:
+        async def send_wire(msg: dict[str, Any]) -> None:
+            await _safe_send(self._ws, msg)
+
+        try:
+            await handler(self._host.session, args, send_wire, self._pending_ui_events.append)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await _safe_send(self._ws, {"type": "error", "message": f"action failed: {exc}"})
 
     async def _handle_command(self, message: dict[str, Any]) -> None:
         """Apply a session setting (model, approval policy) mid-conversation.
@@ -728,7 +800,9 @@ class _StreamState:
         self._spawn(lambda: runner.resume(payload, on_message=self._on_message))
 
     def _busy(self) -> bool:
-        return self._turn is not None and not self._turn.done()
+        return (self._turn is not None and not self._turn.done()) or (
+            self._action_task is not None and not self._action_task.done()
+        )
 
     def _spawn(self, factory) -> None:
         self._turn = asyncio.create_task(self._run_turn(factory))
@@ -845,10 +919,14 @@ class _StreamState:
             await self._flush_side_outputs()
 
     async def cancel_turn(self) -> None:
-        if self._busy():
-            self._turn.cancel()  # type: ignore[union-attr]
+        if self._turn is not None and not self._turn.done():
+            self._turn.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._turn  # type: ignore[arg-type]
+                await self._turn
+        if self._action_task is not None and not self._action_task.done():
+            self._action_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._action_task
 
     async def aclose(self) -> None:
         """Tear down on disconnect: cancel a running turn and any in-flight titling.

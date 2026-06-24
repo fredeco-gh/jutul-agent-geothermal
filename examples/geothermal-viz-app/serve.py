@@ -25,6 +25,13 @@ EXT_RENDERED = EXT_DIR / "host-extension.generated.js"  # gitignored; written at
 # geothermal-viz's own server (its Julia HTTP.jl server, ``scripts/run_server.jl``).
 GEOTHERMAL_VIZ_ORIGIN = "http://127.0.0.1:8080"
 
+# geothermal-viz's repo, assumed checked out as a sibling of this one (matches
+# GEOTHERMAL_VIZ_ORIGIN's assumption that its own server is already running).
+# simulation.jl is include()d from here into the agent's Julia kernel so its
+# Fimbul/parameter-mapping logic runs unmodified — see capability.py.
+GEOTHERMAL_VIZ_REPO = EXT_DIR.parents[2] / "geothermal-viz"
+SIMULATION_JL = GEOTHERMAL_VIZ_REPO / "src" / "simulation.jl"
+
 HOST = "127.0.0.1"
 PORT = 8742
 
@@ -61,11 +68,15 @@ async def _host_factory(
         workspace=workspace,
         resume=resume,
         session_id=session_id,
-        extensions=[geothermal_viz_capability(GEOTHERMAL_VIZ_ORIGIN), *extensions],
+        extensions=[
+            geothermal_viz_capability(GEOTHERMAL_VIZ_ORIGIN, str(SIMULATION_JL)),
+            *extensions,
+        ],
     )
 
 
 def create_geothermal_app():
+    from capability import make_run_simulation_action
     from fastapi.middleware.cors import CORSMiddleware
 
     from jutul_agent.interfaces.server.app import create_app
@@ -76,6 +87,7 @@ def create_geothermal_app():
         ui=True,
         default_sim="fimbul",
         extra_static={"/host-extension.js": _render_extension()},
+        actions={"run_simulation": make_run_simulation_action(str(SIMULATION_JL))},
     )
     app.add_middleware(
         CORSMiddleware,
