@@ -38,6 +38,14 @@ EXT_DIR = Path(__file__).resolve().parent
 EXT_TEMPLATE = EXT_DIR / "host-extension.js"
 EXT_RENDERED = EXT_DIR / "host-extension.generated.js"  # gitignored; written at startup
 
+# Pinned rather than left to default to the launching shell's cwd: a session's
+# Julia env (and its precompile-done marker) lives under <workspace>/.jutul-agent/,
+# so if this varied by which directory you happened to run `uv run ... serve.py`
+# from, every run with a different cwd would bootstrap and precompile a brand new
+# env from scratch. Fixed here, both the chat sessions (_host_factory) and the
+# dedicated viz kernel (_start_viz_host) always reuse the same one.
+WORKSPACE = EXT_DIR.parents[2]
+
 # geothermal-viz's repo, assumed checked out as a sibling of this one.
 # simulation.jl is include()d from here into the agent's Julia kernel so its
 # Fimbul/parameter-mapping logic runs unmodified — see capability.py. The web/
@@ -85,7 +93,7 @@ async def _host_factory(
         simulator=adapter,
         model=model,
         approval_mode=approval_mode,
-        workspace=workspace,
+        workspace=workspace or WORKSPACE,
         resume=resume,
         session_id=session_id,
         extensions=[
@@ -119,7 +127,9 @@ async def _start_viz_host() -> None:
         flush=True,
     )
     adapter = registry.get("fimbul")
-    _viz_host = await SessionHost.start(simulator=adapter, session_id="geothermal-viz-setup")
+    _viz_host = await SessionHost.start(
+        simulator=adapter, session_id="geothermal-viz-setup", workspace=WORKSPACE
+    )
     await _warm_simulation_jl(_viz_host.session.julia, str(SIMULATION_JL))
     print("geothermal-viz simulation backend ready.", flush=True)
 
