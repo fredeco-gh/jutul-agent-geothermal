@@ -101,6 +101,9 @@ export interface SessionState {
   viewOrder: string[];
   activeView: string | null;
   canvasOpen: boolean;
+  // hides the conversation pane so a pinned view (the map, a report) can take
+  // the full window — independent of canvasOpen, which is the other direction.
+  chatOpen: boolean;
   // approval
   pending: PendingInterrupt | null;
   // usage
@@ -142,6 +145,8 @@ export interface SessionActions {
   openView: (id: string) => void;
   closeCanvas: () => void;
   removeView: (id: string) => void;
+  closeChat: () => void;
+  openChat: () => void;
   pinDoc: (url: string, title: string, slot: string) => void;
   pinView: (msg: Omit<Extract<ServerMessage, { type: "viz" }>, "type">) => void;
 }
@@ -180,6 +185,7 @@ const initialState: SessionState = {
   viewOrder: [],
   activeView: null,
   canvasOpen: false,
+  chatOpen: true,
   pending: null,
   inputTokens: 0,
   usageLabel: "",
@@ -560,6 +566,13 @@ export function createSessionStore() {
         set((s) => (s.views[id] ? { activeView: id, canvasOpen: true } : {})),
 
       closeCanvas: () => set({ canvasOpen: false }),
+
+      // Closing the chat only makes sense if there's a view to expand into, and
+      // since the chat is the only place a closed canvas's "Views" button lives,
+      // force the canvas open too — otherwise both panes could end up hidden
+      // with no control left to undo it.
+      closeChat: () => set({ chatOpen: false, canvasOpen: true }),
+      openChat: () => set({ chatOpen: true }),
 
       removeView: (id) => {
         set((s) => {

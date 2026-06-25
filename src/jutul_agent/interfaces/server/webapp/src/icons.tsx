@@ -124,6 +124,14 @@ export function PopoutIcon() {
   );
 }
 
+export function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" {...stroke}>
+      <path d="M4 4h16v12H8l-4 4z" />
+    </svg>
+  );
+}
+
 export function ChevronRight() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" {...stroke}>

@@ -3,6 +3,7 @@
 // conversation uploads it into the session.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useStore } from "zustand";
 
 import { ApiKeys } from "./components/ApiKeys";
 import { Canvas } from "./components/Canvas";
@@ -30,6 +31,7 @@ export function App() {
     const store = createSessionStore();
     return { store, controller: new Controller(store) };
   }, []);
+  const chatOpen = useStore(ctx.store, (s) => s.chatOpen);
 
   const started = useRef(false);
   useEffect(() => {
@@ -51,6 +53,24 @@ export function App() {
       return next;
     });
 
+  // Hiding the chat is meant to hand the whole window to the canvas — the
+  // sidebar's session history is part of "the chat" for that purpose too, so
+  // collapse it along with the conversation pane, remembering whatever it was
+  // so reopening the chat restores it rather than always landing collapsed.
+  // Not persisted to localStorage: it's a side effect of closing chat, not a
+  // deliberate sidebar preference, so a later reload still reflects the
+  // user's own choice.
+  const sidebarBeforeChatClosed = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!chatOpen) {
+      sidebarBeforeChatClosed.current = collapsed;
+      setCollapsed(true);
+    } else if (sidebarBeforeChatClosed.current !== null) {
+      setCollapsed(sidebarBeforeChatClosed.current);
+      sidebarBeforeChatClosed.current = null;
+    }
+  }, [chatOpen]);
+
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
 
@@ -60,6 +80,7 @@ export function App() {
         <Sidebar collapsed={collapsed} />
         <div
           className={`app${dropping ? " dropping" : ""}`}
+          hidden={!chatOpen}
           onDragEnter={(e) => {
             if (e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files")) {
               dragDepth.current++;

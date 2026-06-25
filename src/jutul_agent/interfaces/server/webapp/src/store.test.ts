@@ -117,6 +117,21 @@ describe("canvas views", () => {
     expect(state().canvasOpen).toBe(true);
     expect(byKind("viz-chip")).toHaveLength(1); // still just the original chip
   });
+
+  it("closing the chat forces the canvas open; reopening the chat leaves the canvas as-is", () => {
+    expect(state().chatOpen).toBe(true);
+    state().handle({ type: "viz", url: "/a", kind: "plot", slot: "fig" });
+    state().closeCanvas();
+    expect(state().canvasOpen).toBe(false);
+
+    state().closeChat();
+    expect(state().chatOpen).toBe(false);
+    expect(state().canvasOpen).toBe(true); // nothing left to undo this otherwise
+
+    state().openChat();
+    expect(state().chatOpen).toBe(true);
+    expect(state().canvasOpen).toBe(true); // untouched by reopening the chat
+  });
 });
 
 describe("artifacts", () => {

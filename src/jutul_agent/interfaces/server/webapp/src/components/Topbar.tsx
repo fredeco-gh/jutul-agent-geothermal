@@ -3,7 +3,7 @@
 // button to reopen the canvas after it was closed.
 
 import { useController, useSel } from "../context";
-import { MenuIcon, ViewsIcon } from "../icons";
+import { ChatIcon, MenuIcon, ViewsIcon } from "../icons";
 
 export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const controller = useController();
@@ -17,6 +17,7 @@ export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const canvasOpen = useSel((s) => s.canvasOpen);
   const activeView = useSel((s) => s.activeView);
   const openView = useSel((s) => s.openView);
+  const closeChat = useSel((s) => s.closeChat);
 
   const simName = (sim && details[sim]?.display_name) || sim;
   const showViews = viewCount > 0 && !canvasOpen;
@@ -47,6 +48,11 @@ export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         {showViews ? (
           <button className="ghost views-btn" onClick={() => activeView && openView(activeView)}>
             <ViewsIcon /> Views <span className="count">{viewCount}</span>
+          </button>
+        ) : null}
+        {viewCount > 0 ? (
+          <button className="icon-btn" title="Hide chat" aria-label="Hide chat" onClick={closeChat}>
+            <ChatIcon />
           </button>
         ) : null}
         <button

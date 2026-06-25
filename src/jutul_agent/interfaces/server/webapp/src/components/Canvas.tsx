@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { isImageView, panelFor, setAllFramesInert } from "../canvas/registry";
 import { useSel } from "../context";
-import { BackIcon, CloseIcon, KindIcon, PopoutIcon } from "../icons";
+import { BackIcon, ChatIcon, CloseIcon, KindIcon, PopoutIcon } from "../icons";
 
 export function Canvas() {
   const views = useSel((s) => s.views);
@@ -17,6 +17,8 @@ export function Canvas() {
   const openView = useSel((s) => s.openView);
   const removeView = useSel((s) => s.removeView);
   const closeCanvas = useSel((s) => s.closeCanvas);
+  const chatOpen = useSel((s) => s.chatOpen);
+  const openChat = useSel((s) => s.openChat);
 
   // Per-(view, reload) "has loaded" set drives the spinner; a new reload token is
   // automatically "not loaded" until its panel fires onLoaded.
@@ -60,7 +62,7 @@ export function Canvas() {
   };
 
   return (
-    <aside className="canvas" hidden={!canvasOpen}>
+    <aside className={`canvas${!chatOpen ? " full" : ""}`} hidden={!canvasOpen}>
       <div className="canvas-grip" title="Drag to resize" onMouseDown={onResizeStart} />
       <div className="canvas-head">
         <div className="canvas-tabs">
@@ -92,6 +94,11 @@ export function Canvas() {
           })}
         </div>
         <div className="canvas-actions">
+          {!chatOpen ? (
+            <button className="icon-btn" title="Show chat" aria-label="Show chat" onClick={openChat}>
+              <ChatIcon />
+            </button>
+          ) : null}
           {active && !isImageView(active) ? (
             <button className="icon-btn" title="Back to this view" onClick={reloadActive}>
               <BackIcon />
