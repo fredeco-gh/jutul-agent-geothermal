@@ -67,6 +67,27 @@ describe("tool lifecycle", () => {
     expect(byKind("tool")[0]).toMatchObject({ status: "running", output: "line one\nline two\n" });
   });
 
+  it("replaces (not appends) a delta marked `replace` — the server's pre-rendered progress-bar state", () => {
+    state().handle({ type: "tool", event: "requested", name: "run_simulation", tool_call_id: "1", args: {} });
+    state().handle({
+      type: "tool",
+      event: "delta",
+      name: "run_simulation",
+      tool_call_id: "1",
+      content: "Progress  10%",
+      replace: true,
+    });
+    state().handle({
+      type: "tool",
+      event: "delta",
+      name: "run_simulation",
+      tool_call_id: "1",
+      content: "Progress 100%",
+      replace: true,
+    });
+    expect(byKind("tool")[0]).toMatchObject({ status: "running", output: "Progress 100%" });
+  });
+
   it("honours per-tool policy: read_file shows a line note, not raw output", () => {
     state().handle({ type: "tool", event: "requested", name: "read_file", tool_call_id: "r", args: { file_path: "a.jl" } });
     state().handle({ type: "tool", event: "finished", name: "read_file", tool_call_id: "r", content: "l1\nl2\nl3" });

@@ -296,9 +296,11 @@ export function createSessionStore() {
 
         if (msg.event === "delta") {
           if (msg.content != null && policy.rawOutput !== false) {
+            const content = msg.content;
+            const replace = msg.replace;
             items = items.map((it) =>
               it.kind === "tool" && it.toolCallId === cid
-                ? { ...it, output: (it.output + msg.content).slice(-STREAM_RENDER_CAP) }
+                ? { ...it, output: replace ? content : (it.output + content).slice(-STREAM_RENDER_CAP) }
                 : it,
             );
           }

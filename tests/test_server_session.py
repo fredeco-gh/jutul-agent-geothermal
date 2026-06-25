@@ -467,6 +467,34 @@ async def test_stream_delta_renders_terminal_output_and_trailing_flushes() -> No
     assert cid not in st._tool_streams and cid not in st._tool_flush
 
 
+async def test_dispatch_tool_stream_renders_action_deltas_like_turn_deltas() -> None:
+    # run_simulation_action (a UI button's direct, non-LLM path) sends its deltas
+    # through the same _dispatch_tool_stream helper a real turn's deltas go
+    # through, instead of straight to the websocket — otherwise its progress
+    # bar's carriage returns never collapse and stack as separate lines.
+    from jutul_agent.interfaces.server.app import _StreamState
+
+    ws = _FakeWS()
+    st = _StreamState(ws, None)  # type: ignore[arg-type]
+    cid = "c1"
+
+    handled = await st._dispatch_tool_stream(
+        {"type": "tool", "event": "delta", "tool_call_id": cid, "content": "step 1\rstep 2"}
+    )
+    assert handled is True  # the caller must not also send this one raw
+    assert ws.sent[-1]["replace"] is True
+    assert ws.sent[-1]["content"] == "step 2"
+
+    handled = await st._dispatch_tool_stream(
+        {"type": "tool", "event": "finished", "tool_call_id": cid, "content": "done"}
+    )
+    assert handled is False  # finished/error are still sent by the caller
+    assert cid not in st._tool_streams  # but the stream's per-call state is cleared
+
+    # A non-tool wire (e.g. an artifact) is untouched, for the caller to send as-is.
+    assert await st._dispatch_tool_stream({"type": "artifact", "url": "/x"}) is False
+
+
 def test_ws_echo_prompt(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         sid = client.post("/sessions", json={"sim": "demo"}).json()["session_id"]

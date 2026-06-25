@@ -958,6 +958,8 @@ class _StreamState:
 
     async def _run_action(self, handler: ActionHandler, args: dict[str, Any]) -> None:
         async def send_wire(msg: dict[str, Any]) -> None:
+            if await self._dispatch_tool_stream(msg):
+                return
             await _safe_send(self._ws, msg)
 
         try:
@@ -966,6 +968,11 @@ class _StreamState:
             raise
         except Exception as exc:
             await _safe_send(self._ws, {"type": "error", "message": f"action failed: {exc}"})
+        finally:
+            # A cancelled/errored action can leave a tool mid-stream (no
+            # "finished"/"error" wire to trigger _end_tool_stream); same cleanup
+            # _run_turn does, so a stale delayed flush can't fire later.
+            self._end_all_tool_streams()
 
     async def _handle_command(self, message: dict[str, Any]) -> None:
         """Apply a session setting (model, approval policy) mid-conversation.
@@ -1208,21 +1215,36 @@ class _StreamState:
         wire = protocol.to_wire(event)
         if wire is None:
             return
-        if wire.get("type") == "tool":
-            cid = wire.get("tool_call_id")
-            kind = wire.get("event")
-            if kind == "delta" and cid:
-                await self._on_tool_delta(cid, wire)
-                return  # _on_tool_delta sends (now or on its trailing flush)
-            if kind in ("finished", "error") and cid:
-                # The final result (terminal-rendered by the kernel) replaces the
-                # live stream; stop any pending flush and drop the per-call buffers.
-                self._end_tool_stream(cid)
+        if await self._dispatch_tool_stream(wire):
+            return  # a delta sends on its own (now or on its trailing flush)
         await _safe_send(self._ws, wire)
         # A tool just finished: surface any artifacts/ui it produced right away, so a
         # plot or report appears inline as it happens instead of all at turn end.
         if wire.get("type") == "tool" and wire.get("event") in ("finished", "error"):
             await self._flush_side_outputs()
+
+    async def _dispatch_tool_stream(self, wire: dict[str, Any]) -> bool:
+        """Route a tool-delta wire through the same render/throttle path a real
+        turn's deltas take (see ``_on_tool_delta``), so a direct action's progress
+        output (e.g. ``run_simulation_action``'s, fired from a UI button rather
+        than a tool call) is collapsed the same way instead of streaming raw,
+        un-rendered cursor/carriage-return codes straight to the browser.
+
+        Returns True if the wire was a delta and already handled (sent now or
+        deferred to a throttled flush) — the caller must not also send it raw.
+        """
+        if wire.get("type") != "tool":
+            return False
+        cid = wire.get("tool_call_id")
+        kind = wire.get("event")
+        if kind == "delta" and cid:
+            await self._on_tool_delta(cid, wire)
+            return True
+        if kind in ("finished", "error") and cid:
+            # The final result (terminal-rendered by the kernel) replaces the
+            # live stream; stop any pending flush and drop the per-call buffers.
+            self._end_tool_stream(cid)
+        return False
 
     async def _on_tool_delta(self, cid: str, wire: dict[str, Any]) -> None:
         """Accumulate a tool's raw output delta and send the terminal-rendered state.
