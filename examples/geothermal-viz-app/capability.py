@@ -37,6 +37,7 @@ jutul_agent.interfaces.server.app.ActionHandler.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from collections.abc import Awaitable, Callable
@@ -296,6 +297,21 @@ begin
 end
 """
 
+_SETUP_PARAMS_TEMPLATE = '''
+begin
+    if !isdefined(Main, :well_to_simulation_params)
+        include(raw"__JL_PATH__")
+    end
+    import JSON3
+    local _props = Dict{String,Any}(JSON3.read(raw"""__PROPS_JSON__""", Dict{String,Any}))
+    local _result = well_to_simulation_params(_props)
+    open(raw"__RESULT_PATH__", "w") do io
+        JSON3.write(io, _result)
+    end
+    "ok"
+end
+'''
+
 
 def _render_template(template: str, **values: str) -> str:
     code = template
@@ -354,6 +370,84 @@ async def _render_simulation_view(
     if result.error:
         raise RuntimeError(result.error)
     return img_path.read_text(encoding="ascii")
+
+
+async def _setup_simulation_params(
+    session: Session, simulation_jl_path: str, properties: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve a well's suggested Fimbul parameters from its metadata.
+
+    Runs simulation.jl's well_to_simulation_params unmodified, in the agent's
+    persistent Julia kernel — the same lookup geothermal-viz's own sidebar used
+    to get from its now-removed ``/api/simulation/setup`` server route.
+    """
+    result_path = session.output_dir / "artifacts" / f"sim-setup-{uuid.uuid4().hex[:8]}.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    code = _render_template(
+        _SETUP_PARAMS_TEMPLATE,
+        JL_PATH=Path(simulation_jl_path).resolve().as_posix(),
+        PROPS_JSON=json.dumps(properties),
+        RESULT_PATH=result_path.as_posix(),
+    )
+    result = await session.julia.eval(code)
+    if result.error:
+        raise RuntimeError(result.error)
+    return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+# Holds a reference to each fire-and-forget warmup task so asyncio doesn't GC
+# it mid-flight (it owns no other reference once start_simulation_warmup returns).
+_warmup_tasks: set[asyncio.Task[None]] = set()
+
+_WARMUP_TEMPLATE = """
+try
+    using CairoMakie
+    if !isdefined(Main, :well_to_simulation_params)
+        include(raw"__JL_PATH__")
+    end
+catch
+end
+"""
+
+
+async def _warm_simulation_jl(julia: Any, simulation_jl_path: str, *, attempts: int = 30) -> None:
+    """Load simulation.jl's one dependency the agent's own per-simulator warm-up
+    doesn't already cover: CairoMakie, a separate (and notably slow to load)
+    plotting backend used for the static reservoir-state renders, which nothing
+    else pulls in. Without this, whichever of run_simulation,
+    view_simulation_result, or the map's "Setup Simulation" runs first on a
+    given kernel pays that load cost synchronously, in the user's face.
+
+    Retried for a while: only one eval can be in flight on a kernel at a time,
+    and jutul_agent.simulators.warmup.start_warmup (the agent's own
+    Fimbul/JutulDarcy/GLMakie warm-up) is very likely still running on the same
+    kernel when this starts. Raises if every attempt fails.
+    """
+    code = _render_template(_WARMUP_TEMPLATE, JL_PATH=Path(simulation_jl_path).resolve().as_posix())
+    for attempt in range(attempts):
+        try:
+            await julia.eval(code)
+            return
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            await asyncio.sleep(1.0)
+
+
+def start_simulation_warmup(session: Session, simulation_jl_path: str) -> None:
+    """Fire-and-forget ``_warm_simulation_jl`` on a chat session's own kernel,
+    right when the session starts, so run_simulation / view_simulation_result
+    don't pay CairoMakie's load cost on first use. Best-effort: a chat session
+    that never calls either tool just wasted a background eval.
+    """
+
+    async def _run() -> None:
+        with contextlib.suppress(Exception):
+            await _warm_simulation_jl(session.julia, simulation_jl_path)
+
+    task = asyncio.create_task(_run())
+    _warmup_tasks.add(task)
+    task.add_done_callback(_warmup_tasks.discard)
 
 
 def _summarize_simulation_result(

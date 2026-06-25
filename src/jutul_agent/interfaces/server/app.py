@@ -20,7 +20,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -135,6 +143,10 @@ def create_app(
     add_dirs: Sequence[Path] = (),
     ephemeral_memory: bool = False,
     extra_static: dict[str, Path] | None = None,
+    extra_mounts: dict[str, Path] | None = None,
+    extra_routes: APIRouter | None = None,
+    on_startup: Callable[[], Awaitable[None]] | None = None,
+    on_shutdown: Callable[[], Awaitable[None]] | None = None,
     actions: dict[str, ActionHandler] | None = None,
 ) -> FastAPI:
     # The launch-wide knobs (folder-fixed) ride in the default manager's host
@@ -164,8 +176,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        yield
-        await manager.aclose()
+        # uvicorn awaits this before it starts accepting connections, so a host
+        # app's on_startup (e.g. pre-warming a Julia kernel) finishes before the
+        # port is even reachable — the single-process equivalent of waiting for a
+        # separate server process to print "ready" before opening the page.
+        if on_startup is not None:
+            await on_startup()
+        try:
+            yield
+        finally:
+            if on_shutdown is not None:
+                await on_shutdown()
+            await manager.aclose()
 
     app = FastAPI(
         title="jutul-agent",
@@ -617,6 +639,14 @@ def create_app(
     # path and a route added after it would never be reached.
     for route_path, file_path in (extra_static or {}).items():
         app.add_api_route(route_path, lambda fp=file_path: FileResponse(fp), methods=["GET"])
+
+    # Same reasoning, for a whole directory (e.g. a host app's own embedded web
+    # app) or a router of custom endpoints (e.g. a host app's own data API) —
+    # both need to win over the catch-all UI mount the same way extra_static does.
+    for route_path, dir_path in (extra_mounts or {}).items():
+        app.mount(route_path, StaticFiles(directory=dir_path, html=True), name=route_path)
+    if extra_routes is not None:
+        app.include_router(extra_routes)
 
     # The bundled web UI is mounted last so the API routes above take precedence.
     ui_dir = _ui_dir()

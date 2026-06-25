@@ -91,6 +91,62 @@ def test_models_endpoint_reports_the_launch_default_model(tmp_path: Path) -> Non
         assert c.get("/models").json()["default"] == DEFAULT_MODEL
 
 
+def test_extra_mounts_and_routes_win_over_the_catch_all_ui_mount(tmp_path: Path) -> None:
+    # A host app's own static directory (e.g. an embedded map) and custom routes
+    # (e.g. that app's own data API) must be reachable — the bundled UI's
+    # catch-all "/" mount is registered last specifically so these win instead
+    # of being silently swallowed by it.
+    from fastapi import APIRouter
+
+    extra_dir = tmp_path / "host_static"
+    extra_dir.mkdir()
+    (extra_dir / "index.html").write_text("<h1>host page</h1>", encoding="utf-8")
+
+    router = APIRouter()
+
+    @router.get("/api/host-data")
+    def host_data() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app = create_app(
+        _manager(echo_agent, tmp_path),
+        extra_mounts={"/host": extra_dir},
+        extra_routes=router,
+    )
+    with TestClient(app) as client:
+        mount_resp = client.get("/host/")
+        assert mount_resp.status_code == 200
+        assert "host page" in mount_resp.text
+
+        route_resp = client.get("/api/host-data")
+        assert route_resp.status_code == 200
+        assert route_resp.json() == {"ok": "yes"}
+
+        # The bundled UI itself is still reachable at the root.
+        assert client.get("/").status_code == 200
+
+
+def test_on_startup_runs_before_serving_and_on_shutdown_after(tmp_path: Path) -> None:
+    # A host app's on_startup (e.g. pre-warming a dedicated Julia kernel) must
+    # finish before any request is served — uvicorn doesn't open the port until
+    # the ASGI lifespan's startup completes, so a TestClient context entry
+    # already exercises that ordering. on_shutdown runs on the way out, before
+    # the manager itself closes.
+    events: list[str] = []
+
+    async def on_startup() -> None:
+        events.append("startup")
+
+    async def on_shutdown() -> None:
+        events.append("shutdown")
+
+    app = create_app(_manager(echo_agent, tmp_path), on_startup=on_startup, on_shutdown=on_shutdown)
+    with TestClient(app) as client:
+        assert events == ["startup"]
+        assert client.get("/").status_code == 200
+    assert events == ["startup", "shutdown"]
+
+
 def test_credentials_endpoint_lists_providers(tmp_path: Path) -> None:
     with _client(echo_agent, tmp_path) as client:
         body = client.get("/credentials").json()
