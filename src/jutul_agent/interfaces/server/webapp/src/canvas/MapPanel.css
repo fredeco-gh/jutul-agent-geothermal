@@ -1,0 +1,191 @@
+/* Geothermal map panel styling — scoped under .map-panel so it can't leak
+   into the rest of the app. Ported from geothermal-viz's web/css/style.css
+   (sidebar, layer toggles, well info, popups), adapted from a full standalone
+   page to one canvas panel among others. */
+
+.map-panel-map {
+  position: absolute;
+  inset: 0;
+}
+
+.map-panel .sidebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 5;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
+  overflow-y: auto;
+  transition: transform 0.3s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.map-panel .sidebar.collapsed {
+  transform: translateX(-100%);
+}
+
+.map-panel .sidebar-header {
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #2c3e50, #3498db);
+  color: white;
+}
+
+.map-panel .sidebar-header h1 {
+  font-size: 1.2em;
+  margin: 0 0 2px;
+}
+
+.map-panel .sidebar-header .subtitle {
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+
+.map-panel .sidebar-section {
+  padding: 14px 18px;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.map-panel .sidebar-section h2 {
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #555;
+  margin: 0 0 8px;
+}
+
+.map-panel .layer-toggle {
+  display: flex;
+  align-items: center;
+  padding: 5px 0;
+  cursor: pointer;
+  font-size: 0.85em;
+  color: #333;
+}
+
+.map-panel .layer-toggle input {
+  margin-right: 8px;
+}
+
+.map-panel .color-dot {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.map-panel .stat-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 0.88em;
+}
+
+.map-panel .stat-label {
+  color: #666;
+}
+
+.map-panel .stat-value {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.map-panel .no-selection {
+  color: #999;
+  font-style: italic;
+  padding: 6px 0;
+  font-size: 0.85em;
+}
+
+.map-panel .well-detail {
+  font-size: 0.85em;
+}
+
+.map-panel .well-detail .well-title {
+  font-weight: 600;
+  font-size: 1.05em;
+  color: #2c3e50;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid #3498db;
+}
+
+.map-panel .well-detail table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.map-panel .well-detail td {
+  padding: 3px 0;
+  vertical-align: top;
+}
+
+.map-panel .well-detail td:first-child {
+  color: #888;
+  padding-right: 10px;
+  white-space: nowrap;
+  width: 45%;
+}
+
+.map-panel .well-detail td:last-child {
+  color: #333;
+  word-break: break-word;
+}
+
+.map-panel .sidebar-toggle {
+  position: absolute;
+  top: 10px;
+  left: 330px;
+  z-index: 6;
+  background: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 1.1em;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: left 0.3s ease;
+}
+
+.map-panel .sidebar-toggle.shifted {
+  left: 10px;
+}
+
+.map-panel .sidebar-toggle:hover {
+  background: #f0f0f0;
+}
+
+/* Popups attach to the map's own container, a descendant of .map-panel. */
+.map-panel .maplibregl-popup-content {
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  max-width: 280px;
+}
+
+.map-panel .popup-title {
+  font-weight: 600;
+  font-size: 0.95em;
+  margin-bottom: 6px;
+  color: #2c3e50;
+}
+
+.map-panel .popup-type {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75em;
+  font-weight: 500;
+  color: white;
+  margin-bottom: 6px;
+}
+
+.map-panel .popup-detail {
+  font-size: 0.82em;
+  color: #555;
+  line-height: 1.5;
+}

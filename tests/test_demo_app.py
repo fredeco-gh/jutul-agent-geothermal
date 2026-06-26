@@ -28,10 +28,10 @@ def _session(tmp_path: Path) -> Session:
     )
 
 
-def test_capability_is_web_with_four_tools() -> None:
+def test_capability_is_web_with_two_tools() -> None:
     cap = demo.demo_capability()
     assert cap.surfaces == ("web",)
-    assert len(cap.tools) == 4
+    assert len(cap.tools) == 2
     assert cap.prompt_fragment
 
 
@@ -54,26 +54,3 @@ def test_plot_response_records_html_artifact(tmp_path: Path) -> None:
     assert artifacts[-1].payload["path"].endswith(".html")
     # The tool drove the Julia export.
     assert any("Bonito.export_static" in code for code in session.julia.calls)
-
-
-def test_show_test_map_pins_a_map_artifact(tmp_path: Path) -> None:
-    session = _session(tmp_path)
-    show_test_map = demo._make_show_test_map_tool(session)
-    asyncio.run(show_test_map.ainvoke({}))
-    artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
-    assert artifacts[-1].payload["kind"] == "map"
-    assert artifacts[-1].payload["slot"] == "test-map"
-    assert (session.output_dir / artifacts[-1].payload["path"]).is_file()
-
-
-def test_fly_test_map_emits_a_targeted_ui_event(tmp_path: Path) -> None:
-    session = _session(tmp_path)
-    fly_test_map = demo._make_fly_test_map_tool(session)
-    out = asyncio.run(fly_test_map.ainvoke({"lng": 10, "lat": 20, "zoom": 5}))
-    assert "10" in out
-    ui_events = [e for e in session.trace.iter_events() if e.kind == "ui"]
-    assert ui_events[-1].payload == {
-        "action": "fly_to",
-        "payload": {"lng": 10.0, "lat": 20.0, "zoom": 5.0},
-        "target": "slot:test-map",
-    }

@@ -1,5 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SessionProvider } from "../context";
 import { Controller } from "../controller";
@@ -12,28 +12,50 @@ import { MapPanel } from "./MapPanel";
 // in a fake that records what the panel does, instead of what it renders.
 // `vi.mock`'s factory is hoisted above this file's own declarations, so the
 // class must be created through `vi.hoisted` to be visible inside it.
-const { FakeMap } = vi.hoisted(() => {
+const { FakeMap, FakePopup } = vi.hoisted(() => {
   class FakeMap {
     static instances: FakeMap[] = [];
     handlers: Record<string, Array<(e: unknown) => void>> = {};
+    layers = new Set<string>();
+    layoutProps: Array<{ id: string; prop: string; value: unknown }> = [];
     removed = false;
-    resizeCalls = 0;
     flyToCalls: unknown[] = [];
     constructor(public options: unknown) {
       FakeMap.instances.push(this);
     }
-    on(event: string, cb: (e: unknown) => void) {
+    addControl() {}
+    on(event: string, a: unknown, b?: unknown) {
+      const key = typeof a === "string" ? `${event}:${a}` : event;
+      const cb = (typeof a === "string" ? b : a) as (e: unknown) => void;
+      (this.handlers[key] ??= []).push(cb);
+    }
+    once(event: string, cb: (e: unknown) => void) {
       (this.handlers[event] ??= []).push(cb);
     }
     fire(event: string, e: unknown = {}) {
       for (const cb of this.handlers[event] ?? []) cb(e);
     }
+    fireLayer(event: string, layerId: string, e: unknown = {}) {
+      for (const cb of this.handlers[`${event}:${layerId}`] ?? []) cb(e);
+    }
+    addSource() {}
+    addLayer(def: { id: string }) {
+      this.layers.add(def.id);
+    }
+    getLayer(id: string) {
+      return this.layers.has(id) ? {} : undefined;
+    }
+    setLayoutProperty(id: string, prop: string, value: unknown) {
+      this.layoutProps.push({ id, prop, value });
+    }
+    getCanvas() {
+      return { style: {} as Record<string, string> };
+    }
+    setTerrain() {}
     remove() {
       this.removed = true;
     }
-    resize() {
-      this.resizeCalls++;
-    }
+    resize() {}
     getZoom() {
       return 1;
     }
@@ -41,10 +63,52 @@ const { FakeMap } = vi.hoisted(() => {
       this.flyToCalls.push(opts);
     }
   }
-  return { FakeMap };
+  class FakePopup {
+    lngLat: unknown;
+    html = "";
+    removed = false;
+    setLngLat(lngLat: unknown) {
+      this.lngLat = lngLat;
+      return this;
+    }
+    setHTML(html: string) {
+      this.html = html;
+      return this;
+    }
+    addTo() {
+      return this;
+    }
+    remove() {
+      this.removed = true;
+    }
+  }
+  return { FakeMap, FakePopup };
 });
 
-vi.mock("maplibre-gl", () => ({ default: { Map: FakeMap } }));
+vi.mock("maplibre-gl", () => ({
+  default: {
+    Map: FakeMap,
+    Popup: FakePopup,
+    NavigationControl: class {},
+    ScaleControl: class {},
+  },
+}));
+
+const SAMPLE_GEOJSON = {
+  type: "FeatureCollection",
+  features: [
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [10.7, 59.9] },
+      properties: { layer: "EnergiBrønn", brønnNr: "100", oppdragstaker: "Acme" },
+    },
+    {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [10.8, 60.0] },
+      properties: { layer: "BrønnPark", brønnParkNr: "200" },
+    },
+  ],
+};
 
 function makeView(id: string): View {
   return { id, url: "", title: "Map", kind: "map", nonce: 0 };
@@ -63,86 +127,128 @@ function renderPanel(view: View) {
   return { store, onUiEvent, onLoaded, ...utils };
 }
 
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 describe("MapPanel", () => {
-  it("mounts an empty map and calls onLoaded on the map's load event", () => {
+  beforeEach(() => {
     FakeMap.instances.length = 0;
-    const { onLoaded } = renderPanel(makeView("slot:map"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => SAMPLE_GEOJSON }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("calls onLoaded on the map's load event, independent of the data fetch", () => {
+    const { onLoaded } = renderPanel(makeView("slot:geothermal-map"));
     const map = FakeMap.instances.at(-1)!;
     expect(onLoaded).not.toHaveBeenCalled();
     act(() => map.fire("load"));
     expect(onLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a click as a ui_event with the clicked coordinates", () => {
-    FakeMap.instances.length = 0;
-    const { onUiEvent } = renderPanel(makeView("slot:map"));
+  it("fetches the borehole data and adds one source/layer per layer group", async () => {
+    renderPanel(makeView("slot:geothermal-map"));
     const map = FakeMap.instances.at(-1)!;
-    act(() => map.fire("click", { lngLat: { lng: 10, lat: 20 } }));
-    expect(onUiEvent).toHaveBeenCalledWith({ action: "click", lng: 10, lat: 20 });
+    act(() => map.fire("style.load"));
+    await flush();
+    expect(fetch).toHaveBeenCalledWith("/geothermal-data/all_boreholes.geojson");
+    expect(map.layers.has("layer-energibronn")).toBe(true);
+    expect(map.layers.has("layer-bronnpark")).toBe(true);
+    expect(screen.getByText("Total boreholes:").nextSibling).toHaveTextContent("2");
   });
 
-  it("the debug HUD's click counter increments on each click", () => {
-    FakeMap.instances.length = 0;
-    renderPanel(makeView("slot:map"));
+  it("still calls onLoaded if the data fetch fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) }));
+    const { onLoaded } = renderPanel(makeView("slot:geothermal-map"));
     const map = FakeMap.instances.at(-1)!;
-    expect(screen.getByText(/clicks 0/)).toBeInTheDocument();
-    act(() => map.fire("click", { lngLat: { lng: 1, lat: 2 } }));
-    act(() => map.fire("click", { lngLat: { lng: 3, lat: 4 } }));
-    expect(screen.getByText(/clicks 2/)).toBeInTheDocument();
+    act(() => map.fire("load"));
+    act(() => map.fire("style.load"));
+    await flush();
+    expect(onLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it("the debug HUD reflects the camera after a fly_to action", () => {
-    FakeMap.instances.length = 0;
-    const view = makeView("slot:map");
-    const { store } = renderPanel(view);
-    act(() => {
-      store.getState().handle({
-        type: "ui",
-        action: "fly_to",
-        payload: { lng: 12.5, lat: -3.25, zoom: 7 },
-        target: view.id,
-      });
+  it("selecting a well via a layer click shows its info and emits a ui_event", async () => {
+    const { onUiEvent } = renderPanel(makeView("slot:geothermal-map"));
+    const map = FakeMap.instances.at(-1)!;
+    act(() => map.fire("style.load"));
+    await flush();
+
+    act(() =>
+      map.fireLayer("click", "layer-energibronn", {
+        lngLat: { lng: 10.7, lat: 59.9 },
+        features: [SAMPLE_GEOJSON.features[0]],
+      }),
+    );
+
+    expect(screen.getByText("Well #100")).toBeInTheDocument();
+    expect(onUiEvent).toHaveBeenCalledWith({
+      event: "wellSelected",
+      properties: SAMPLE_GEOJSON.features[0].properties,
+      lngLat: { lng: 10.7, lat: 59.9 },
     });
-    expect(screen.getByText(/lng 12\.500/)).toBeInTheDocument();
-    expect(screen.getByText(/lat -3\.250/)).toBeInTheDocument();
-    expect(screen.getByText(/zoom 7\.0/)).toBeInTheDocument();
   });
 
-  it("moves the camera on a fly_to action targeted at this view", () => {
-    FakeMap.instances.length = 0;
-    const view = makeView("slot:map");
+  it("moves the camera on a set_map_view action targeted at this view", () => {
+    const view = makeView("slot:geothermal-map");
     const { store } = renderPanel(view);
     const map = FakeMap.instances.at(-1)!;
     act(() => {
       store.getState().handle({
         type: "ui",
-        action: "fly_to",
-        payload: { lng: 5, lat: 6, zoom: 9 },
+        action: "set_map_view",
+        payload: { lon: 5, lat: 6, zoom: 9 },
         target: view.id,
       });
     });
     expect(map.flyToCalls).toEqual([{ center: [5, 6], zoom: 9 }]);
   });
 
-  it("ignores a fly_to action targeted at a different view", () => {
-    FakeMap.instances.length = 0;
-    const view = makeView("slot:map");
-    const { store } = renderPanel(view);
+  it("a go_to_well action flies to and selects the resolved feature", () => {
+    const view = makeView("slot:geothermal-map");
+    const { store, onUiEvent } = renderPanel(view);
     const map = FakeMap.instances.at(-1)!;
+    const feature = SAMPLE_GEOJSON.features[0];
     act(() => {
       store.getState().handle({
         type: "ui",
-        action: "fly_to",
-        payload: { lng: 5, lat: 6 },
-        target: "slot:other",
+        action: "go_to_well",
+        payload: { lon: 10.7, lat: 59.9, feature },
+        target: view.id,
       });
     });
-    expect(map.flyToCalls).toEqual([]);
+    expect(map.flyToCalls).toEqual([{ center: [10.7, 59.9], zoom: 17 }]);
+    expect(screen.getByText("Well #100")).toBeInTheDocument();
+    expect(onUiEvent).toHaveBeenCalledWith({
+      event: "wellSelected",
+      properties: feature.properties,
+      lngLat: { lng: 10.7, lat: 59.9 },
+    });
+  });
+
+  it("toggling a layer checkbox hides that layer on the map", async () => {
+    renderPanel(makeView("slot:geothermal-map"));
+    const map = FakeMap.instances.at(-1)!;
+    act(() => map.fire("style.load"));
+    await flush();
+
+    const label = screen.getByText(/Energy Wells/);
+    const checkbox = label.querySelector("input") as HTMLInputElement;
+    fireEvent.click(checkbox);
+    expect(map.layoutProps).toEqual([{ id: "layer-energibronn", prop: "visibility", value: "none" }]);
   });
 
   it("removes the map on unmount", () => {
-    FakeMap.instances.length = 0;
-    const { unmount } = renderPanel(makeView("slot:map"));
+    const { unmount } = renderPanel(makeView("slot:geothermal-map"));
     const map = FakeMap.instances.at(-1)!;
     unmount();
     expect(map.removed).toBe(true);
