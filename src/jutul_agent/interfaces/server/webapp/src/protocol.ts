@@ -61,7 +61,14 @@ export type ServerMessage =
       silent?: boolean;
     }
   | { type: "notice"; text: string }
-  | { type: "ui"; action: string; payload: Record<string, unknown> }
+  | {
+      type: "ui";
+      action: string;
+      payload: Record<string, unknown>;
+      /** A view id: routes this action to that view's panel (e.g. the map)
+       *  instead of appending a chat thread note. Omitted means global. */
+      target?: string;
+    }
   | { type: "credential_required"; provider: string; label: string; env_var: string }
   | { type: "error"; message: string };
 

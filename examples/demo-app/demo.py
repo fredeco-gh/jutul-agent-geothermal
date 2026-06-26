@@ -93,11 +93,65 @@ def _export_snippet(p: float, target: Path) -> str:
     )
 
 
+def _make_show_test_map_tool(session: Session):
+    @tool
+    async def show_test_map() -> str:
+        """Pin an empty map panel in the user's canvas, to demo the new map surface."""
+        rel = "artifacts/test-map.html"
+        path = session.output_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<!doctype html><title>map placeholder</title>", encoding="utf-8")
+        # kind="map" routes this to MapPanel (canvas/registry.tsx) instead of an
+        # iframe; the url/mime/path above only exist to satisfy the artifact
+        # plumbing — MapPanel itself never loads them.
+        session.trace.append(
+            "artifact",
+            {
+                "path": rel,
+                "mime": "text/html",
+                "kind": "map",
+                "slot": "test-map",
+                "caption": "Test map",
+            },
+        )
+        return "Pinned an empty test map panel in the canvas."
+
+    return show_test_map
+
+
+def _make_fly_test_map_tool(session: Session):
+    @tool
+    async def fly_test_map(lng: float, lat: float, zoom: float = 4) -> str:
+        """Move the test map's camera to (lng, lat) at the given zoom level."""
+        session.trace.append(
+            "ui",
+            {
+                "action": "fly_to",
+                "payload": {"lng": lng, "lat": lat, "zoom": zoom},
+                "target": "slot:test-map",
+            },
+        )
+        return f"Flew the test map to ({lng}, {lat})."
+
+    return fly_test_map
+
+
 def demo_capability() -> Capability:
-    """The web capability for the demo: an interactive-plot tool and a UI control."""
+    """The web capability for the demo: an interactive-plot tool and a UI control.
+
+    ``show_test_map``/``fly_test_map`` are a throwaway pair proving the new
+    canvas "map" panel end to end (see canvas/MapPanel.tsx) — delete them once
+    a real geothermal capability exercises the same wire (target-ed `ui`,
+    `ui_event`) for real.
+    """
     return Capability(
         name="demosim-web",
-        tools=(_make_set_param_tool, _make_plot_tool),
+        tools=(
+            _make_set_param_tool,
+            _make_plot_tool,
+            _make_show_test_map_tool,
+            _make_fly_test_map_tool,
+        ),
         prompt_fragment=_PROMPT_FRAGMENT,
         surfaces=("web",),
     )

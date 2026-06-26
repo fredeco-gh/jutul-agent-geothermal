@@ -1239,7 +1239,13 @@ class _StreamState:
             elif event.kind == "ui":
                 action = str(event.payload.get("action") or "")
                 payload = event.payload.get("payload")
-                await _safe_send(self._ws, protocol.ui_command(action, payload))
+                target = event.payload.get("target")
+                await _safe_send(
+                    self._ws,
+                    protocol.ui_command(
+                        action, payload, target=target if isinstance(target, str) else None
+                    ),
+                )
 
     async def _on_message(self, event: Any) -> None:
         wire = protocol.to_wire(event)

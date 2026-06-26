@@ -139,6 +139,13 @@ describe("canvas views", () => {
     expect(byKind("viz-chip")).toHaveLength(1); // still just the original chip
   });
 
+  it("passes an unrecognized kind through as-is, instead of collapsing it to plot", () => {
+    state().handle({ type: "viz", url: "/m", kind: "map", slot: "map" });
+    expect(state().views["slot:map"].kind).toBe("map");
+    state().handle({ type: "viz", url: "/x", kind: "some-future-kind", slot: "future" });
+    expect(state().views["slot:future"].kind).toBe("some-future-kind");
+  });
+
   it("closing the chat forces the canvas open; reopening the chat leaves the canvas as-is", () => {
     expect(state().chatOpen).toBe(true);
     state().handle({ type: "viz", url: "/a", kind: "plot", slot: "fig" });
@@ -239,6 +246,35 @@ describe("ui history_changed is internal (no thread item)", () => {
   it("does not surface as a ui-note", () => {
     state().handle({ type: "ui", action: "history_changed", payload: { title: "x" } });
     expect(byKind("ui-note")).toHaveLength(0);
+    state().handle({ type: "ui", action: "well_placed", payload: { id: 3 } });
+    expect(byKind("ui-note")[0].action).toBe("well_placed");
+  });
+});
+
+describe("ui actions targeted at a view", () => {
+  it("queues a targeted action instead of adding a thread note", () => {
+    state().handle({ type: "ui", action: "fly_to", payload: { lng: 1, lat: 2 }, target: "slot:map" });
+    expect(byKind("ui-note")).toHaveLength(0);
+    expect(state().consumeUiActions("slot:map")).toEqual([
+      { action: "fly_to", payload: { lng: 1, lat: 2 } },
+    ]);
+  });
+
+  it("consuming drains the queue — a second read is empty", () => {
+    state().handle({ type: "ui", action: "fly_to", payload: {}, target: "slot:map" });
+    state().consumeUiActions("slot:map");
+    expect(state().consumeUiActions("slot:map")).toEqual([]);
+  });
+
+  it("queues multiple actions per view, in order, and keeps views separate", () => {
+    state().handle({ type: "ui", action: "a", payload: {}, target: "slot:map" });
+    state().handle({ type: "ui", action: "b", payload: {}, target: "slot:map" });
+    state().handle({ type: "ui", action: "other", payload: {}, target: "slot:report" });
+    expect(state().consumeUiActions("slot:map").map((a) => a.action)).toEqual(["a", "b"]);
+    expect(state().consumeUiActions("slot:report").map((a) => a.action)).toEqual(["other"]);
+  });
+
+  it("an untargeted ui action still surfaces as a ui-note as before", () => {
     state().handle({ type: "ui", action: "well_placed", payload: { id: 3 } });
     expect(byKind("ui-note")[0].action).toBe("well_placed");
   });

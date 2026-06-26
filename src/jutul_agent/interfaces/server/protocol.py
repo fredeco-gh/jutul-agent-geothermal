@@ -195,14 +195,21 @@ def notice_to_wire(text: str) -> dict[str, Any]:
     return {"type": "notice", "text": text}
 
 
-def ui_command(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def ui_command(
+    action: str, payload: dict[str, Any] | None = None, *, target: str | None = None
+) -> dict[str, Any]:
     """A UI-control command for the front end: an opaque action plus its payload.
 
     The envelope is fixed; the ``action`` vocabulary belongs to the capability
-    bundle that owns that part of the UI, not to this module.
+    bundle that owns that part of the UI, not to this module. ``target``, a view
+    id, routes the action to that view's own panel (e.g. a map) instead of the
+    chat thread; omitted (the common case) means global, unchanged from before.
     """
 
-    return {"type": "ui", "action": action, "payload": payload or {}}
+    wire: dict[str, Any] = {"type": "ui", "action": action, "payload": payload or {}}
+    if target:
+        wire["target"] = target
+    return wire
 
 
 def _chunk_text(msg: AIMessageChunk) -> str:

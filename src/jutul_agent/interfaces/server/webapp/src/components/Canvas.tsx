@@ -6,10 +6,11 @@
 import { useState } from "react";
 
 import { isImageView, panelFor, setAllFramesInert } from "../canvas/registry";
-import { useSel } from "../context";
+import { useController, useSel } from "../context";
 import { BackIcon, ChatIcon, CloseIcon, KindIcon, PopoutIcon } from "../icons";
 
 export function Canvas() {
+  const controller = useController();
   const views = useSel((s) => s.views);
   const viewOrder = useSel((s) => s.viewOrder);
   const activeView = useSel((s) => s.activeView);
@@ -129,6 +130,7 @@ export function Canvas() {
               active={id === activeView}
               reloadToken={token}
               onLoaded={() => markLoaded(id, token)}
+              onUiEvent={(payload) => controller.transport.send({ type: "ui_event", payload })}
             />
           );
         })}

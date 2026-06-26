@@ -5,9 +5,10 @@
 // surface — e.g. a MapLibre map to place geothermal wells — by calling
 // `registerPanel("map", MapPanel)`; no change to the canvas core is needed.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import type { View } from "../store";
+import { useSel } from "../context";
+import type { UiAction, View } from "../store";
 
 export interface PanelProps {
   view: View;
@@ -16,6 +17,21 @@ export interface PanelProps {
   reloadToken: number;
   /** Call when the panel's content has finished loading (clears the spinner). */
   onLoaded: () => void;
+  /** Send a payload back to the agent as a `ui_event` (e.g. a map click). */
+  onUiEvent: (payload: unknown) => void;
+}
+
+/** A panel's own hook for reading the `ui` actions the agent has targeted at
+ *  it (see protocol.ts's `ui.target`) — call with the panel's own `view.id`.
+ *  Each batch is delivered exactly once: reading it drains the store's queue. */
+export function useUiActions(viewId: string): UiAction[] {
+  const queued = useSel((s) => s.uiActions[viewId]);
+  const consumeUiActions = useSel((s) => s.consumeUiActions);
+  const [drained, setDrained] = useState<UiAction[]>([]);
+  useEffect(() => {
+    if (queued && queued.length) setDrained(consumeUiActions(viewId));
+  }, [queued, consumeUiActions, viewId]);
+  return drained;
 }
 
 export type Panel = (props: PanelProps) => React.ReactElement;

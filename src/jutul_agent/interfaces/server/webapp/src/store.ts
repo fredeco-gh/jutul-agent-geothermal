@@ -17,7 +17,10 @@ import { toolPolicy } from "./toolPolicy";
 // the render unbounded; rendering tolerates a truncated escape at the cut.
 const STREAM_RENDER_CAP = 256 * 1024;
 
-export type ViewKind = "plot" | "report" | "image" | "map";
+// The three built-in kinds get first-class autocomplete; an extension's panel
+// (registered via canvas/registry.tsx's registerPanel) can use any other string
+// — icons.tsx and messages.tsx already fall back gracefully for those.
+export type ViewKind = "plot" | "report" | "image" | "map" | (string & {});
 
 export interface View {
   id: string;
@@ -54,6 +57,13 @@ export type ThreadItem =
   | { kind: "error"; id: string; message: string; canRetry: boolean }
   | { kind: "help"; id: string }
   | { kind: "context"; id: string; markdown: string };
+
+/** A `ui` action targeted at one view (e.g. the map), queued until that view's
+ *  panel drains it via `consumeUiActions`. */
+export interface UiAction {
+  action: string;
+  payload: Record<string, unknown>;
+}
 
 export interface PendingInterrupt {
   actions: InterruptAction[];
@@ -101,6 +111,9 @@ export interface SessionState {
   viewOrder: string[];
   activeView: string | null;
   canvasOpen: boolean;
+  // ui actions targeted at a specific view (a panel's own id), queued until
+  // that panel calls consumeUiActions — see protocol.ts's `ui.target`.
+  uiActions: Record<string, UiAction[]>;
   // hides the conversation pane so a pinned view (the map, a report) can take
   // the full window — independent of canvasOpen, which is the other direction.
   chatOpen: boolean;
@@ -149,6 +162,8 @@ export interface SessionActions {
   openChat: () => void;
   pinDoc: (url: string, title: string, slot: string) => void;
   pinView: (msg: Omit<Extract<ServerMessage, { type: "viz" }>, "type">) => void;
+  // Drains and returns a view's queued targeted ui actions (see UiAction).
+  consumeUiActions: (viewId: string) => UiAction[];
 }
 
 declare global {
@@ -185,6 +200,7 @@ const initialState: SessionState = {
   viewOrder: [],
   activeView: null,
   canvasOpen: false,
+  uiActions: {},
   chatOpen: true,
   pending: null,
   inputTokens: 0,
@@ -338,8 +354,10 @@ export function createSessionStore() {
     const onViz = (msg: Extract<ServerMessage, { type: "viz" }>) => {
       finalizeAssistant();
       const id = viewIdOf(msg);
-      const kind: ViewKind =
-        msg.kind === "report" ? "report" : msg.kind === "map" ? "map" : "plot";
+      // An unrecognized kind passes through as-is: panelFor()'s registry
+      // lookup (registry.tsx) falls back to IframePanel itself, so nothing
+      // here needs to know about a kind in advance for it to work.
+      const kind: ViewKind = msg.kind || "plot";
       const title =
         msg.title || (kind === "report" ? "Report" : kind === "map" ? "Map" : "Interactive plot");
       upsertView({ id, url: msg.url, title, kind, poster: msg.poster ?? null, nonce: 0 }, true);
@@ -381,6 +399,18 @@ export function createSessionStore() {
     const onUi = (msg: Extract<ServerMessage, { type: "ui" }>) => {
       // history_changed is an internal refresh signal, handled by the controller.
       if (msg.action === HISTORY_CHANGED) return;
+      // A targeted action is for one view's panel (e.g. the map) to consume
+      // itself — not a conversation event, so it skips the thread entirely.
+      if (msg.target) {
+        const target = msg.target;
+        set((s) => ({
+          uiActions: {
+            ...s.uiActions,
+            [target]: [...(s.uiActions[target] ?? []), { action: msg.action, payload: msg.payload }],
+          },
+        }));
+        return;
+      }
       finalizeAssistant();
       set((s) => ({
         items: [...s.items, { kind: "ui-note", id: nextId(), action: msg.action, payload: msg.payload }],
@@ -607,6 +637,17 @@ export function createSessionStore() {
       // outside, since it also updates the tab-strip order, unlike touching
       // `views`/`openView` directly would.
       pinView: (msg) => onViz({ type: "viz", ...msg }),
+
+      consumeUiActions: (viewId) => {
+        const queued = get().uiActions[viewId];
+        if (!queued || !queued.length) return [];
+        set((s) => {
+          const uiActions = { ...s.uiActions };
+          delete uiActions[viewId];
+          return { uiActions };
+        });
+        return queued;
+      },
     };
   });
 }

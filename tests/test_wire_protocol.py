@@ -176,6 +176,12 @@ def test_viz_and_ui_wire() -> None:
         "payload": {"p": 2},
     }
     assert protocol.ui_command("noop") == {"type": "ui", "action": "noop", "payload": {}}
+    assert protocol.ui_command("fly_to", {"lng": 1}, target="slot:map") == {
+        "type": "ui",
+        "action": "fly_to",
+        "payload": {"lng": 1},
+        "target": "slot:map",
+    }
 
 
 # --- shared HITL helpers (now in agent.approval) ---------------------------

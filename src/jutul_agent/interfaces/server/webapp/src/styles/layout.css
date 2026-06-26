@@ -366,7 +366,8 @@
   background: #fff;
 }
 .canvas-body iframe,
-.canvas-body img {
+.canvas-body img,
+.canvas-body .map-panel {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -380,7 +381,8 @@
   padding: 1rem;
 }
 .canvas-body iframe.active,
-.canvas-body img.active {
+.canvas-body img.active,
+.canvas-body .map-panel.active {
   display: block;
 }
 .canvas-empty {
