@@ -3,7 +3,7 @@
 // button to reopen the canvas after it was closed.
 
 import { useController, useSel } from "../context";
-import { ChatIcon, MenuIcon, ViewsIcon } from "../icons";
+import { ChatIcon, KindIcon, MenuIcon, ViewsIcon } from "../icons";
 
 export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const controller = useController();
@@ -18,6 +18,8 @@ export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const activeView = useSel((s) => s.activeView);
   const openView = useSel((s) => s.openView);
   const closeChat = useSel((s) => s.closeChat);
+  const closedViews = useSel((s) => s.closedViews);
+  const reopenView = useSel((s) => s.reopenView);
 
   const simName = (sim && details[sim]?.display_name) || sim;
   const showViews = viewCount > 0 && !canvasOpen;
@@ -50,6 +52,16 @@ export function Topbar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             <ViewsIcon /> Views <span className="count">{viewCount}</span>
           </button>
         ) : null}
+        {Object.values(closedViews).map((view) => (
+          <button
+            key={view.id}
+            className="ghost reopen-btn"
+            title={`Reopen ${view.title}`}
+            onClick={() => reopenView(view.id)}
+          >
+            <KindIcon kind={view.kind} /> Reopen {view.title}
+          </button>
+        ))}
         {viewCount > 0 ? (
           <button className="icon-btn" title="Hide chat" aria-label="Hide chat" onClick={closeChat}>
             <ChatIcon />

@@ -111,6 +111,10 @@ export interface SessionState {
   viewOrder: string[];
   activeView: string | null;
   canvasOpen: boolean;
+  // Views closed via their own tab's ✕ (not "close panel"), kept around so a
+  // "Reopen" button can bring the same view straight back without asking the
+  // server again — mirrors a closed browser tab's own undo affordance.
+  closedViews: Record<string, View>;
   // ui actions targeted at a specific view (a panel's own id), queued until
   // that panel calls consumeUiActions — see protocol.ts's `ui.target`.
   uiActions: Record<string, UiAction[]>;
@@ -158,6 +162,7 @@ export interface SessionActions {
   openView: (id: string) => void;
   closeCanvas: () => void;
   removeView: (id: string) => void;
+  reopenView: (id: string) => void;
   closeChat: () => void;
   openChat: () => void;
   pinDoc: (url: string, title: string, slot: string) => void;
@@ -200,6 +205,7 @@ const initialState: SessionState = {
   viewOrder: [],
   activeView: null,
   canvasOpen: false,
+  closedViews: {},
   uiActions: {},
   chatOpen: true,
   pending: null,
@@ -345,9 +351,16 @@ export function createSessionStore() {
         const next: View = existing
           ? { ...existing, ...view, nonce: replace ? existing.nonce + 1 : existing.nonce }
           : view;
+        // A server-pushed pin supersedes any stale "closed" record for the same id.
+        let closedViews = s.closedViews;
+        if (closedViews[view.id]) {
+          closedViews = { ...closedViews };
+          delete closedViews[view.id];
+        }
         return {
           views: { ...s.views, [view.id]: next },
           viewOrder: existing ? s.viewOrder : [...s.viewOrder, view.id],
+          closedViews,
         };
       });
 
@@ -610,16 +623,29 @@ export function createSessionStore() {
         set((s) => {
           if (!s.views[id]) return {};
           const views = { ...s.views };
+          const closed = views[id];
           delete views[id];
           const viewOrder = s.viewOrder.filter((x) => x !== id);
-          let { activeView, canvasOpen } = s;
+          let { activeView, canvasOpen, chatOpen } = s;
           if (activeView === id) {
             activeView = viewOrder[viewOrder.length - 1] ?? null;
             // Fall back to another view if the canvas was open; never re-open one the
             // user had closed.
             canvasOpen = canvasOpen && activeView !== null;
           }
-          return { views, viewOrder, activeView, canvasOpen };
+          // Closing the last tab while the chat is also hidden (closeChat forces
+          // canvasOpen open precisely so this can't happen from that direction,
+          // but closing every tab afterwards still empties it) would leave both
+          // panes hidden with nothing left to undo it — bring the chat back.
+          if (!canvasOpen && !chatOpen) chatOpen = true;
+          return {
+            views,
+            viewOrder,
+            activeView,
+            canvasOpen,
+            chatOpen,
+            closedViews: { ...s.closedViews, [id]: closed },
+          };
         });
         // Host-app hook: a view removed this way (the tab's own close, not "close
         // panel") is gone for good unless something re-adds it — lets a host app
@@ -628,6 +654,25 @@ export function createSessionStore() {
         // behavior exactly.
         window.onJutulViewClosed?.(id);
       },
+
+      // Brings a closed view straight back without asking the server again —
+      // the in-app counterpart to `window.onJutulViewClosed` (e.g. a "Reopen
+      // map" button), for a view this app itself knows how to bring back.
+      reopenView: (id) =>
+        set((s) => {
+          const view = s.closedViews[id];
+          if (!view) return {};
+          const closedViews = { ...s.closedViews };
+          delete closedViews[id];
+          const viewOrder = s.viewOrder.includes(id) ? s.viewOrder : [...s.viewOrder, id];
+          return {
+            views: { ...s.views, [id]: view },
+            viewOrder,
+            activeView: id,
+            canvasOpen: true,
+            closedViews,
+          };
+        }),
 
       pinDoc: (url, title, slot) =>
         onViz({ type: "viz", url, title, kind: "report", slot, poster: null }),

@@ -91,7 +91,8 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.views-btn {
+.views-btn,
+.reopen-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;

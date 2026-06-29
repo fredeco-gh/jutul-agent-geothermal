@@ -160,6 +160,43 @@ describe("canvas views", () => {
     expect(state().chatOpen).toBe(true);
     expect(state().canvasOpen).toBe(true); // untouched by reopening the chat
   });
+
+  it("removing a closed view's last tab while the chat is hidden brings the chat back", () => {
+    state().handle({ type: "viz", url: "/a", kind: "map", slot: "geothermal-map" });
+    state().closeChat();
+    expect(state().chatOpen).toBe(false);
+    expect(state().canvasOpen).toBe(true);
+
+    // Closing the only remaining tab would otherwise leave both panes
+    // hidden (canvasOpen false from no views left, chatOpen already false)
+    // with no control left to undo either.
+    state().removeView("slot:geothermal-map");
+    expect(state().canvasOpen).toBe(false);
+    expect(state().chatOpen).toBe(true);
+  });
+
+  it("removing a view records it as reopenable; reopenView brings the same view back", () => {
+    state().handle({ type: "viz", url: "/a", kind: "map", slot: "geothermal-map", title: "Map" });
+    state().removeView("slot:geothermal-map");
+    expect(state().views["slot:geothermal-map"]).toBeUndefined();
+    expect(state().closedViews["slot:geothermal-map"]).toMatchObject({ url: "/a", title: "Map" });
+
+    state().reopenView("slot:geothermal-map");
+    expect(state().views["slot:geothermal-map"]).toMatchObject({ url: "/a", title: "Map" });
+    expect(state().activeView).toBe("slot:geothermal-map");
+    expect(state().canvasOpen).toBe(true);
+    expect(state().closedViews["slot:geothermal-map"]).toBeUndefined();
+    expect(byKind("viz-chip")).toHaveLength(1); // reopening isn't a fresh pin, no new chip
+  });
+
+  it("re-pinning a view from the server clears any stale closed-view record", () => {
+    state().handle({ type: "viz", url: "/a", kind: "map", slot: "geothermal-map" });
+    state().removeView("slot:geothermal-map");
+    expect(state().closedViews["slot:geothermal-map"]).toBeDefined();
+
+    state().handle({ type: "viz", url: "/b", kind: "map", slot: "geothermal-map" });
+    expect(state().closedViews["slot:geothermal-map"]).toBeUndefined();
+  });
 });
 
 describe("artifacts", () => {

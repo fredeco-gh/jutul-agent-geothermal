@@ -79,6 +79,11 @@ _wells_cache: dict[str, list[dict[str, Any]]] = {}
 # against spamming one per tool call within the same session.
 _map_pinned: set[str] = set()
 
+# Per-session count of simulation runs recorded as report tabs (see
+# _record_simulation_artifact): each run gets its own number so a later run
+# opens an additional tab instead of overwriting the previous run's.
+_simulation_run_count: dict[str, int] = {}
+
 
 def _load_well_features(data_path: str) -> list[dict[str, Any]]:
     cached = _wells_cache.get(data_path)
@@ -827,10 +832,13 @@ def _build_simulation_report_html(
 def _record_simulation_artifact(
     session: Session, case_type: str, parameters: dict[str, Any], result: dict[str, Any]
 ) -> str:
-    """Pin the results as a report tab in the chat's canvas (not the map's own
-    sidebar). A fixed filename + stable slot means a later run refreshes the
-    same tab instead of stacking a new one each time."""
-    rel = "artifacts/simulation-results.html"
+    """Pin the results as a new report tab in the chat's canvas (not the map's
+    own sidebar). Each run gets its own file, slot, and caption number, so a
+    later run opens an additional tab instead of overwriting the previous
+    run's results out from under it."""
+    run_no = _simulation_run_count.get(session.session_id, 0) + 1
+    _simulation_run_count[session.session_id] = run_no
+    rel = f"artifacts/simulation-results-{run_no}.html"
     out = session.output_dir / rel
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(_build_simulation_report_html(case_type, parameters, result), encoding="utf-8")
@@ -840,9 +848,9 @@ def _record_simulation_artifact(
             "path": rel,
             "mime": "text/html",
             "format": "html",
-            "caption": f"{case_type} simulation results",
+            "caption": f"{case_type} simulation results #{run_no}",
             "kind": "report",
-            "slot": "simulation-results",
+            "slot": f"simulation-results-{run_no}",
         },
     )
     return rel
@@ -1005,8 +1013,8 @@ def make_run_simulation_action(simulation_jl_path: str):
             return
 
         _record_simulation_artifact(session, case_type, parameters, result)
-        # The new/refreshed report tab: the same mechanism a real tool's artifact
-        # gets, since nothing else flushes side outputs outside of a real turn.
+        # The new report tab: the same mechanism a real tool's artifact gets,
+        # since nothing else flushes side outputs outside of a real turn.
         from jutul_agent.interfaces.server.app import artifact_wire_events
 
         events = session.trace.iter_events()

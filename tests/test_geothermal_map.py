@@ -213,8 +213,25 @@ def test_run_simulation_tool_records_report_and_returns_summary(tmp_path: Path) 
     assert "AGS" in out
     assert "Well1" in out
     artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
-    assert artifacts[-1].payload["path"] == "artifacts/simulation-results.html"
+    assert artifacts[-1].payload["path"] == "artifacts/simulation-results-1.html"
     assert artifacts[-1].payload["mime"] == "text/html"
+
+
+def test_run_simulation_tool_opens_a_new_tab_each_run(tmp_path: Path) -> None:
+    julia = FakeJulia(eval_handler=_simulate_eval_handler(_SIM_RESULT))
+    session = _session(tmp_path, julia)
+    run_simulation = capability._make_run_simulation_tool(session, "unused.jl")
+    args = {"case_type": "AGS", "parameters": {"well_depth": 100.0}}
+    for _ in range(2):
+        asyncio.run(run_simulation.ainvoke(args))
+    artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
+    assert len(artifacts) == 2
+    # Distinct paths and slots: the second run must open its own tab, not
+    # replace the first run's.
+    paths = {a.payload["path"] for a in artifacts}
+    slots = {a.payload["slot"] for a in artifacts}
+    assert len(paths) == 2
+    assert len(slots) == 2
 
 
 def test_run_simulation_tool_reports_failure_without_recording_artifact(tmp_path: Path) -> None:
