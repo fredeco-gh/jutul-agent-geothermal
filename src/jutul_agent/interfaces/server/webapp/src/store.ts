@@ -610,7 +610,11 @@ export function createSessionStore() {
       openView: (id) =>
         set((s) => (s.views[id] ? { activeView: id, canvasOpen: true } : {})),
 
-      closeCanvas: () => set({ canvasOpen: false }),
+      // Closing the panel while the chat is already hidden would otherwise leave
+      // both panes hidden with nothing left to undo it (same situation removeView
+      // guards against when the last tab goes away) — bring the chat back too.
+      closeCanvas: () =>
+        set((s) => (s.chatOpen ? { canvasOpen: false } : { canvasOpen: false, chatOpen: true })),
 
       // Closing the chat only makes sense if there's a view to expand into, and
       // since the chat is the only place a closed canvas's "Views" button lives,

@@ -175,6 +175,17 @@ describe("canvas views", () => {
     expect(state().chatOpen).toBe(true);
   });
 
+  it("clicking close panel while the chat is hidden brings the chat back instead of going blank", () => {
+    state().handle({ type: "viz", url: "/a", kind: "map", slot: "geothermal-map" });
+    state().closeChat();
+    expect(state().chatOpen).toBe(false);
+    expect(state().canvasOpen).toBe(true);
+
+    state().closeCanvas();
+    expect(state().canvasOpen).toBe(false);
+    expect(state().chatOpen).toBe(true);
+  });
+
   it("removing a view records it as reopenable; reopenView brings the same view back", () => {
     state().handle({ type: "viz", url: "/a", kind: "map", slot: "geothermal-map", title: "Map" });
     state().removeView("slot:geothermal-map");
