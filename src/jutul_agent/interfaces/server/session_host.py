@@ -101,6 +101,11 @@ class SessionHost:
         """The session's human-in-the-loop policy, or ``None`` for the default."""
         return self._approval_mode
 
+    @property
+    def extensions(self) -> Sequence[Capability]:
+        """The capabilities this session's agent was built from (read-only)."""
+        return self._extensions
+
     def reconfigure(self, *, model: str | None = None, approval_mode: str | None = None) -> None:
         """Rebuild the agent in place with a new model and/or approval policy.
 

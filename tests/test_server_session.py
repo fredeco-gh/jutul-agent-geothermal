@@ -677,6 +677,7 @@ def test_artifact_wire_events_png_and_html() -> None:
         "kind": "plot",
         "poster": "/sessions/sid/artifacts/scene.png",
         "slot": "scene",
+        "silent": False,
     }
     # A written report is a viz too, of kind "report" and with no poster.
     assert events[2] == {
@@ -686,6 +687,7 @@ def test_artifact_wire_events_png_and_html() -> None:
         "kind": "report",
         "poster": None,
         "slot": "report",
+        "silent": False,
     }
 
 
@@ -714,6 +716,7 @@ def test_artifact_wire_events_live_plot_uses_live_url() -> None:
         "kind": "plot",
         "poster": "/sessions/sid/artifacts/reservoir.png",
         "slot": "reservoir",
+        "silent": False,
     }
 
 
@@ -740,6 +743,7 @@ def test_artifact_wire_events_replay_falls_back_to_poster() -> None:
         "kind": "plot",
         "poster": "/sessions/sid/artifacts/reservoir.png",
         "slot": "reservoir",
+        "silent": False,
     }
 
 
@@ -1038,6 +1042,63 @@ def test_first_turn_generates_llm_title(tmp_path: Path, monkeypatch: Any) -> Non
     # The new title is persisted, so a history listing shows it.
     titles = [s.title for s in session_mod.list_sessions(state_root=tmp_path)]
     assert "Reservoir Sweep Study" in titles
+
+
+def test_on_connect_hook_pins_a_view_silently_before_any_prompt(tmp_path: Path) -> None:
+    """A capability's ``on_connect`` hook runs once, right as the WebSocket opens —
+    before the user has sent a single prompt — and its appended trace event is
+    flushed straight down that connection immediately after (see app.py's
+    ``_StreamState.run_connect_hooks``), so an always-open view (e.g. a map) shows
+    up on session start rather than waiting for a first turn to exist. A reconnect
+    runs the hook again (the mechanism itself doesn't dedupe across connections),
+    but a capability that guards its own idempotency, as real ones do, won't re-pin."""
+    from jutul_agent.agent.capabilities import Capability
+
+    pinned: set[str] = set()
+    calls: list[str] = []
+
+    def pin(session: Any) -> None:
+        calls.append(session.session_id)
+        if session.session_id in pinned:
+            return
+        pinned.add(session.session_id)
+        session.trace.append(
+            "artifact",
+            {
+                "path": "x.html",
+                "mime": "text/html",
+                "kind": "report",
+                "slot": "pinned",
+                "caption": "Pinned",
+                "silent": True,
+            },
+        )
+
+    cap = Capability(name="test-pin", on_connect=(pin,))
+
+    async def host_factory(
+        *, sim, model, approval_mode, workspace, resume, session_id, extensions=()
+    ) -> SessionHost:
+        adapter = make_fake_adapter(tmp_path)
+        sid = session_id or default_session_id()
+        session = Session.create(
+            julia=FakeJulia(), simulator=adapter, session_id=sid, state_root=tmp_path
+        )
+        return SessionHost(session=session, agent=echo_agent(), extensions=[cap])
+
+    manager = SessionManager(host_factory=host_factory)
+    with TestClient(create_app(manager)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            # Nothing sent yet — the pin must already have arrived from connecting alone.
+            viz = ws.receive_json()
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws2:
+            ws2.send_json({"type": "prompt", "text": "hello"})
+            second_connect_turn = _drain_turn(ws2)
+    assert calls == [sid, sid]
+    assert viz["type"] == "viz"
+    assert viz["silent"] is True
+    assert not [e for e in second_connect_turn if e["type"] == "viz"]
 
 
 def test_upload_writes_to_workspace(tmp_path: Path) -> None:

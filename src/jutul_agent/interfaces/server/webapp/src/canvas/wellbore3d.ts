@@ -315,8 +315,6 @@ export function createWellbore3D(map: maplibregl.Map): Wellbore3D {
     aPos: -1,
     aColor: -1,
     uMatrix: null as WebGLUniformLocation | null,
-    loggedRender: false, // TEMPORARY diagnostic flag — remove with the rest.
-    sample: null as [number, number, number] | null, // TEMPORARY — remove with the rest.
   };
 
   function rebuild(gl: WebGLRenderingContext): void {
@@ -328,27 +326,6 @@ export function createWellbore3D(map: maplibregl.Map): Wellbore3D {
     gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer);
     gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
     state.vertCount = vertices.length / 7;
-    // TEMPORARY — keep one real vertex position around so render() can project
-    // it through the live matrix and show where it actually lands on screen.
-    state.sample = vertices.length >= 3 ? [vertices[0], vertices[1], vertices[2]] : null;
-    // TEMPORARY diagnostic — remove once the invisible-wellbore issue is found.
-    console.log(
-      "[wellbore3d] rebuild " +
-        JSON.stringify({
-          lngLat: state.lngLat,
-          mc: { x: mc.x, y: mc.y },
-          scale,
-          groundElevation,
-          progress: state.progress,
-          caseType: state.caseType,
-          params: state.params,
-          vertCount: state.vertCount,
-          hasProgram: !!state.program,
-          aPos: state.aPos,
-          aColor: state.aColor,
-          hasUMatrix: !!state.uMatrix,
-        }),
-    );
   }
 
   const customLayer: maplibregl.CustomLayerInterface = {
@@ -405,44 +382,6 @@ export function createWellbore3D(map: maplibregl.Map): Wellbore3D {
       gl.vertexAttribPointer(state.aColor, 4, gl.FLOAT, false, stride, 12);
       gl.drawArrays(gl.TRIANGLES, 0, state.vertCount);
 
-      // TEMPORARY diagnostic — remove once the invisible-wellbore issue is found.
-      // Manually project one real vertex through the live matrix (column-major,
-      // mat4 * vec4) to see where it actually lands in clip/NDC space. Wrapped
-      // in its own try/catch since maplibre-gl appears to swallow exceptions
-      // thrown from inside a custom layer's render() without surfacing them.
-      if (!state.loggedRender && state.sample) {
-        state.loggedRender = true;
-        try {
-          const matRaw = options.defaultProjectionData.mainMatrix;
-          const m: number[] = [];
-          for (let i = 0; i < 16; i++) m.push(Number((matRaw as unknown as Record<number, number>)[i]));
-          const [x, y, z] = state.sample;
-          const clip = [0, 0, 0, 0];
-          for (let row = 0; row < 4; row++) {
-            clip[row] = m[row] * x + m[4 + row] * y + m[8 + row] * z + m[12 + row];
-          }
-          const ndc = clip[3] !== 0 ? [clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3]] : null;
-          const vp = gl.getParameter(gl.VIEWPORT);
-          const viewport: number[] = [];
-          for (let i = 0; i < 4; i++) viewport.push(Number((vp as unknown as Record<number, number>)[i]));
-          console.log(
-            "[wellbore3d] render " +
-              JSON.stringify({
-                vertCount: state.vertCount,
-                glError: gl.getError(),
-                canvasSize: [gl.drawingBufferWidth, gl.drawingBufferHeight],
-                viewport,
-                sampleWorldPos: state.sample,
-                sampleClipSpace: clip,
-                sampleNdc: ndc,
-                matrix: m,
-              }),
-          );
-        } catch (err) {
-          console.error("[wellbore3d] render diagnostic threw:", err);
-        }
-      }
-
       if (animating) map.triggerRepaint();
     },
 
@@ -477,7 +416,6 @@ export function createWellbore3D(map: maplibregl.Map): Wellbore3D {
   function show(lngLat: { lng: number; lat: number }, params: Record<string, number>, caseType: string | null): void {
     remove();
 
-    state.loggedRender = false; // TEMPORARY — remove with the rest.
     state.lngLat = lngLat;
     state.params = { ...params };
     state.caseType = caseType;

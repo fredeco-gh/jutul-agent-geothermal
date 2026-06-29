@@ -46,6 +46,13 @@ class Capability:
     prompt_fragment: str = ""
     ui_actions: tuple[str, ...] = ()
     surfaces: tuple[str, ...] = ()
+    # Run once per WebSocket connection, right as it opens — before the user has
+    # sent a single prompt. The server sets its side-output high-water mark first
+    # and flushes right after, so a trace event a hook appends (e.g. pinning an
+    # always-open canvas view) reaches this connection immediately instead of
+    # waiting for a first turn to exist (see web-ui.md's "Extending the canvas"
+    # and app.py's `_StreamState.run_connect_hooks`).
+    on_connect: tuple[Callable[[Session], None], ...] = ()
 
 
 def select_for_surface(capabilities: Sequence[Capability], surface: str) -> list[Capability]:

@@ -62,6 +62,27 @@ def test_capability_is_web_with_five_tools() -> None:
     assert cap.surfaces == ("web",)
     assert len(cap.tools) == 5
     assert cap.prompt_fragment
+    # Auto-pins the map the moment a session connects (Phase 4), rather than
+    # only once some map tool happens to run.
+    assert cap.on_connect == (capability._ensure_map_pinned,)
+
+
+def test_ensure_map_pinned_appends_a_silent_map_viz(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    capability._ensure_map_pinned(session)
+    artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
+    assert len(artifacts) == 1
+    assert artifacts[-1].payload["kind"] == "map"
+    # Not a conversation event worth a chat reference (see protocol.viz_to_wire).
+    assert artifacts[-1].payload["silent"] is True
+
+
+def test_ensure_map_pinned_is_idempotent(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    capability._ensure_map_pinned(session)
+    capability._ensure_map_pinned(session)
+    artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
+    assert len(artifacts) == 1  # the second call is a no-op, not a re-pin
 
 
 def test_set_map_view_emits_a_targeted_ui_action(tmp_path: Path) -> None:

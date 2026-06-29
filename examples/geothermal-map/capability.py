@@ -112,10 +112,19 @@ def _find_well(
 
 
 def _ensure_map_pinned(session: Session) -> None:
-    """Pin the map panel into the canvas the first time any map tool runs in
-    this session. The file written here is never read by MapPanel itself (it
+    """Pin the map panel into the canvas, idempotently.
+
+    Registered as the capability's ``on_connect`` hook (see
+    ``geothermal_map_capability``), so the map is there the moment the session's
+    WebSocket connects — like geothermal-viz's own always-visible map — rather
+    than appearing only once some tool happens to touch it, or only after the
+    first prompt. Map tools also call this themselves, a harmless no-op once the
+    hook has already run; it only does real work the very first time, for a
+    session resuming on a server that predates this hook (e.g. across an
+    upgrade). The file written here is never read by MapPanel itself (it
     renders natively, not in an iframe) — it only exists to satisfy the
-    artifact plumbing that produces the `viz` wire message."""
+    artifact plumbing that produces the `viz` wire message.
+    """
     if session.session_id in _map_pinned:
         return
     _map_pinned.add(session.session_id)
@@ -132,6 +141,10 @@ def _ensure_map_pinned(session: Session) -> None:
             "kind": "map",
             "slot": _MAP_SLOT,
             "caption": "Geothermal map",
+            # Pinning the map isn't a conversation event worth a chat
+            # reference, whether it happens proactively (on_connect) or
+            # reactively (a map tool's own call, for an older resumed session).
+            "silent": True,
         },
     )
 
@@ -1110,4 +1123,5 @@ def geothermal_map_capability(data_path: str, simulation_jl_path: str) -> Capabi
         ),
         prompt_fragment=_PROMPT_FRAGMENT,
         surfaces=("web",),
+        on_connect=(_ensure_map_pinned,),
     )

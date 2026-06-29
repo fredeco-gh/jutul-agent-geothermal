@@ -177,6 +177,7 @@ def viz_to_wire(
     kind: str = "plot",
     poster: str | None = None,
     slot: str | None = None,
+    silent: bool = False,
 ) -> dict[str, Any]:
     """Serialize an interactive view to pin in the front end's canvas.
 
@@ -184,9 +185,20 @@ def viz_to_wire(
     a front end uses it only for the label/icon. ``poster`` is an optional image
     URL for a lightweight inline thumbnail, and ``slot`` is the view's stable key
     so a refreshed view replaces the previous one in place rather than stacking.
+    ``silent`` skips the chat-thread reference (the "viz-chip"): for a view a
+    capability pins proactively (e.g. an always-open map) rather than one the
+    agent produced as part of answering — not a conversation event worth noting.
     """
 
-    return {"type": "viz", "url": url, "title": title, "kind": kind, "poster": poster, "slot": slot}
+    return {
+        "type": "viz",
+        "url": url,
+        "title": title,
+        "kind": kind,
+        "poster": poster,
+        "slot": slot,
+        "silent": silent,
+    }
 
 
 def notice_to_wire(text: str) -> dict[str, Any]:

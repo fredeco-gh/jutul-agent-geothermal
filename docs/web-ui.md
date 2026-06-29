@@ -82,6 +82,21 @@ This keeps an extension small and self-contained: a Julia or Python tool on the
 backend produces the data, a wire `kind` names the surface, and a registered panel
 draws it.
 
+### Always-open views
+
+A panel that should be there from the start of every session (e.g. a map),
+rather than only once some tool happens to touch it, can't simply pin itself
+during the host factory: anything a capability appends to the session's trace
+before the front end's WebSocket connects has nowhere to go yet. A
+`Capability`'s `on_connect` hooks run once, right as that connection opens —
+before the user has sent a single prompt — and whatever a hook appends to the
+trace is flushed straight down the socket immediately after, so the view
+shows up on session start, not on the first turn. Pass `silent=True` to
+`protocol.viz_to_wire` (or set `"silent": True` on an artifact's payload) so
+the front end pins the view without adding a chat-thread reference for it —
+pinning isn't a conversation event. See
+`examples/geothermal-map/capability.py`'s `_ensure_map_pinned`.
+
 ## Producing an interactive plot from a tool
 
 A view does not always need a custom panel. The simplest interactive plot is a tool

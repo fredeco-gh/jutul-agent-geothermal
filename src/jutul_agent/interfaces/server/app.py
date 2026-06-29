@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import re
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -703,6 +704,7 @@ def artifact_wire_events(
                     kind=str(kind or "plot"),
                     poster=poster_url,
                     slot=payload.get("slot"),
+                    silent=bool(payload.get("silent", False)),
                 )
             )
         else:
@@ -883,6 +885,9 @@ async def _serve_stream(
         return
 
     state = _StreamState(websocket, host, actions=actions)
+    # Pin any always-open views (e.g. a map) right away — before the user has
+    # sent a single prompt — rather than waiting for a first turn to exist.
+    await state.run_connect_hooks()
     # Re-surface an approval the session was paused on if an earlier connection
     # dropped while it was pending, so a reconnect can still answer it.
     await state.resync_pending()
@@ -1136,6 +1141,28 @@ class _StreamState:
 
     def _spawn(self, factory) -> None:
         self._turn = asyncio.create_task(self._run_turn(factory))
+
+    async def run_connect_hooks(self) -> None:
+        """Run each capability's `on_connect` hooks once, right as this connection opens.
+
+        Called from `_serve_stream` before the receive loop starts, so an always-open
+        view (e.g. a map) is pinned and pushed down this socket immediately on session
+        start — before the user has sent a single prompt — rather than waiting for a
+        first turn to exist. Mirrors `_run_turn`'s own mark-then-flush shape: the
+        high-water mark is set first so only what a hook appends gets flushed, not
+        this session's entire prior history (which a reconnect's separate REST
+        replay already covers). A hook that raises is logged and skipped rather
+        than taking the connection down with it.
+        """
+        self._side_output_id = self._latest_event_id()
+        for cap in self._host.extensions:
+            for hook in cap.on_connect:
+                try:
+                    hook(self._host.session)
+                except Exception as exc:
+                    msg = f"warning: on_connect hook for {cap.name!r} failed: {exc}"
+                    print(msg, file=sys.stderr)
+        await self._flush_side_outputs()
 
     async def _run_turn(self, factory) -> None:
         self._side_output_id = self._latest_event_id()

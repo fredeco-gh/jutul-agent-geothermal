@@ -159,6 +159,7 @@ def test_viz_and_ui_wire() -> None:
         "kind": "plot",
         "poster": None,
         "slot": None,
+        "silent": False,
     }
     assert protocol.viz_to_wire(
         "http://x/r.html", title="R", kind="report", poster="http://x/p.png", slot="report"
@@ -169,7 +170,9 @@ def test_viz_and_ui_wire() -> None:
         "kind": "report",
         "poster": "http://x/p.png",
         "slot": "report",
+        "silent": False,
     }
+    assert protocol.viz_to_wire("http://x/m.html", kind="map", silent=True)["silent"] is True
     assert protocol.ui_command("set_param", {"p": 2}) == {
         "type": "ui",
         "action": "set_param",
