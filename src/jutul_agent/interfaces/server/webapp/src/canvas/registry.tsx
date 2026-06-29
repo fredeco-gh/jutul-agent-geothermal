@@ -19,6 +19,10 @@ export interface PanelProps {
   onLoaded: () => void;
   /** Send a payload back to the agent as a `ui_event` (e.g. a map click). */
   onUiEvent: (payload: unknown) => void;
+  /** Trigger a direct, non-LLM action (see ActionHandler) — e.g. the map's
+   *  "Setup Simulation"/"Run" buttons, which have nothing for the model to
+   *  decide and so bypass it entirely rather than going through `onUiEvent`. */
+  onAction: (name: string, args?: Record<string, unknown>) => void;
 }
 
 /** A panel's own hook for reading the `ui` actions the agent has targeted at

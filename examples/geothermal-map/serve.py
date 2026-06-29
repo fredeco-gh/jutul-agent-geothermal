@@ -28,6 +28,7 @@ from typing import Any
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DATA_DIR = EXAMPLE_DIR / "data"
 DATA_PATH = DATA_DIR / "all_boreholes.geojson"
+SIMULATION_JL = EXAMPLE_DIR / "julia" / "simulation.jl"
 
 # Pinned rather than left to default to the launching shell's cwd: a session's
 # Julia env (and its precompile-done marker) lives under <workspace>/.jutul-agent/,
@@ -51,24 +52,31 @@ async def _host_factory(
     future tool (e.g. running a Fimbul simulation from the map) gets added
     through, not a one-off wiring just for well lookup.
     """
-    from capability import geothermal_map_capability
+    from capability import geothermal_map_capability, start_simulation_warmup
 
     from jutul_agent.interfaces.server.session_host import SessionHost
     from jutul_agent.simulators import registry
 
     adapter = registry.get(sim)
-    return await SessionHost.start(
+    host = await SessionHost.start(
         simulator=adapter,
         model=model,
         approval_mode=approval_mode,
         workspace=workspace or WORKSPACE,
         resume=resume,
         session_id=session_id,
-        extensions=[geothermal_map_capability(str(DATA_PATH)), *extensions],
+        extensions=[
+            geothermal_map_capability(str(DATA_PATH), str(SIMULATION_JL)),
+            *extensions,
+        ],
     )
+    start_simulation_warmup(host.session, str(SIMULATION_JL))
+    return host
 
 
 def create_geothermal_map_app() -> Any:
+    from capability import make_run_simulation_action, make_setup_simulation_action
+
     from jutul_agent.interfaces.server.app import create_app
     from jutul_agent.interfaces.server.manager import SessionManager
 
@@ -81,6 +89,13 @@ def create_geothermal_map_app() -> Any:
         # MapPanel.tsx fetches its borehole layer from here directly — a plain
         # static mount, no Julia or session involved (see canvas/MapPanel.tsx).
         extra_mounts={"/geothermal-data": DATA_DIR},
+        # The map sidebar's "Setup Simulation"/"Run" buttons call these directly
+        # (see ActionHandler), bypassing the model — it has nothing to decide
+        # for either: setup is a metadata lookup, run uses the form's own values.
+        actions={
+            "run_simulation": make_run_simulation_action(str(SIMULATION_JL)),
+            "setup_simulation": make_setup_simulation_action(str(SIMULATION_JL)),
+        },
     )
 
 

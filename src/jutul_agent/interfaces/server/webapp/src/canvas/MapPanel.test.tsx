@@ -119,12 +119,20 @@ function renderPanel(view: View) {
   const controller = new Controller(store);
   const onUiEvent = vi.fn();
   const onLoaded = vi.fn();
+  const onAction = vi.fn();
   const utils = render(
     <SessionProvider value={{ store, controller }}>
-      <MapPanel view={view} active reloadToken={0} onLoaded={onLoaded} onUiEvent={onUiEvent} />
+      <MapPanel
+        view={view}
+        active
+        reloadToken={0}
+        onLoaded={onLoaded}
+        onUiEvent={onUiEvent}
+        onAction={onAction}
+      />
     </SessionProvider>,
   );
-  return { store, onUiEvent, onLoaded, ...utils };
+  return { store, onUiEvent, onLoaded, onAction, ...utils };
 }
 
 async function flush() {
@@ -252,5 +260,107 @@ describe("MapPanel", () => {
     const map = FakeMap.instances.at(-1)!;
     unmount();
     expect(map.removed).toBe(true);
+  });
+
+  const SAMPLE_SIM_SETUP = {
+    simulatable: true,
+    case_type: "AGS",
+    case_label: "Advanced Geothermal System (AGS)",
+    case_description: "Closed-loop heat exchanger in a single deep borehole.",
+    well_id: "Well #100",
+    parameters: { well_depth: 200, surface_temperature: 7 },
+    parameter_order: ["well_depth", "surface_temperature"],
+    metadata: {
+      well_depth: {
+        label: "Well depth",
+        unit: "m",
+        min: 10,
+        max: 8000,
+        step: 10,
+        group: "Well Geometry",
+      },
+      surface_temperature: {
+        label: "Surface temperature",
+        unit: "°C",
+        min: -10,
+        max: 40,
+        step: 0.5,
+        group: "Rock Properties",
+      },
+    },
+    sources: { well_depth: "data", surface_temperature: "default" },
+  };
+
+  async function selectWell(map: InstanceType<typeof FakeMap>) {
+    act(() => map.fire("style.load"));
+    await flush();
+    act(() =>
+      map.fireLayer("click", "layer-energibronn", {
+        lngLat: { lng: 10.7, lat: 59.9 },
+        features: [SAMPLE_GEOJSON.features[0]],
+      }),
+    );
+  }
+
+  it("clicking Setup Simulation on a selected well fires the setup_simulation action", async () => {
+    const { onAction } = renderPanel(makeView("slot:geothermal-map"));
+    const map = FakeMap.instances.at(-1)!;
+    await selectWell(map);
+
+    fireEvent.click(screen.getByText("⚡ Setup Simulation"));
+
+    expect(onAction).toHaveBeenCalledWith(
+      "setup_simulation",
+      SAMPLE_GEOJSON.features[0].properties,
+    );
+  });
+
+  it("renders the resolved params on a simulation_params action and runs the simulation", async () => {
+    const view = makeView("slot:geothermal-map");
+    const { store, onAction } = renderPanel(view);
+    const map = FakeMap.instances.at(-1)!;
+    await selectWell(map);
+    fireEvent.click(screen.getByText("⚡ Setup Simulation"));
+
+    act(() => {
+      store.getState().handle({
+        type: "ui",
+        action: "simulation_params",
+        payload: SAMPLE_SIM_SETUP,
+        target: view.id,
+      });
+    });
+
+    expect(screen.getByText("Advanced Geothermal System (AGS)")).toBeInTheDocument();
+    const depthInput = document.getElementById("sim-p-well_depth") as HTMLInputElement;
+    expect(depthInput.value).toBe("200");
+
+    fireEvent.change(depthInput, { target: { value: "250" } });
+    fireEvent.click(screen.getByText("▶ Run Simulation"));
+
+    expect(onAction).toHaveBeenCalledWith("run_simulation", {
+      case_type: "AGS",
+      parameters: { well_depth: 250, surface_temperature: 7 },
+    });
+    expect(screen.getByText(/watch the chat/)).toBeInTheDocument();
+  });
+
+  it("shows an error message on a simulation_setup_error action", async () => {
+    const view = makeView("slot:geothermal-map");
+    const { store } = renderPanel(view);
+    const map = FakeMap.instances.at(-1)!;
+    await selectWell(map);
+    fireEvent.click(screen.getByText("⚡ Setup Simulation"));
+
+    act(() => {
+      store.getState().handle({
+        type: "ui",
+        action: "simulation_setup_error",
+        payload: { message: "boom" },
+        target: view.id,
+      });
+    });
+
+    expect(screen.getByText("boom")).toBeInTheDocument();
   });
 });

@@ -99,6 +99,52 @@ interface SelectedWell {
   color: string;
   label: string;
   rows: Array<[string, string]>;
+  properties: Record<string, unknown>;
+  layer: string;
+}
+
+// Well types Fimbul can simulate — matches simulation.jl's own
+// SIMULATABLE_LAYERS, which is what actually decides whether
+// `setup_simulation` returns `simulatable: true`. Kept here too so the
+// "Setup Simulation" button only appears when it would actually do something.
+const SIMULATABLE_LAYERS = new Set(["EnergiBrønn", "BrønnPark"]);
+
+interface SimParamMeta {
+  label: string;
+  unit: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  tooltip?: string;
+  group?: string;
+}
+
+interface SimSetup {
+  simulatable: boolean;
+  case_type: string | null;
+  case_label?: string;
+  case_description?: string;
+  well_id: string;
+  parameters: Record<string, number>;
+  parameter_order: string[];
+  metadata: Record<string, SimParamMeta>;
+  sources: Record<string, string>;
+}
+
+interface SimStatus {
+  kind: "running" | "error";
+  message: string;
+}
+
+function groupSimParams(setup: SimSetup): Array<[string, Array<{ key: string; meta: SimParamMeta }>]> {
+  const groups = new Map<string, Array<{ key: string; meta: SimParamMeta }>>();
+  for (const key of setup.parameter_order) {
+    const meta = setup.metadata[key] ?? { label: key, unit: "" };
+    const group = meta.group || "Other";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group)!.push({ key, meta });
+  }
+  return Array.from(groups.entries());
 }
 
 function escapeHtml(value: unknown): string {
@@ -140,7 +186,7 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: "osm-base", type: "raster", source: "osm-raster", minzoom: 0, maxzoom: 19 }],
 };
 
-export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
+export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -157,12 +203,23 @@ export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
   );
   const [collapsed, setCollapsed] = useState(false);
 
+  // Setup Simulation sidebar panel: a well's resolved parameters arrive as a
+  // targeted `simulation_params` ui action (see capability.py's
+  // make_setup_simulation_action); "Run" then fires `run_simulation` as a
+  // direct action too — the agent never has to interpret either request.
+  const [simPanelOpen, setSimPanelOpen] = useState(false);
+  const [simSetup, setSimSetup] = useState<SimSetup | null>(null);
+  const [simParams, setSimParams] = useState<Record<string, number>>({});
+  const [simError, setSimError] = useState<string | null>(null);
+  const [simStatus, setSimStatus] = useState<SimStatus | null>(null);
+
   // A ref (not a plain function) so the mount effect below — which only runs
   // once per view.id — always calls the latest version, without needing to
   // depend on (and re-run for) every state setter it closes over.
   selectWellRef.current = (feature, lngLat) => {
     const props = feature.properties;
     const { title, color, label } = describeFeature(props);
+    const layerName = String(props.layer || "Unknown");
 
     popupRef.current?.remove();
     const map = mapRef.current;
@@ -191,7 +248,7 @@ export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
           : String(value);
       rows.push([fieldLabel, display]);
     }
-    setSelected({ title, color, label, rows });
+    setSelected({ title, color, label, rows, properties: props, layer: layerName });
 
     // Relay the selection to the agent — mirrors geothermal-viz's own
     // wellSelected event (jutul-agent-bridge.js used to forward it over
@@ -350,9 +407,51 @@ export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
           map.flyTo({ center: [lon, lat], zoom: 17 });
           if (feature) selectWellRef.current(feature, { lng: lon, lat });
         }
+      } else if (action === "simulation_params") {
+        const setup = payload as unknown as SimSetup;
+        setSimStatus(null);
+        if (setup.simulatable) {
+          setSimError(null);
+          setSimSetup(setup);
+          setSimParams({ ...setup.parameters });
+        } else {
+          setSimSetup(null);
+          setSimError("This well type does not support simulation.");
+        }
+      } else if (action === "simulation_setup_error") {
+        const { message } = payload as { message?: string };
+        setSimStatus(null);
+        setSimSetup(null);
+        setSimError(message || "Could not resolve simulation parameters.");
       }
     }
   }, [uiActions]);
+
+  const handleSetupSimulation = () => {
+    if (!selected) return;
+    setSimPanelOpen(true);
+    setSimError(null);
+    setSimSetup(null);
+    setSimStatus(null);
+    onAction("setup_simulation", selected.properties);
+  };
+
+  const handleCloseSimPanel = () => setSimPanelOpen(false);
+
+  const handleParamChange = (key: string, raw: string) => {
+    const value = parseFloat(raw);
+    if (Number.isNaN(value)) return;
+    setSimParams((p) => ({ ...p, [key]: value }));
+  };
+
+  const handleRunSimulation = () => {
+    if (!simSetup?.case_type) return;
+    setSimStatus({
+      kind: "running",
+      message: "Sent to the agent — watch the chat for progress and results.",
+    });
+    onAction("run_simulation", { case_type: simSetup.case_type, parameters: simParams });
+  };
 
   const toggleLayer = (groupId: string, checked: boolean) => {
     setVisibility((v) => ({ ...v, [groupId]: checked }));
@@ -411,6 +510,13 @@ export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
                 </span>{" "}
                 {selected.title}
               </div>
+              {SIMULATABLE_LAYERS.has(selected.layer) ? (
+                <div className="sim-setup-action">
+                  <button className="btn-primary" onClick={handleSetupSimulation}>
+                    ⚡ Setup Simulation
+                  </button>
+                </div>
+              ) : null}
               <table>
                 <tbody>
                   {selected.rows.map(([label, value]) => (
@@ -434,6 +540,75 @@ export function MapPanel({ view, active, onLoaded, onUiEvent }: PanelProps) {
       >
         ☰
       </button>
+      <div className={`sim-panel${simPanelOpen ? " open" : ""}`}>
+        <div className="sim-panel-header">
+          <h2>{simSetup ? `Simulation — ${simSetup.well_id}` : "Simulation Setup"}</h2>
+          <button className="btn-icon" title="Close" onClick={handleCloseSimPanel}>
+            ✕
+          </button>
+        </div>
+        <div className="sim-tab-content active">
+          {simError ? (
+            <p className="sim-case-desc">{simError}</p>
+          ) : simSetup ? (
+            <>
+              <div className="sim-case-info">
+                <div className="sim-well-id">{simSetup.well_id}</div>
+                <div className="sim-case-badge">{simSetup.case_label}</div>
+                <p className="sim-case-desc">{simSetup.case_description}</p>
+              </div>
+              <div className="sim-params">
+                {groupSimParams(simSetup).map(([groupName, items]) => (
+                  <div className="sim-param-group" key={groupName}>
+                    <h3>{groupName}</h3>
+                    {items.map(({ key, meta }) => {
+                      const source = simSetup.sources[key];
+                      const sourceClass = source === "data" ? "source-data" : "source-default";
+                      const sourceLabel = source === "data" ? "from well data" : "default";
+                      return (
+                        <div className="sim-param-row" key={key}>
+                          <label htmlFor={`sim-p-${key}`}>
+                            {meta.label} <span className="sim-param-unit">{meta.unit}</span>
+                          </label>
+                          <div className="sim-param-input-wrap">
+                            <input
+                              type="number"
+                              id={`sim-p-${key}`}
+                              className="sim-param-input"
+                              value={simParams[key] ?? ""}
+                              min={meta.min}
+                              max={meta.max}
+                              step={meta.step}
+                              onChange={(e) => handleParamChange(key, e.target.value)}
+                            />
+                            <span className={`sim-param-source ${sourceClass}`} title={sourceLabel}>
+                              {source === "data" ? "📊" : "⚙️"}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+              <div className="sim-actions">
+                <button
+                  className="btn-primary btn-run"
+                  disabled={simStatus?.kind === "running"}
+                  onClick={handleRunSimulation}
+                >
+                  ▶ Run Simulation
+                </button>
+              </div>
+              {simStatus ? (
+                <div className={`sim-status ${simStatus.kind}`}>{simStatus.message}</div>
+              ) : null}
+            </>
+          ) : (
+            <p className="sim-case-desc">Loading simulation setup…</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

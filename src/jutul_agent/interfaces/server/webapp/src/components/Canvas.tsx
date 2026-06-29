@@ -131,6 +131,7 @@ export function Canvas() {
               reloadToken={token}
               onLoaded={() => markLoaded(id, token)}
               onUiEvent={(payload) => controller.transport.send({ type: "ui_event", payload })}
+              onAction={(name, args) => controller.transport.send({ type: "action", name, args })}
             />
           );
         })}

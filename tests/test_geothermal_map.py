@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import re
 from pathlib import Path
+from typing import Any
 
 from fakes import FakeJulia, make_fake_adapter
+from jutul_agent.juliakernel.result import EvalResult
 from jutul_agent.session import Session
 
 _CAPABILITY_PATH = (
@@ -40,9 +43,9 @@ _FEATURES = [
 ]
 
 
-def _session(tmp_path: Path) -> Session:
+def _session(tmp_path: Path, julia: FakeJulia | None = None) -> Session:
     return Session.create(
-        julia=FakeJulia(), simulator=make_fake_adapter(tmp_path), state_root=tmp_path
+        julia=julia or FakeJulia(), simulator=make_fake_adapter(tmp_path), state_root=tmp_path
     )
 
 
@@ -54,10 +57,10 @@ def _data_path(tmp_path: Path) -> str:
     return str(path)
 
 
-def test_capability_is_web_with_three_tools() -> None:
-    cap = capability.geothermal_map_capability("unused")
+def test_capability_is_web_with_five_tools() -> None:
+    cap = capability.geothermal_map_capability("unused", "unused")
     assert cap.surfaces == ("web",)
-    assert len(cap.tools) == 3
+    assert len(cap.tools) == 5
     assert cap.prompt_fragment
 
 
@@ -120,3 +123,197 @@ def test_map_is_pinned_once_per_session(tmp_path: Path) -> None:
     assert len(artifacts) == 1
     assert artifacts[0].payload["kind"] == "map"
     assert artifacts[0].payload["slot"] == "geothermal-map"
+
+
+# ---------------------------------------------------------------------------
+# Simulation (Phase 2): FakeJulia never runs real Julia, so each handler below
+# stands in for simulation.jl itself — it locates the result-file path the
+# *rendered* template would have told Julia to write to (via the same
+# raw"...".json/.b64 literals _render_template substitutes in), and writes a
+# synthetic result there directly, exactly as if simulation.jl had run.
+
+
+def _result_path(code: str) -> Path:
+    match = re.search(r'raw"([^"]+\.json)"', code)
+    assert match, f"no .json result path found in rendered code:\n{code}"
+    return Path(match.group(1))
+
+
+def _b64_path(code: str) -> Path:
+    match = re.search(r'raw"([^"]+\.b64)"', code)
+    assert match, f"no .b64 result path found in rendered code:\n{code}"
+    return Path(match.group(1))
+
+
+def _simulate_eval_handler(result: dict[str, Any]):
+    def handler(code: str) -> EvalResult:
+        assert "run_fimbul_simulation" in code
+        _result_path(code).write_text(json.dumps(result), encoding="utf-8")
+        return EvalResult(output="ok")
+
+    return handler
+
+
+def _setup_eval_handler(result: dict[str, Any]):
+    def handler(code: str) -> EvalResult:
+        assert "well_to_simulation_params" in code
+        _result_path(code).write_text(json.dumps(result), encoding="utf-8")
+        return EvalResult(output="ok")
+
+    return handler
+
+
+def _view_eval_handler(b64: str):
+    def handler(code: str) -> EvalResult:
+        assert "render_reservoir_image" in code or b64 == ""
+        _b64_path(code).write_text(b64, encoding="ascii")
+        return EvalResult(output="ok")
+
+    return handler
+
+
+_SIM_RESULT = {
+    "status": "completed",
+    "message": "Simulation completed successfully.",
+    "well_data": {"Well1": {"Temperature": [10.0, 12.0]}},
+    "timestamps": [0.0, 365.0],
+    "num_steps": 2,
+    "reservoir_vars": [],
+}
+
+
+def test_run_simulation_tool_records_report_and_returns_summary(tmp_path: Path) -> None:
+    julia = FakeJulia(eval_handler=_simulate_eval_handler(_SIM_RESULT))
+    session = _session(tmp_path, julia)
+    run_simulation = capability._make_run_simulation_tool(session, "unused.jl")
+    out = asyncio.run(
+        run_simulation.ainvoke({"case_type": "AGS", "parameters": {"well_depth": 100.0}})
+    )
+    assert "AGS" in out
+    assert "Well1" in out
+    artifacts = [e for e in session.trace.iter_events() if e.kind == "artifact"]
+    assert artifacts[-1].payload["path"] == "artifacts/simulation-results.html"
+    assert artifacts[-1].payload["mime"] == "text/html"
+
+
+def test_run_simulation_tool_reports_failure_without_recording_artifact(tmp_path: Path) -> None:
+    failure = {"status": "error", "message": "Invalid parameters: well_depth must be positive"}
+    julia = FakeJulia(eval_handler=_simulate_eval_handler(failure))
+    session = _session(tmp_path, julia)
+    run_simulation = capability._make_run_simulation_tool(session, "unused.jl")
+    out = asyncio.run(run_simulation.ainvoke({"case_type": "AGS", "parameters": {}}))
+    assert out.startswith("ERROR")
+    assert "well_depth" in out
+    assert not [e for e in session.trace.iter_events() if e.kind == "artifact"]
+
+
+def test_view_simulation_result_tool_returns_an_image(tmp_path: Path) -> None:
+    julia = FakeJulia(eval_handler=_view_eval_handler("ZmFrZQ=="))
+    session = _session(tmp_path, julia)
+    view_tool = capability._make_view_simulation_result_tool(session, "unused.jl")
+    out = asyncio.run(view_tool.ainvoke({"var": "Temperature", "step": -1, "delta": False}))
+    assert isinstance(out, list)
+    assert out[1]["type"] == "image"
+    assert out[1]["base64"] == "ZmFrZQ=="
+
+
+def test_view_simulation_result_tool_reports_no_result_yet(tmp_path: Path) -> None:
+    julia = FakeJulia(eval_handler=_view_eval_handler(""))
+    session = _session(tmp_path, julia)
+    view_tool = capability._make_view_simulation_result_tool(session, "unused.jl")
+    out = asyncio.run(view_tool.ainvoke({"var": "Temperature", "step": -1, "delta": False}))
+    assert "No simulation result" in out
+
+
+def test_setup_simulation_action_sends_a_targeted_ui_action(tmp_path: Path) -> None:
+    params_result = {
+        "case_type": "AGS",
+        "parameters": {"well_depth": {"value": 100.0, "source": "data"}},
+    }
+    julia = FakeJulia(eval_handler=_setup_eval_handler(params_result))
+    session = _session(tmp_path, julia)
+    action = capability.make_setup_simulation_action("unused.jl")
+    sent: list[dict[str, Any]] = []
+
+    async def send_wire(msg: dict[str, Any]) -> None:
+        sent.append(msg)
+
+    asyncio.run(
+        action(session, {"layer": "EnergiBrønn", "brønnNr": "100"}, send_wire, lambda e: None)
+    )
+
+    assert sent == [
+        {
+            "type": "ui",
+            "action": "simulation_params",
+            "payload": params_result,
+            "target": "slot:geothermal-map",
+        }
+    ]
+
+
+def test_setup_simulation_action_reports_failure_as_a_targeted_ui_action(tmp_path: Path) -> None:
+    def handler(code: str) -> EvalResult:
+        return EvalResult(output="", error="boom")
+
+    julia = FakeJulia(eval_handler=handler)
+    session = _session(tmp_path, julia)
+    action = capability.make_setup_simulation_action("unused.jl")
+    sent: list[dict[str, Any]] = []
+
+    async def send_wire(msg: dict[str, Any]) -> None:
+        sent.append(msg)
+
+    asyncio.run(action(session, {}, send_wire, lambda e: None))
+
+    assert sent[-1]["action"] == "simulation_setup_error"
+    assert sent[-1]["target"] == "slot:geothermal-map"
+    assert "boom" in sent[-1]["payload"]["message"]
+
+
+def test_run_simulation_action_streams_tool_events_and_queues_a_ui_event(tmp_path: Path) -> None:
+    julia = FakeJulia(
+        eval_handler=_simulate_eval_handler(_SIM_RESULT), stream_chunks=["progress...\n"]
+    )
+    session = _session(tmp_path, julia)
+    action = capability.make_run_simulation_action("unused.jl")
+    sent: list[dict[str, Any]] = []
+    queued: list[Any] = []
+
+    async def send_wire(msg: dict[str, Any]) -> None:
+        sent.append(msg)
+
+    asyncio.run(
+        action(
+            session,
+            {"case_type": "AGS", "parameters": {"well_depth": 100.0}},
+            send_wire,
+            queued.append,
+        )
+    )
+
+    tool_events = [m["event"] for m in sent if m["type"] == "tool"]
+    assert tool_events == ["started", "delta", "finished"]
+    assert any(m["type"] == "viz" for m in sent)  # the report artifact, re-flushed
+    assert len(queued) == 1
+    assert queued[0]["event"] == "simulationCompleted"
+    assert queued[0]["case_type"] == "AGS"
+
+
+def test_run_simulation_action_reports_an_error_event_on_failure(tmp_path: Path) -> None:
+    failure = {"status": "error", "message": "Invalid parameters: well_depth must be positive"}
+    julia = FakeJulia(eval_handler=_simulate_eval_handler(failure))
+    session = _session(tmp_path, julia)
+    action = capability.make_run_simulation_action("unused.jl")
+    sent: list[dict[str, Any]] = []
+    queued: list[Any] = []
+
+    async def send_wire(msg: dict[str, Any]) -> None:
+        sent.append(msg)
+
+    asyncio.run(action(session, {"case_type": "AGS", "parameters": {}}, send_wire, queued.append))
+
+    tool_events = [m["event"] for m in sent if m["type"] == "tool"]
+    assert tool_events == ["started", "error"]
+    assert not queued
+    assert not [e for e in session.trace.iter_events() if e.kind == "artifact"]
