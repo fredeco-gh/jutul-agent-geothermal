@@ -42,9 +42,13 @@ const { FakeMap, FakePopup } = vi.hoisted(() => {
     addLayer(def: { id: string }) {
       this.layers.add(def.id);
     }
+    removeLayer(id: string) {
+      this.layers.delete(id);
+    }
     getLayer(id: string) {
       return this.layers.has(id) ? {} : undefined;
     }
+    triggerRepaint() {}
     setLayoutProperty(id: string, prop: string, value: unknown) {
       this.layoutProps.push({ id, prop, value });
     }

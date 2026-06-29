@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import "./MapPanel.css";
 import type { PanelProps } from "./registry";
 import { useUiActions } from "./registry";
+import { createWellbore3D, type Wellbore3D } from "./wellbore3d";
 
 interface GeoJsonFeature {
   type: "Feature";
@@ -101,6 +102,7 @@ interface SelectedWell {
   rows: Array<[string, string]>;
   properties: Record<string, unknown>;
   layer: string;
+  lngLat: { lng: number; lat: number };
 }
 
 // Well types Fimbul can simulate — matches simulation.jl's own
@@ -190,12 +192,18 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const wellbore3dRef = useRef<Wellbore3D | null>(null);
   const selectWellRef = useRef<(feature: GeoJsonFeature, lngLat: { lng: number; lat: number }) => void>(
     () => {},
   );
   const uiActions = useUiActions(view.id);
 
   const [selected, setSelected] = useState<SelectedWell | null>(null);
+  // Mirrors `selected` for the ui-actions effect below, which must read the
+  // currently selected well's lngLat without depending on (and re-running
+  // for) every selection change.
+  const selectedRef = useRef<SelectedWell | null>(null);
+  selectedRef.current = selected;
   const [total, setTotal] = useState(0);
   const [byGroup, setByGroup] = useState<Record<string, number>>({});
   const [visibility, setVisibility] = useState<Record<string, boolean>>(() =>
@@ -221,6 +229,9 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
     const { title, color, label } = describeFeature(props);
     const layerName = String(props.layer || "Unknown");
 
+    // A new selection retires any 3D wellbore shown for the previous one —
+    // mirrors geothermal-viz's own wellSelected handling in wellbore-3d.js.
+    wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     const map = mapRef.current;
     if (map) {
@@ -248,7 +259,7 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
           : String(value);
       rows.push([fieldLabel, display]);
     }
-    setSelected({ title, color, label, rows, properties: props, layer: layerName });
+    setSelected({ title, color, label, rows, properties: props, layer: layerName, lngLat });
 
     // Relay the selection to the agent — mirrors geothermal-viz's own
     // wellSelected event (jutul-agent-bridge.js used to forward it over
@@ -272,6 +283,7 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
     map.addControl(new maplibregl.NavigationControl(), "top-right");
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 200 }), "bottom-right");
     mapRef.current = map;
+    wellbore3dRef.current = createWellbore3D(map);
 
     let loaded = false;
     const finishLoading = () => {
@@ -377,6 +389,7 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
       map.remove();
       mapRef.current = null;
       popupRef.current = null;
+      wellbore3dRef.current = null;
     };
     // Mounted once for this view's lifetime; onLoaded/onUiEvent are
     // Canvas-supplied closures stable enough for the panel's own life, and
@@ -414,6 +427,10 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
           setSimError(null);
           setSimSetup(setup);
           setSimParams({ ...setup.parameters });
+          // Mirrors geothermal-viz's own simulationSetup event: show the 3D
+          // wellbore for the well the resolved params belong to.
+          const lngLat = selectedRef.current?.lngLat;
+          if (lngLat) wellbore3dRef.current?.show(lngLat, setup.parameters, setup.case_type);
         } else {
           setSimSetup(null);
           setSimError("This well type does not support simulation.");
@@ -436,12 +453,16 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
     onAction("setup_simulation", selected.properties);
   };
 
-  const handleCloseSimPanel = () => setSimPanelOpen(false);
+  const handleCloseSimPanel = () => {
+    setSimPanelOpen(false);
+    wellbore3dRef.current?.remove();
+  };
 
   const handleParamChange = (key: string, raw: string) => {
     const value = parseFloat(raw);
     if (Number.isNaN(value)) return;
     setSimParams((p) => ({ ...p, [key]: value }));
+    wellbore3dRef.current?.update({ [key]: value });
   };
 
   const handleRunSimulation = () => {
