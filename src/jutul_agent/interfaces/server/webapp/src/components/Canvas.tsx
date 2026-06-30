@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 
-import { isImageView, panelFor, setAllFramesInert } from "../canvas/registry";
+import { hasOpenableUrl, isImageView, panelFor, setAllFramesInert } from "../canvas/registry";
 import { useController, useSel } from "../context";
 import { BackIcon, ChatIcon, CloseIcon, KindIcon, PopoutIcon } from "../icons";
 
@@ -105,13 +105,15 @@ export function Canvas() {
               <BackIcon />
             </button>
           ) : null}
-          <button
-            className="icon-btn"
-            title="Open in a new tab"
-            onClick={() => active && window.open(active.url, "_blank", "noopener")}
-          >
-            <PopoutIcon />
-          </button>
+          {active && hasOpenableUrl(active) ? (
+            <button
+              className="icon-btn"
+              title="Open in a new tab"
+              onClick={() => window.open(active.url, "_blank", "noopener")}
+            >
+              <PopoutIcon />
+            </button>
+          ) : null}
           <button className="icon-btn" title="Close panel" onClick={closeCanvas}>
             <CloseIcon />
           </button>

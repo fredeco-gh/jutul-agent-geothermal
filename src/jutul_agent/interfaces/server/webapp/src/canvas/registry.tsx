@@ -122,3 +122,13 @@ export function panelFor(view: View): Panel {
   if (isImageView(view)) return ImagePanel;
   return registry[view.kind] ?? IframePanel;
 }
+
+/** A view can be meaningfully opened in a new browser tab when it renders
+ *  from a real URL — an image, or an iframe'd page (any kind not in the
+ *  native-panel registry). A view backed by a registered native panel (e.g.
+ *  the map) renders live React/component state the URL never reflects: its
+ *  `view.url` is a stub artifact kept only to satisfy the artifact-pin wire
+ *  contract, so opening it just shows an empty page. */
+export function hasOpenableUrl(view: View): boolean {
+  return isImageView(view) || !(view.kind in registry);
+}
