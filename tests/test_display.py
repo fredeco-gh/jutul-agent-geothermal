@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from jutul_agent.display import (
@@ -27,14 +29,14 @@ def test_interactive_without_display_renders_offscreen() -> None:
     assert can_open_windows(interactive_session=True, display=False) is False
 
 
-@pytest.mark.parametrize("system", ["Windows", "Darwin"])
-def test_has_display_true_on_desktop_os(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
-    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: system)
+@pytest.mark.parametrize("platform", ["win32", "darwin"])
+def test_has_display_true_on_desktop_os(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
     assert has_display() is True
 
 
 def test_has_display_linux_depends_on_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Linux")
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     assert has_display() is False
@@ -45,7 +47,7 @@ def test_has_display_linux_depends_on_env(monkeypatch: pytest.MonkeyPatch) -> No
 
 def _headless_linux(monkeypatch: pytest.MonkeyPatch) -> None:
     """Put the display module in a headless-Linux baseline (no display, no opt-out)."""
-    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Linux")
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.delenv("JUTUL_AGENT_NO_XVFB", raising=False)
@@ -78,7 +80,7 @@ def test_should_wrap_xvfb_only_on_headless_linux_with_xvfb(
     assert should_wrap_xvfb() is False
     monkeypatch.delenv("DISPLAY", raising=False)
 
-    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(sys, "platform", "darwin")
     assert should_wrap_xvfb() is False
 
 
@@ -115,7 +117,7 @@ def test_managed_display_closes_pipe_when_xvfb_fails_to_start(
 
 def test_plotting_display_available_on_desktop_os(monkeypatch: pytest.MonkeyPatch) -> None:
     # Desktop OSes always have a display, so plotting is available regardless of xvfb.
-    monkeypatch.setattr("jutul_agent.display.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(sys, "platform", "darwin")
     _set_xvfb_run(monkeypatch, present=False)
     assert plotting_display_available() is True
 
