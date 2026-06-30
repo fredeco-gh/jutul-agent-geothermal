@@ -86,6 +86,10 @@ def create_geothermal_map_app() -> Any:
         manager,
         ui=True,
         default_sim="fimbul",
+        # Pins the history/artifact/transcript routes to the same workspace
+        # _host_factory resolves sessions under, so a chat that shows up in
+        # history is always the same one resume actually finds on disk.
+        workspace=WORKSPACE,
         # MapPanel.tsx fetches its borehole layer from here directly — a plain
         # static mount, no Julia or session involved (see canvas/MapPanel.tsx).
         extra_mounts={"/geothermal-data": DATA_DIR},

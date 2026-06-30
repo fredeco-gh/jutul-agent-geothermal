@@ -1115,6 +1115,45 @@ def test_upload_writes_to_workspace(tmp_path: Path) -> None:
     assert (tmp_path / "uploads" / "my_data.csv").read_bytes() == b"a,b\n1,2\n"
 
 
+def test_history_and_resume_agree_on_pinned_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `workspace=` pinned at create_app time must resolve sessions the same way
+    for history listing as for resume — not the launching process's cwd for one
+    and the pinned workspace for the other. Regression test for a bug where a
+    session showed up in `/sessions/history` but 404'd on `/resume`, because the
+    two routes disagreed on which on-disk location to scan.
+    """
+    # `_manager`'s fake host factory writes sessions straight to `tmp_path` (its
+    # `state_root` is the raw path, not workspace-hashed); align
+    # `workspace_state_dir`'s hashing with that — but only for the pinned
+    # `tmp_path` itself, so an unpinned (`None`) call still resolves elsewhere,
+    # the same way the real cwd-based fallback would diverge from it.
+    wrong_bucket = tmp_path / "_unpinned_cwd_bucket"
+    monkeypatch.setattr(
+        "jutul_agent.paths.workspace_state_dir",
+        lambda workspace=None: tmp_path if workspace == tmp_path else wrong_bucket,
+    )
+
+    manager = _manager(echo_agent, tmp_path, max_live=1)
+    with TestClient(create_app(manager, workspace=tmp_path)) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "prompt", "text": "hello"})
+            _drain_turn(ws)
+
+        # Evict it from the live registry (max_live=1) so resume must hit disk,
+        # the same as a session surviving a server restart.
+        client.post("/sessions", json={"sim": "jutuldarcy"})
+        assert manager.get(sid) is None
+
+        history = client.get("/sessions/history").json()["sessions"]
+        assert any(s["id"] == sid for s in history)
+
+        resume = client.post(f"/sessions/{sid}/resume", json={"sim": "jutuldarcy"})
+    assert resume.status_code == 200
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

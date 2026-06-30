@@ -143,6 +143,7 @@ def create_app(
     threads: str | None = None,
     add_dirs: Sequence[Path] = (),
     ephemeral_memory: bool = False,
+    workspace: Path | None = None,
     extra_static: dict[str, Path] | None = None,
     extra_mounts: dict[str, Path] | None = None,
     extra_routes: APIRouter | None = None,
@@ -174,6 +175,15 @@ def create_app(
     # already has exact, structured inputs and there is nothing for the model to
     # decide, unlike a normal tool call.
     actions = actions or {}
+
+    # History/resume-lookup routes below scan disk directly (no live SessionHost
+    # to ask), so they need the same workspace SessionHost.start resolves sessions
+    # under — otherwise a caller that pins an explicit `workspace` (e.g. an
+    # example's serve.py) sees sessions in its history list that 404 on resume,
+    # because the listing fell back to the launching process's cwd instead.
+    from jutul_agent.paths import workspace_state_dir
+
+    state_root = workspace_state_dir(workspace)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -335,12 +345,16 @@ def create_app(
         """The folder a session runs in: an explicit request, else the server's folder.
 
         The server runs in one folder (its launch directory, where the bound
-        simulator's Julia environment lives), so a normal session runs there
-        (``None`` lets ``SessionHost.start`` fall back to ``workspace_root()``).
-        The ``requested`` override is retained for a future launcher that opens a
-        session in a chosen folder.
+        simulator's Julia environment lives), so a normal session runs there. With
+        no request, this falls back to ``create_app``'s own ``workspace`` (when a
+        caller pinned one) rather than bare ``None``, so a manager built from
+        ``create_app``'s own default factory resolves sessions under the same
+        folder the history/artifact routes above already use — ``None`` only when
+        neither is set, which leaves ``SessionHost.start`` to fall back to
+        ``workspace_root()``. The ``requested`` override is retained for a future
+        launcher that opens a session in a chosen folder.
         """
-        return Path(requested) if requested else None
+        return Path(requested) if requested else workspace
 
     @app.get("/sessions/history")
     def session_history(limit: int = 40) -> dict[str, Any]:
@@ -362,7 +376,7 @@ def create_app(
         # before the sort would order by creation and cut an old-but-recently-used
         # session even though it belongs near the top.
         sessions: list[dict[str, Any]] = []
-        for info in list_sessions():
+        for info in list_sessions(state_root):
             sim, first_prompt, last_active = _session_overview(info.state_dir)
             title = info.title or (derive_session_title(first_prompt) if first_prompt else None)
             if not title:
@@ -391,7 +405,7 @@ def create_app(
         saved posters.
         """
         host = manager.get(session_id)
-        state_dir = host.session.state_dir if host else _session_state_dir(session_id)
+        state_dir = host.session.state_dir if host else _session_state_dir(session_id, state_root)
         if state_dir is None:
             raise HTTPException(status_code=404, detail="no such session")
         from jutul_agent.trace import TraceLog
@@ -489,7 +503,7 @@ def create_app(
         if host is not None:
             out_dir: Path | None = host.session.output_dir
         elif _is_valid_session_id(session_id):
-            out_dir = _existing_output_dir(session_id)
+            out_dir = _existing_output_dir(session_id, workspace)
         else:
             out_dir = None
         if out_dir is None:
@@ -503,7 +517,7 @@ def create_app(
     def get_transcript(session_id: str, format: str = "html") -> Response:
         """Download the session transcript to share (html or md)."""
         host = manager.get(session_id)
-        state_dir = host.session.state_dir if host else _session_state_dir(session_id)
+        state_dir = host.session.state_dir if host else _session_state_dir(session_id, state_root)
         if state_dir is None:
             raise HTTPException(status_code=404, detail="no such session")
         from jutul_agent.session import _existing_output_dir
@@ -515,7 +529,7 @@ def create_app(
         md = format in ("md", "markdown")
         # Inline images so the downloaded transcript shows its plots on its own,
         # off the server (the artifacts live in the session's output folder).
-        out_dir = host.session.output_dir if host else _existing_output_dir(session_id)
+        out_dir = host.session.output_dir if host else _existing_output_dir(session_id, workspace)
         artifact_dirs = [out_dir / "artifacts", out_dir] if out_dir else []
         body = render_markdown(events) if md else render_html(events, artifact_dirs=artifact_dirs)
         ext = "md" if md else "html"
@@ -808,13 +822,13 @@ def _is_valid_session_id(session_id: str) -> bool:
     return bool(_SESSION_ID_RE.match(session_id)) and ".." not in session_id
 
 
-def _session_state_dir(session_id: str) -> Path | None:
+def _session_state_dir(session_id: str, state_root: Path | None = None) -> Path | None:
     """The on-disk state dir for a (possibly not-loaded) session, if it exists."""
     from jutul_agent.session import sessions_root
 
     if not _is_valid_session_id(session_id):
         return None
-    root = sessions_root().resolve()
+    root = sessions_root(state_root).resolve()
     candidate = (root / session_id).resolve()
     if not candidate.is_relative_to(root):  # belt-and-braces against traversal
         return None

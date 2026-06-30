@@ -157,7 +157,7 @@ def write_last_session(session_id: str, *, state_root: Path | None = None) -> No
     p.write_text(session_id, encoding="utf-8")
 
 
-def _existing_output_dir(session_id: str) -> Path | None:
+def _existing_output_dir(session_id: str, workspace: Path | None = None) -> Path | None:
     """The session's existing output dir, accounting for an adopted title slug.
 
     ``adopt_title`` renames ``sessions/<sid>/`` to ``sessions/<sid>-<slug>/``, so a
@@ -168,7 +168,7 @@ def _existing_output_dir(session_id: str) -> Path | None:
     not under ``artifacts/``) — so a resumed plot or report still resolves rather
     than the empty stray dir winning just because it sorts first.
     """
-    base = session_output_dir(session_id)
+    base = session_output_dir(session_id, workspace)
     candidates: list[Path] = []
     if base.is_dir():
         candidates.append(base)
