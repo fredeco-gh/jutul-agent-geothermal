@@ -21,7 +21,7 @@ from fakes import (
     make_fake_adapter,
     streaming_agent,
 )
-from jutul_agent.interfaces.server.app import artifact_wire_events, create_app
+from jutul_agent.interfaces.server.app import artifact_wire_events, create_app, replay_events
 from jutul_agent.interfaces.server.manager import SessionBusyError, SessionManager
 from jutul_agent.interfaces.server.session_host import SessionHost
 from jutul_agent.session import Session, default_session_id
@@ -745,6 +745,50 @@ def test_artifact_wire_events_replay_falls_back_to_poster() -> None:
         "slot": "reservoir",
         "silent": False,
     }
+
+
+def _artifact_event(**payload: Any) -> Any:
+    from jutul_agent.trace.log import Event
+
+    return Event(id=1, timestamp="2026-01-01T00:00:00+00:00", kind="artifact", payload=payload)
+
+
+def test_replay_keeps_a_live_plot_live_when_the_same_kernel_is_still_serving_it() -> None:
+    # Switching to another chat and back (or a resume that reattaches to a still-
+    # live kernel) must not throw away a working interactive plot just because
+    # this is technically a "replay" — only a kernel_token mismatch (a different,
+    # since-restarted kernel) should fall back to the poster.
+    ev = _artifact_event(
+        path="artifacts/reservoir.png",
+        mime="image/png",
+        caption="Reservoir",
+        kind="plot",
+        poster="artifacts/reservoir.png",
+        slot="reservoir",
+        live_url="http://127.0.0.1:9123/viz/reservoir",
+        kernel_token="kernel-a",
+    )
+    (event,) = replay_events([ev], "sid", current_kernel_token="kernel-a")
+    assert event["url"] == "http://127.0.0.1:9123/viz/reservoir"
+
+
+def test_replay_falls_back_to_poster_when_the_kernel_token_does_not_match() -> None:
+    ev = _artifact_event(
+        path="artifacts/reservoir.png",
+        mime="image/png",
+        caption="Reservoir",
+        kind="plot",
+        poster="artifacts/reservoir.png",
+        slot="reservoir",
+        live_url="http://127.0.0.1:9123/viz/reservoir",
+        kernel_token="kernel-a",
+    )
+    # A since-restarted kernel (different token) ...
+    (event,) = replay_events([ev], "sid", current_kernel_token="kernel-b")
+    assert event["url"] == "/sessions/sid/artifacts/reservoir.png"
+    # ... and no live host at all (None) both fall back to the poster.
+    (event,) = replay_events([ev], "sid", current_kernel_token=None)
+    assert event["url"] == "/sessions/sid/artifacts/reservoir.png"
 
 
 def test_command_reconfigures_session(tmp_path: Path) -> None:

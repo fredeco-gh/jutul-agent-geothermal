@@ -263,6 +263,10 @@ def _finalize_web(
             "poster": png_rel if has_poster else None,
             "slot": slot,
             "live_url": live_url,
+            # Which kernel process's Bonito server this URL belongs to (see
+            # Session.kernel_token); a replay only trusts the URL when the
+            # session's currently-live kernel still has this same token.
+            "kernel_token": session.kernel_token if live_url else None,
             "source_code": source_code,
         },
     )

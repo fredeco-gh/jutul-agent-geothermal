@@ -400,9 +400,10 @@ def create_app(
         Emits the same message types the WebSocket streams during a turn — user
         and assistant text, reasoning, tool calls paired with their results, and
         views — so a reopened chat reconstructs inline exactly as it looked when
-        the user left it, tool cards and all. Artifacts replay with ``live=False``
-        because the Julia process restarted, so live plot embeds fall back to their
-        saved posters.
+        the user left it, tool cards and all. An interactive plot stays live in
+        the replay when the session's kernel is still the one that served it
+        (e.g. switching to another chat and back); otherwise it falls back to
+        its saved poster (see ``replay_events``).
         """
         host = manager.get(session_id)
         state_dir = host.session.state_dir if host else _session_state_dir(session_id, state_root)
@@ -412,7 +413,10 @@ def create_app(
 
         with TraceLog(state_dir / "trace.sqlite") as log:
             events = list(log.iter_events())
-        return {"messages": replay_events(events, session_id)}
+        current_kernel_token = host.session.kernel_token if host else None
+        return {
+            "messages": replay_events(events, session_id, current_kernel_token=current_kernel_token)
+        }
 
     @app.post("/sessions")
     async def create_session(req: CreateSessionRequest) -> dict[str, str]:
@@ -726,7 +730,9 @@ def artifact_wire_events(
     return events
 
 
-def replay_events(events: list[Any], session_id: str) -> list[dict[str, Any]]:
+def replay_events(
+    events: list[Any], session_id: str, *, current_kernel_token: str | None = None
+) -> list[dict[str, Any]]:
     """Wire messages that reconstruct a recorded conversation for a resumed session.
 
     The trace-event analogue of the live ``protocol.to_wire`` path: it maps each
@@ -734,8 +740,17 @@ def replay_events(events: list[Any], session_id: str) -> list[dict[str, Any]]:
     results, artifacts) to the same wire messages the WebSocket streams during a
     turn, so a reopened chat renders identically, tool cards and all. Kept as one
     function (not inlined in the endpoint) so the replay mapping lives in a single,
-    testable place. Artifacts replay with ``live=False`` because the Julia process
-    restarted, so a recorded live URL is dead and the figure falls back to its poster.
+    testable place.
+
+    An interactive plot's recorded ``live_url`` only still points at something
+    real when the kernel that served it is the one *currently* live for this
+    session — switching to another chat and back, or a fresh page load while
+    the kernel happens to still be live, must not throw the live embed away just
+    because this is technically a "replay". ``current_kernel_token`` (the
+    caller's live ``SessionHost``'s ``Session.kernel_token``, or ``None`` if the
+    session isn't live right now) is compared against each artifact's own
+    recorded token; only a match trusts the URL — anything else (no live host,
+    or a since-restarted kernel) falls back to the saved poster, same as before.
     """
     from jutul_agent.tool_labels import tool_label
 
@@ -786,7 +801,11 @@ def replay_events(events: list[Any], session_id: str) -> list[dict[str, Any]]:
                 }
             )
         elif ev.kind == "artifact":
-            items.extend(artifact_wire_events([ev.payload], session_id, live=False))
+            still_live = (
+                current_kernel_token is not None
+                and ev.payload.get("kernel_token") == current_kernel_token
+            )
+            items.extend(artifact_wire_events([ev.payload], session_id, live=still_live))
     return items
 
 

@@ -233,6 +233,15 @@ class Session:
     # Whether this session continues an earlier conversation. The thread state
     # is restored from the checkpointer; the Julia REPL is not.
     resumed: bool = False
+    # Unique per Python ``Session`` object — i.e. per actual kernel process
+    # lifetime, not per ``session_id`` (which spans every resume). Stamped onto
+    # a live interactive plot's trace event so a later replay (chat history
+    # reload, switching chats and back) can tell whether the kernel that's
+    # *currently* live for this session_id is the very one that served that
+    # plot's Bonito server, vs. some other kernel from a since-restarted
+    # process — only in the former case is the recorded ``live_url`` still
+    # reachable rather than a dead address (see app.py's ``replay_events``).
+    kernel_token: str = field(default_factory=lambda: uuid.uuid4().hex)
     _ephemeral_memory_dir: Path | None = field(default=None, repr=False)
     # Folders holding a report written this session, whose sidecar transcript is
     # refreshed at turn end (see ``refresh_report_transcripts``).
