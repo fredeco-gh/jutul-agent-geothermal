@@ -37,6 +37,8 @@ const DATA_URL = "/geothermal-data/all_boreholes.geojson";
 
 const MAP_CENTER: [number, number] = [10.75, 59.91]; // Oslo
 const MAP_ZOOM = 11;
+const MAP_PITCH = 45;
+const MAP_BEARING = -10;
 
 interface LayerConfig {
   id: string;
@@ -188,7 +190,7 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
   layers: [{ id: "osm-base", type: "raster", source: "osm-raster", minzoom: 0, maxzoom: 19 }],
 };
 
-export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelProps) {
+export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAction }: PanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -267,6 +269,36 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
     onUiEvent({ event: "wellSelected", properties: props, lngLat });
   };
 
+  // "Back to this view" bumps `reloadToken` to force a stuck/stale panel to
+  // reload — for an iframe'd panel that's a real page reload (a fresh `src`),
+  // whose own `onLoad` clears the spinner naturally. The map is a
+  // persistently-mounted native panel with nothing to re-fetch on "reload",
+  // so without this the canvas's spinner would wait forever for an `onLoaded`
+  // that was never coming. Skip the mount-time call: the real first-load
+  // signal is `map.on("load", ...)` below, which this would otherwise race.
+  const mountedReload = useRef(false);
+  useEffect(() => {
+    if (!mountedReload.current) {
+      mountedReload.current = true;
+      return;
+    }
+    // The map never "navigates away" the way an iframe'd report can, so there
+    // is nothing to reload — instead this resets the same things going back
+    // to a freshly-pinned view would give you: default camera, no selection.
+    wellbore3dRef.current?.remove();
+    popupRef.current?.remove();
+    popupRef.current = null;
+    setSelected(null);
+    mapRef.current?.flyTo({
+      center: MAP_CENTER,
+      zoom: MAP_ZOOM,
+      pitch: MAP_PITCH,
+      bearing: MAP_BEARING,
+    });
+    onLoaded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadToken]);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const map = new maplibregl.Map({
@@ -274,8 +306,8 @@ export function MapPanel({ view, active, onLoaded, onUiEvent, onAction }: PanelP
       style: MAP_STYLE,
       center: MAP_CENTER,
       zoom: MAP_ZOOM,
-      pitch: 45,
-      bearing: -10,
+      pitch: MAP_PITCH,
+      bearing: MAP_BEARING,
       maxZoom: 18,
       minZoom: 8,
       maxPitch: 70,

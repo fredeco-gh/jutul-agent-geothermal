@@ -124,19 +124,21 @@ function renderPanel(view: View) {
   const onUiEvent = vi.fn();
   const onLoaded = vi.fn();
   const onAction = vi.fn();
-  const utils = render(
+  const tree = (reloadToken: number) => (
     <SessionProvider value={{ store, controller }}>
       <MapPanel
         view={view}
         active
-        reloadToken={0}
+        reloadToken={reloadToken}
         onLoaded={onLoaded}
         onUiEvent={onUiEvent}
         onAction={onAction}
       />
-    </SessionProvider>,
+    </SessionProvider>
   );
-  return { store, onUiEvent, onLoaded, onAction, ...utils };
+  const utils = render(tree(0));
+  const rerenderWithToken = (token: number) => utils.rerender(tree(token));
+  return { store, onUiEvent, onLoaded, onAction, rerenderWithToken, ...utils };
 }
 
 async function flush() {
@@ -177,6 +179,39 @@ describe("MapPanel", () => {
     expect(map.layers.has("layer-energibronn")).toBe(true);
     expect(map.layers.has("layer-bronnpark")).toBe(true);
     expect(screen.getByText("Total boreholes:").nextSibling).toHaveTextContent("2");
+  });
+
+  it("'Back to this view' (a reloadToken bump) resets the camera and selection, and clears the spinner", async () => {
+    // The map is a persistently-mounted native panel: "Back to this view" has
+    // nothing to actually reload, so it resets what going back to a
+    // freshly-pinned view would give you instead — default camera, no
+    // selection — and clears the spinner itself, since no second
+    // `map.fire("load")` is coming the way an iframe'd panel would get one.
+    const { onLoaded, rerenderWithToken } = renderPanel(makeView("slot:geothermal-map"));
+    const map = FakeMap.instances.at(-1)!;
+    act(() => map.fire("load"));
+    act(() => map.fire("style.load"));
+    await flush();
+    expect(onLoaded).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      map.fireLayer("click", "layer-energibronn", {
+        lngLat: { lng: 10.7, lat: 59.9 },
+        features: [SAMPLE_GEOJSON.features[0]],
+      }),
+    );
+    expect(screen.getByText("Well #100")).toBeInTheDocument();
+
+    act(() => rerenderWithToken(1));
+
+    expect(onLoaded).toHaveBeenCalledTimes(2);
+    expect(map.flyToCalls.at(-1)).toEqual({
+      center: [10.75, 59.91],
+      zoom: 11,
+      pitch: 45,
+      bearing: -10,
+    });
+    expect(screen.queryByText("Well #100")).not.toBeInTheDocument();
   });
 
   it("still calls onLoaded if the data fetch fails", async () => {
