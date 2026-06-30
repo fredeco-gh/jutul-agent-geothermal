@@ -1154,6 +1154,31 @@ def test_history_and_resume_agree_on_pinned_workspace(
     assert resume.status_code == 200
 
 
+def test_queued_ui_events_reach_the_model_but_not_the_displayed_message(
+    tmp_path: Path,
+) -> None:
+    """A client-sent `ui_event` is queued and prepended to the next prompt so the
+    model can react to it (see `_with_pending_ui_events`), but that augmented text
+    must not become what the conversation *shows* — replaying the session should
+    display only what the user actually typed, not the raw event JSON dump ahead
+    of it.
+    """
+    with _client(echo_agent, tmp_path) as client:
+        sid = client.post("/sessions", json={"sim": "jutuldarcy"}).json()["session_id"]
+        with client.websocket_connect(f"/sessions/{sid}/stream") as ws:
+            ws.send_json({"type": "ui_event", "payload": {"event": "wellSelected", "well": 70823}})
+            ws.send_json({"type": "prompt", "text": "go to well park 1204"})
+            events = _drain_turn(ws)
+
+        # The model did receive the UI event context (the fake agent echoes its input).
+        assistant_text = "".join(e["text"] for e in events if e["type"] == "text")
+        assert "wellSelected" in assistant_text
+
+        msgs = client.get(f"/sessions/{sid}/messages").json()["messages"]
+    user_msgs = [m for m in msgs if m["type"] == "user"]
+    assert user_msgs[-1] == {"type": "user", "text": "go to well park 1204"}
+
+
 @pytest.mark.parametrize("agent_factory", [echo_agent])
 def test_unknown_simulator_is_400(agent_factory: Callable[[], Any], tmp_path: Path) -> None:
     # The default manager (no injected factory) resolves the simulator registry,

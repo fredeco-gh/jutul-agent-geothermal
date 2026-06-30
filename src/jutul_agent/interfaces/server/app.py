@@ -1081,9 +1081,11 @@ class _StreamState:
         # well in the history list. Idempotent (only the first prompt sets it).
         with contextlib.suppress(Exception):
             self._host.session.adopt_title(text)
-        text = self._with_pending_ui_events(text)
+        augmented = self._with_pending_ui_events(text)
         runner = self._host.runner
-        self._spawn(lambda: runner.run_prompt(text, on_message=self._on_message))
+        self._spawn(
+            lambda: runner.run_prompt(augmented, display_prompt=text, on_message=self._on_message)
+        )
 
     def _with_pending_ui_events(self, text: str) -> str:
         """Prepend any ui_events queued since the last prompt to ``text``.

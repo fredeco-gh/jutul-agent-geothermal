@@ -86,10 +86,21 @@ class TurnRunner:
         self,
         prompt: str,
         *,
+        display_prompt: str | None = None,
         on_message: MessageCallback | None = None,
     ) -> TurnRunResult:
+        """Run one turn on ``prompt`` (what the model sees).
+
+        ``display_prompt``, when given, is what gets traced as the user's
+        message instead — for a caller that augments ``prompt`` with context
+        the model needs but a human re-reading the conversation shouldn't see
+        (e.g. the web server prepending queued UI events ahead of the user's
+        actual text). Replay, transcripts, and title derivation all read the
+        trace, so this is the one place that distinction has to be made.
+        """
         if self._trace is not None:
-            self._trace.append("message_user", {"content": prompt})
+            shown = prompt if display_prompt is None else display_prompt
+            self._trace.append("message_user", {"content": shown})
         return await self._run(
             {"messages": [{"role": "user", "content": prompt}]},
             on_message=on_message,
