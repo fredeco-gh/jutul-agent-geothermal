@@ -260,7 +260,7 @@ class SessionHost:
             resolve_hypre_threads,
         )
         from jutul_agent.juliakernel import JuliaKernel, KernelConfig
-        from jutul_agent.paths import workspace_root
+        from jutul_agent.paths import workspace_root, workspace_state_dir
         from jutul_agent.session import Session, default_session_id, session_dir
         from jutul_agent.simulators.env_setup import prepare_workspace_env
         from jutul_agent.workspace import resolve_julia_project
@@ -268,6 +268,12 @@ class SessionHost:
         require_julia()
         ws = workspace or workspace_root()
         project = julia_project or resolve_julia_project(ws)
+        # Session/chat-history storage keys off the *resolved* workspace, not the
+        # launching process's cwd: a caller that pins an explicit `workspace`
+        # (e.g. an example's serve.py) must get the same history bucket every
+        # run regardless of which directory it happened to be launched from.
+        if state_root is None:
+            state_root = workspace_state_dir(ws)
         # A caller can supply a pre-provisioned env (and skip preparation); the
         # default path prepares the workspace env from the simulator template.
         # Run it off the event loop: the first session for a simulator can spend
