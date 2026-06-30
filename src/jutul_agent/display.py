@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import contextlib
 import os
-import platform
 import select
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 
@@ -32,7 +32,7 @@ def has_display() -> bool:
     Windows and macOS desktop sessions always have one. Linux and BSD need an X
     or Wayland display; a headless box (SSH, CI) has neither.
     """
-    if platform.system() in ("Windows", "Darwin"):
+    if sys.platform in ("win32", "darwin"):
         return True
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
@@ -168,7 +168,7 @@ def should_wrap_xvfb() -> bool:
     ``xvfb-run`` ships the ``Xvfb`` binary, so its presence implies both.
     """
 
-    if platform.system() != "Linux":
+    if sys.platform != "linux":
         return False
     if has_display():
         return False

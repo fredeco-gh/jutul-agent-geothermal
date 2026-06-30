@@ -8,8 +8,8 @@ opening (e.g. headless CI environments have no viewer).
 from __future__ import annotations
 
 import os
-import platform
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -20,11 +20,10 @@ def open_path(path: Path) -> None:
     """
     if os.environ.get("JUTUL_AGENT_NO_OPEN"):
         return
-    system = platform.system()
     try:
-        if system == "Windows":
+        if sys.platform == "win32":
             os.startfile(path)  # type: ignore[attr-defined]
-        elif system == "Darwin":
+        elif sys.platform == "darwin":
             _spawn(["open", str(path)])
         else:
             # On a headless Linux box there's no display server; xdg-open often
