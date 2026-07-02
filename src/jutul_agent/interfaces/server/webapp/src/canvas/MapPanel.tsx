@@ -118,7 +118,7 @@ interface BuildingClickResult {
 }
 
 interface TemperatureRecord {
-  time_utc: string;
+  time_oslo: string;
   temperature_C: number;
 }
 
@@ -587,15 +587,15 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
               if (data) {
                 buildingTemperatureRef.current = data as BuildingTemperatureData;
                 console.log(
-                  `[ERA5] Temperature saved: ${(data as BuildingTemperatureData).hours} hours for year ${(data as BuildingTemperatureData).year}`,
+                  `[Open-Meteo] Temperature saved: ${(data as BuildingTemperatureData).hours} hours for year ${(data as BuildingTemperatureData).year}`,
                 );
               }
             })
             .catch(() => { /* temperature fetch is best-effort */ });
         };
 
-        // Fetch Matrikkelen metadata for the building.  The registered
-        // Matrikkelen coordinates are used for ERA5 (primary path).
+        // Fetch Matrikkelen metadata for the building. The registered
+        // Matrikkelen coordinates are used for the temperature lookup (primary path).
         // Temporary fallback: when the WFS is unavailable, use the polygon
         // centroid so temperature data can still be fetched.
         const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);

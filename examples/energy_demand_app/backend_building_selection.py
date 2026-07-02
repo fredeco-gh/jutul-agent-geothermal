@@ -384,15 +384,15 @@ def api_building_temperature(
     Returns JSON with one record per hour:
       { "year": 2023, "hours": 8760, "records": [{"time_utc": ..., "temperature_C": ...}, ...] }
     """
-    from era5_land_timeseries import fetch_building_year_temperature
+    from open_meteo_timeseries import fetch_building_year_temperature
 
     df = fetch_building_year_temperature(lat=lat, lon=lon, year=year)
     records = (
-        df.assign(time_utc=df["time_utc"].astype(str))
-        .drop(columns=["temperature_K"])
+        df[["time_oslo", "temperature_C"]]
+        .assign(time_oslo=df["time_oslo"].astype(str))
         .to_dict(orient="records")
     )
-    print(f"[ERA5] Temperature saved: {len(records)} hours for ({lat:.5f}, {lon:.5f}), year {year}")
+    print(f"[Open-Meteo] {len(records)} hours saved for ({lat:.5f}, {lon:.5f}), year {year}")
     return {"lat": lat, "lon": lon, "year": year, "hours": len(records), "records": records}
 
 
