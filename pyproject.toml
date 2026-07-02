@@ -37,6 +37,13 @@ dependencies = [
     # Used directly by the declarative HTTP tools (agent/capabilities.py) to call a
     # host application's endpoints.
     "httpx>=0.27",
+    # Geospatial and data processing (energy_demand_app and similar examples).
+    "requests>=2.32",
+    "geopandas>=1.0",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "pandas>=2.0",
+    "numpy>=1.26",
 ]
 
 [project.urls]

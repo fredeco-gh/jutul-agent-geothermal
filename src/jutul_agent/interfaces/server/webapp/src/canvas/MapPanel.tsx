@@ -97,6 +97,18 @@ const FIELD_LABELS: Record<string, string> = {
   geolMedium: "Geological Medium",
 };
 
+interface BuildingClickResult {
+  hit: boolean;
+  selected?: {
+    bygningsnummer: string;
+    bygningstype?: string;
+    bygningsstatus?: string;
+    distance_m: number;
+    lat: number;
+    lon: number;
+  };
+}
+
 interface SelectedWell {
   title: string;
   color: string;
@@ -166,6 +178,13 @@ function formatDate(value: unknown): string {
   return d.toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "numeric" });
 }
 
+function polygonCentroid(rings: [number, number][][]): { lng: number; lat: number } {
+  const ring = rings[0];
+  let lng = 0, lat = 0;
+  for (const [x, y] of ring) { lng += x; lat += y; }
+  return { lng: lng / ring.length, lat: lat / ring.length };
+}
+
 function describeFeature(props: Record<string, unknown>): { title: string; color: string; label: string } {
   const layerName = String(props.layer || "Unknown");
   const cfg = LAYER_CONFIG[layerName] ?? { id: "other", color: "#999", label: layerName };
@@ -195,6 +214,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const wellbore3dRef = useRef<Wellbore3D | null>(null);
+  const buildingPopupRef = useRef<maplibregl.Popup | null>(null);
   const selectWellRef = useRef<(feature: GeoJsonFeature, lngLat: { lng: number; lat: number }) => void>(
     () => {},
   );
@@ -288,6 +308,8 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     popupRef.current = null;
+    buildingPopupRef.current?.remove();
+    buildingPopupRef.current = null;
     setSelected(null);
     mapRef.current?.flyTo({
       center: MAP_CENTER,
@@ -393,6 +415,47 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           try {
             map.addSource("openmaptiles", { type: "vector", url: "https://tiles.openfreemap.org/planet" });
             map.addLayer({
+              id: "building-footprints",
+              source: "openmaptiles",
+              "source-layer": "building",
+              type: "fill",
+              minzoom: 15,
+              paint: {
+                "fill-color": "#a0c4ff",
+                "fill-opacity": 0.4,
+                "fill-outline-color": "#4a90d9",
+              },
+            });
+            // Separate GeoJSON source updated on mousemove — avoids feature-state
+            // ID collisions that highlight multiple buildings at once.
+            map.addSource("hover-building", {
+              type: "geojson",
+              data: { type: "FeatureCollection", features: [] },
+            });
+            map.addLayer({
+              id: "building-hover-fill",
+              source: "hover-building",
+              type: "fill",
+              paint: { "fill-color": "#60a5fa", "fill-opacity": 0.7, "fill-outline-color": "#2563eb" },
+            });
+            // Layer-specific mousemove/mouseleave don't fire when a higher
+            // layer (3d-buildings) is on top — use a global mousemove with
+            // queryRenderedFeatures instead, which queries underlying data
+            // regardless of rendering order.
+            map.on("mousemove", (e) => {
+              if (map.getZoom() < 15) return;
+              const hoverSource = map.getSource("hover-building") as maplibregl.GeoJSONSource | undefined;
+              if (!hoverSource) return;
+              const features = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
+              if (features.length > 0) {
+                map.getCanvas().style.cursor = "pointer";
+                hoverSource.setData({ type: "FeatureCollection", features: [features[0] as unknown as maplibregl.MapGeoJSONFeature] });
+              } else {
+                map.getCanvas().style.cursor = "";
+                hoverSource.setData({ type: "FeatureCollection", features: [] });
+              }
+            });
+            map.addLayer({
               id: "3d-buildings",
               source: "openmaptiles",
               "source-layer": "building",
@@ -415,12 +478,45 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           console.warn("Could not load borehole data:", err);
         })
         .finally(finishLoading);
+
+      // Building click: only at zoom >= 15, yields to well point clicks.
+      // Uses the clicked polygon's centroid for the Matrikkelen WFS lookup so
+      // any click inside the footprint works, not just near the registered point.
+      // Silently no-ops when the backend endpoint is not available.
+      const wellLayerIds = LAYER_GROUPS.map((g) => `layer-${g.id}`);
+      map.on("click", async (e) => {
+        if (map.getZoom() < 15) return;
+        if (map.queryRenderedFeatures(e.point, { layers: wellLayerIds }).length > 0) return;
+        const buildingFeatures = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
+        if (buildingFeatures.length === 0) return;
+        const geom = buildingFeatures[0].geometry;
+        if (geom.type !== "Polygon" && geom.type !== "MultiPolygon") return;
+        const rings = (geom.type === "Polygon" ? geom.coordinates : geom.coordinates[0]) as [number, number][][];
+        const { lat, lng: lon } = polygonCentroid(rings);
+        const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);
+        if (!res.ok) return;
+        const result = (await res.json()) as BuildingClickResult;
+        if (!result.hit || !result.selected) return;
+        const b = result.selected;
+        buildingPopupRef.current?.remove();
+        buildingPopupRef.current = new maplibregl.Popup({ maxWidth: "280px" })
+          .setLngLat([b.lon, b.lat])
+          .setHTML(
+            `<div class="popup-title">Building ${escapeHtml(b.bygningsnummer)}</div>` +
+            `<div class="popup-detail">` +
+            (b.bygningstype ? `Type: ${escapeHtml(b.bygningstype)}<br>` : "") +
+            (b.bygningsstatus ? `Status: ${escapeHtml(b.bygningsstatus)}<br>` : "") +
+            `Distance: ${b.distance_m.toFixed(1)} m</div>`,
+          )
+          .addTo(map);
+      });
     });
 
     return () => {
       map.remove();
       mapRef.current = null;
       popupRef.current = null;
+      buildingPopupRef.current = null;
       wellbore3dRef.current = null;
     };
     // Mounted once for this view's lifetime; onLoaded/onUiEvent are
