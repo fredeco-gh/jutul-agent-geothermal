@@ -139,7 +139,6 @@
 .map-panel .sidebar-toggle {
   position: absolute;
   top: 10px;
-  left: 330px;
   z-index: 6;
   background: white;
   border: none;
@@ -152,7 +151,22 @@
 }
 
 .map-panel .sidebar-toggle.shifted {
-  left: 10px;
+  left: 10px !important;
+}
+
+.map-panel .sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 10;
+}
+
+.map-panel .sidebar-resize-handle:hover,
+.map-panel .sidebar-resize-handle:active {
+  background: rgba(52, 152, 219, 0.35);
 }
 
 .map-panel .sidebar-toggle:hover {

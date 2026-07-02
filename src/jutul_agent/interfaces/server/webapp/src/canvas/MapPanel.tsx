@@ -15,7 +15,7 @@
 
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import "./MapPanel.css";
 import type { PanelProps } from "./registry";
@@ -248,6 +248,7 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
 };
 
 export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAction }: PanelProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -270,6 +271,21 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     Object.fromEntries(LAYER_GROUPS.map((g) => [g.id, true])),
   );
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const panelLeft = panelRef.current?.getBoundingClientRect().left ?? 0;
+    const onMove = (ev: MouseEvent) => {
+      setSidebarWidth(Math.max(220, Math.min(600, ev.clientX - panelLeft)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
 
   // Setup Simulation sidebar panel: a well's resolved parameters arrive as a
   // targeted `simulation_params` ui action (see capability.py's
@@ -289,8 +305,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     const { title, color, label } = describeFeature(props);
     const layerName = String(props.layer || "Unknown");
 
-    // A new selection retires any 3D wellbore shown for the previous one —
-    // mirrors geothermal-viz's own wellSelected handling in wellbore-3d.js.
+    setSelectedBuilding(null);
     wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     const map = mapRef.current;
@@ -553,6 +568,8 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         if (!res.ok) return;
         const result = (await res.json()) as BuildingClickResult;
         if (!result.hit || !result.selected) return;
+        popupRef.current?.remove();
+        setSelected(null);
         setSelectedBuilding(result.selected);
         setCollapsed(false);
       });
@@ -662,9 +679,13 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
   );
 
   return (
-    <div className={`map-panel${active ? " active" : ""}`}>
+    <div ref={panelRef} className={`map-panel${active ? " active" : ""}`}>
       <div ref={containerRef} className="map-panel-map" />
-      <div className={`sidebar${collapsed ? " collapsed" : ""}`}>
+      <div
+        className={`sidebar${collapsed ? " collapsed" : ""}`}
+        style={collapsed ? undefined : { width: sidebarWidth }}
+      >
+        <div className="sidebar-resize-handle" onMouseDown={handleResizeMouseDown} />
         <div className="sidebar-header">
           <h1>Geothermal map</h1>
           <p className="subtitle">Norwegian boreholes</p>
@@ -695,66 +716,69 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           </div>
         </div>
         <div className="sidebar-section">
-          <h2>Selected Well</h2>
           {selected ? (
-            <div className="well-detail">
-              <div className="well-title">
-                <span className="popup-type" style={{ background: selected.color }}>
-                  {selected.label}
-                </span>{" "}
-                {selected.title}
-              </div>
-              {SIMULATABLE_LAYERS.has(selected.layer) ? (
-                <div className="sim-setup-action">
-                  <button className="btn-primary" onClick={handleSetupSimulation}>
-                    ⚡ Setup Simulation
-                  </button>
+            <>
+              <h2>Selected Well</h2>
+              <div className="well-detail">
+                <div className="well-title">
+                  <span className="popup-type" style={{ background: selected.color }}>
+                    {selected.label}
+                  </span>{" "}
+                  {selected.title}
                 </div>
-              ) : null}
-              <table>
-                <tbody>
-                  {selected.rows.map(([label, value]) => (
-                    <tr key={label}>
-                      <td>{label}</td>
-                      <td>{value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                {SIMULATABLE_LAYERS.has(selected.layer) ? (
+                  <div className="sim-setup-action">
+                    <button className="btn-primary" onClick={handleSetupSimulation}>
+                      ⚡ Setup Simulation
+                    </button>
+                  </div>
+                ) : null}
+                <table>
+                  <tbody>
+                    {selected.rows.map(([label, value]) => (
+                      <tr key={label}>
+                        <td>{label}</td>
+                        <td>{value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : selectedBuilding ? (
+            <>
+              <h2>Selected Building</h2>
+              <div className="well-detail">
+                <div className="well-title">Building {escapeHtml(selectedBuilding.bygningsnummer)}</div>
+                <table>
+                  <tbody>
+                    <tr><td>Bygningsnummer</td><td>{escapeHtml(selectedBuilding.bygningsnummer)}</td></tr>
+                    <tr><td>Bygningstype</td><td>{selectedBuilding.bygningstype ? escapeHtml(selectedBuilding.bygningstype) : "?"}</td></tr>
+                    <tr><td>Bygningsstatus</td><td>{selectedBuilding.bygningsstatus ? escapeHtml(selectedBuilding.bygningsstatus) : "?"}</td></tr>
+                    <tr><td>Kommunenavn</td><td>{selectedBuilding.kommunenavn ? escapeHtml(selectedBuilding.kommunenavn) : "?"}</td></tr>
+                    <tr><td>Kommunenummer</td><td>{selectedBuilding.kommunenummer ? escapeHtml(selectedBuilding.kommunenummer) : "?"}</td></tr>
+                    <tr><td>Latitude</td><td>{selectedBuilding.lat.toFixed(6)}</td></tr>
+                    <tr><td>Longitude</td><td>{selectedBuilding.lon.toFixed(6)}</td></tr>
+                    <tr><td>Distance</td><td>{selectedBuilding.distance_m.toFixed(1)} m</td></tr>
+                    <tr><td>Bruksareal totalt</td><td>{selectedBuilding.bruksareal_totalt != null ? `${selectedBuilding.bruksareal_totalt} m²` : "?"}</td></tr>
+                    <tr><td>Bruksareal bolig</td><td>{selectedBuilding.bruksareal_til_bolig != null ? `${selectedBuilding.bruksareal_til_bolig} m²` : "?"}</td></tr>
+                    <tr><td>Bruksareal annet</td><td>{selectedBuilding.bruksareal_til_annet != null ? `${selectedBuilding.bruksareal_til_annet} m²` : "?"}</td></tr>
+                    <tr><td>Antall boenheter</td><td>{selectedBuilding.antall_boenheter != null ? selectedBuilding.antall_boenheter : "?"}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
-            <p className="no-selection">Click a well on the map to view details.</p>
-          )}
-        </div>
-        <div className="sidebar-section">
-          <h2>Selected Building</h2>
-          {selectedBuilding ? (
-            <div className="well-detail">
-              <div className="well-title">Building {escapeHtml(selectedBuilding.bygningsnummer)}</div>
-              <table>
-                <tbody>
-                  <tr><td>Bygningsnummer</td><td>{escapeHtml(selectedBuilding.bygningsnummer)}</td></tr>
-                  <tr><td>Bygningstype</td><td>{selectedBuilding.bygningstype ? escapeHtml(selectedBuilding.bygningstype) : "?"}</td></tr>
-                  <tr><td>Bygningsstatus</td><td>{selectedBuilding.bygningsstatus ? escapeHtml(selectedBuilding.bygningsstatus) : "?"}</td></tr>
-                  <tr><td>Kommunenavn</td><td>{selectedBuilding.kommunenavn ? escapeHtml(selectedBuilding.kommunenavn) : "?"}</td></tr>
-                  <tr><td>Kommunenummer</td><td>{selectedBuilding.kommunenummer ? escapeHtml(selectedBuilding.kommunenummer) : "?"}</td></tr>
-                  <tr><td>Latitude</td><td>{selectedBuilding.lat.toFixed(6)}</td></tr>
-                  <tr><td>Longitude</td><td>{selectedBuilding.lon.toFixed(6)}</td></tr>
-                  <tr><td>Distance</td><td>{selectedBuilding.distance_m.toFixed(1)} m</td></tr>
-                  <tr><td>Bruksareal totalt</td><td>{selectedBuilding.bruksareal_totalt != null ? `${selectedBuilding.bruksareal_totalt} m²` : "?"}</td></tr>
-                  <tr><td>Bruksareal bolig</td><td>{selectedBuilding.bruksareal_til_bolig != null ? `${selectedBuilding.bruksareal_til_bolig} m²` : "?"}</td></tr>
-                  <tr><td>Bruksareal annet</td><td>{selectedBuilding.bruksareal_til_annet != null ? `${selectedBuilding.bruksareal_til_annet} m²` : "?"}</td></tr>
-                  <tr><td>Antall boenheter</td><td>{selectedBuilding.antall_boenheter != null ? selectedBuilding.antall_boenheter : "?"}</td></tr>
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="no-selection">Click a building on the map to view details.</p>
+            <>
+              <h2>Selection</h2>
+              <p className="no-selection">Click a well or building on the map.</p>
+            </>
           )}
         </div>
       </div>
       <button
         className={`sidebar-toggle${collapsed ? " shifted" : ""}`}
+        style={collapsed ? undefined : { left: sidebarWidth + 10 }}
         title="Toggle sidebar"
         onClick={() => setCollapsed((c) => !c)}
       >
