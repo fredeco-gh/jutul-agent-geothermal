@@ -168,6 +168,10 @@ def fetch_building_points_from_wfs(
 
     try:
         gdf = gpd.read_file(tmp_path)
+    except IndexError:
+        # pyogrio raises IndexError when the GML has no feature layers (empty
+        # WFS response with valid XML headers but zero features).
+        return gpd.GeoDataFrame(geometry=[], crs=f"EPSG:{epsg}")
     finally:
         tmp_path.unlink(missing_ok=True)
 

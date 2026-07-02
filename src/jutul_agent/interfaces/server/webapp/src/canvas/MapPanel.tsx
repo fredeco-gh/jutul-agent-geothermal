@@ -548,21 +548,17 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         let lat = e.lngLat.lat;
         let lon = e.lngLat.lng;
         const buildingFeatures = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
-        if (buildingFeatures.length > 0) {
-          // For MultiPolygon features (adjacent buildings merged into one OSM way),
-          // extract the specific sub-polygon the click landed in before computing
-          // the centroid — otherwise coordinates[0] might be a different building.
-          const geom = hoverGeometry(
-            buildingFeatures[0].geometry as { type: string; coordinates: unknown },
-            e.lngLat,
-          );
-          if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
-            const coords = geom.coordinates as [number, number][][] | [number, number][][][];
-            const rings = (geom.type === "Polygon" ? coords : (coords as [number, number][][][])[0]) as [number, number][][];
-            const centroid = polygonCentroid(rings);
-            lat = centroid.lat;
-            lon = centroid.lng;
-          }
+        if (buildingFeatures.length === 0) return;
+        const geom = hoverGeometry(
+          buildingFeatures[0].geometry as { type: string; coordinates: unknown },
+          e.lngLat,
+        );
+        if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
+          const coords = geom.coordinates as [number, number][][] | [number, number][][][];
+          const rings = (geom.type === "Polygon" ? coords : (coords as [number, number][][][])[0]) as [number, number][][];
+          const centroid = polygonCentroid(rings);
+          lat = centroid.lat;
+          lon = centroid.lng;
         }
         const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);
         if (!res.ok) return;
@@ -685,7 +681,6 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         className={`sidebar${collapsed ? " collapsed" : ""}`}
         style={collapsed ? undefined : { width: sidebarWidth }}
       >
-        <div className="sidebar-resize-handle" onMouseDown={handleResizeMouseDown} />
         <div className="sidebar-header">
           <h1>Geothermal map</h1>
           <p className="subtitle">Norwegian boreholes</p>
@@ -776,6 +771,13 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           )}
         </div>
       </div>
+      {!collapsed && (
+        <div
+          className="sidebar-resize-handle"
+          style={{ left: sidebarWidth - 3 }}
+          onMouseDown={handleResizeMouseDown}
+        />
+      )}
       <button
         className={`sidebar-toggle${collapsed ? " shifted" : ""}`}
         style={collapsed ? undefined : { left: sidebarWidth + 10 }}

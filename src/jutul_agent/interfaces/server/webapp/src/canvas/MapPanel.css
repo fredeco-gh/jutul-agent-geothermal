@@ -157,11 +157,10 @@
 .map-panel .sidebar-resize-handle {
   position: absolute;
   top: 0;
-  right: 0;
   bottom: 0;
-  width: 5px;
+  width: 6px;
   cursor: ew-resize;
-  z-index: 10;
+  z-index: 20;
 }
 
 .map-panel .sidebar-resize-handle:hover,
