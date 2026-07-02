@@ -185,6 +185,36 @@ function polygonCentroid(rings: [number, number][][]): { lng: number; lat: numbe
   return { lng: lng / ring.length, lat: lat / ring.length };
 }
 
+function pointInRing(px: number, py: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// When a hover feature is a MultiPolygon (adjacent buildings merged into one
+// OSM way), extract only the sub-polygon the cursor actually sits inside.
+function hoverGeometry(
+  geom: { type: string; coordinates: unknown },
+  lngLat: { lng: number; lat: number },
+): { type: string; coordinates: unknown } {
+  const [px, py] = [lngLat.lng, lngLat.lat];
+  if (geom.type === "MultiPolygon") {
+    const polys = geom.coordinates as [number, number][][][];
+    for (const poly of polys) {
+      if (pointInRing(px, py, poly[0])) {
+        return { type: "Polygon", coordinates: poly };
+      }
+    }
+  }
+  return geom;
+}
+
 function describeFeature(props: Record<string, unknown>): { title: string; color: string; label: string } {
   const layerName = String(props.layer || "Unknown");
   const cfg = LAYER_CONFIG[layerName] ?? { id: "other", color: "#999", label: layerName };
@@ -413,7 +443,13 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
             console.warn("Could not enable terrain:", err);
           }
           try {
-            map.addSource("openmaptiles", { type: "vector", url: "https://tiles.openfreemap.org/planet" });
+            // promoteId uses the OSM id property so setFeatureState targets
+            // exactly one building at a time instead of all with the same tile ID.
+            map.addSource("openmaptiles", {
+              type: "vector",
+              url: "https://tiles.openfreemap.org/planet",
+              promoteId: { building: "id" },
+            });
             map.addLayer({
               id: "building-footprints",
               source: "openmaptiles",
@@ -421,13 +457,11 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
               type: "fill",
               minzoom: 15,
               paint: {
-                "fill-color": "#a0c4ff",
-                "fill-opacity": 0.4,
+                "fill-color": "rgba(0,0,0,0)",
+                "fill-opacity": 0,
                 "fill-outline-color": "#4a90d9",
               },
             });
-            // Separate GeoJSON source updated on mousemove — avoids feature-state
-            // ID collisions that highlight multiple buildings at once.
             map.addSource("hover-building", {
               type: "geojson",
               data: { type: "FeatureCollection", features: [] },
@@ -438,10 +472,6 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
               type: "fill",
               paint: { "fill-color": "#60a5fa", "fill-opacity": 0.7, "fill-outline-color": "#2563eb" },
             });
-            // Layer-specific mousemove/mouseleave don't fire when a higher
-            // layer (3d-buildings) is on top — use a global mousemove with
-            // queryRenderedFeatures instead, which queries underlying data
-            // regardless of rendering order.
             map.on("mousemove", (e) => {
               if (map.getZoom() < 15) return;
               const hoverSource = map.getSource("hover-building") as maplibregl.GeoJSONSource | undefined;
@@ -449,7 +479,11 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
               const features = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
               if (features.length > 0) {
                 map.getCanvas().style.cursor = "pointer";
-                hoverSource.setData({ type: "FeatureCollection", features: [features[0] as unknown as maplibregl.MapGeoJSONFeature] });
+                const geom = hoverGeometry(features[0].geometry as { type: string; coordinates: unknown }, e.lngLat);
+                hoverSource.setData({
+                  type: "FeatureCollection",
+                  features: [{ type: "Feature" as const, geometry: geom as unknown, properties: {} }],
+                });
               } else {
                 map.getCanvas().style.cursor = "";
                 hoverSource.setData({ type: "FeatureCollection", features: [] });
@@ -487,12 +521,20 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
       map.on("click", async (e) => {
         if (map.getZoom() < 15) return;
         if (map.queryRenderedFeatures(e.point, { layers: wellLayerIds }).length > 0) return;
+        // Prefer polygon centroid for accuracy; fall back to raw click coordinates
+        // when building-footprints tiles haven't loaded yet.
+        let lat = e.lngLat.lat;
+        let lon = e.lngLat.lng;
         const buildingFeatures = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
-        if (buildingFeatures.length === 0) return;
-        const geom = buildingFeatures[0].geometry;
-        if (geom.type !== "Polygon" && geom.type !== "MultiPolygon") return;
-        const rings = (geom.type === "Polygon" ? geom.coordinates : geom.coordinates[0]) as [number, number][][];
-        const { lat, lng: lon } = polygonCentroid(rings);
+        if (buildingFeatures.length > 0) {
+          const geom = buildingFeatures[0].geometry;
+          if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
+            const rings = (geom.type === "Polygon" ? geom.coordinates : geom.coordinates[0]) as [number, number][][];
+            const centroid = polygonCentroid(rings);
+            lat = centroid.lat;
+            lon = centroid.lng;
+          }
+        }
         const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);
         if (!res.ok) return;
         const result = (await res.json()) as BuildingClickResult;
