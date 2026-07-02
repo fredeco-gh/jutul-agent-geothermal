@@ -311,6 +311,9 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
   const [simError, setSimError] = useState<string | null>(null);
   const [simStatus, setSimStatus] = useState<SimStatus | null>(null);
 
+  const [energyPanelOpen, setEnergyPanelOpen] = useState(false);
+  const [energyYear, setEnergyYear] = useState(2023);
+
   // A ref (not a plain function) so the mount effect below — which only runs
   // once per view.id — always calls the latest version, without needing to
   // depend on (and re-run for) every state setter it closes over.
@@ -321,6 +324,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
 
     setSelectedBuilding(null);
     buildingTemperatureRef.current = null;
+    setEnergyPanelOpen(false);
     wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     const map = mapRef.current;
@@ -379,6 +383,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     setSelected(null);
     setSelectedBuilding(null);
     buildingTemperatureRef.current = null;
+    setEnergyPanelOpen(false);
     mapRef.current?.flyTo({
       center: MAP_CENTER,
       zoom: MAP_ZOOM,
@@ -579,6 +584,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         popupRef.current?.remove();
         setSelected(null);
         buildingTemperatureRef.current = null;
+        setSimPanelOpen(false);
 
         const startTemperatureFetch = (bLat: number, bLon: number) => {
           fetch(`/api/building-temperature?lat=${bLat}&lon=${bLon}&year=2023`)
@@ -787,6 +793,11 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
               <h2>Selected Building</h2>
               <div className="well-detail">
                 <div className="well-title">Building {escapeHtml(selectedBuilding.bygningsnummer)}</div>
+                <div className="sim-setup-action">
+                  <button className="btn-primary" onClick={() => setEnergyPanelOpen(true)}>
+                    ⚡ Analyze energy needs
+                  </button>
+                </div>
                 <table>
                   <tbody>
                     <tr><td>Bygningsnummer</td><td>{escapeHtml(selectedBuilding.bygningsnummer)}</td></tr>
@@ -895,6 +906,34 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           ) : (
             <p className="sim-case-desc">Loading simulation setup…</p>
           )}
+        </div>
+      </div>
+      <div className={`sim-panel${energyPanelOpen ? " open" : ""}`}>
+        <div className="sim-panel-header">
+          <h2>Energy needs — building #{selectedBuilding?.bygningsnummer ?? "?"}</h2>
+          <button className="btn-icon" title="Close" onClick={() => setEnergyPanelOpen(false)}>
+            ✕
+          </button>
+        </div>
+        <div className="sim-tab-content active">
+          <div className="sim-param-row">
+            <label htmlFor="energy-year">Year</label>
+            <div className="sim-param-input-wrap">
+              <input
+                type="number"
+                id="energy-year"
+                className="sim-param-input"
+                value={energyYear}
+                min={1950}
+                max={2030}
+                step={1}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) setEnergyYear(v);
+                }}
+              />
+            </div>
+          </div>
         </div>
       </div>
     </div>
