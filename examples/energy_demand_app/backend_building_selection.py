@@ -15,13 +15,14 @@ from pyproj import Transformer
 
 WFS_BASE_URL = "https://wfs.geonorge.no/skwms1/wfs.matrikkelen-bygningspunkt"
 
-# Use UTM zone 33 as standard; could be chosen dynamically based on longitude.
+# UTM zone 33 is used as the default; could be chosen dynamically based on longitude.
 DEFAULT_EPSG = 25833
 
 DEFAULT_RADIUS_M = 50.0
 MAX_RADIUS_M = 200.0
 
 _cached_typename: str | None = None
+_cached_type_map: dict[str, dict] | None = None
 
 router = APIRouter()
 
@@ -123,7 +124,7 @@ def make_bbox_utm(
 
 
 def _first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
-    """Return the first candidate column name that exists in df (case-insensitive)."""
+    """Return the first candidate column name that exists in df, case-insensitively."""
     lower_to_actual = {c.lower(): c for c in df.columns}
     for candidate in candidates:
         actual = lower_to_actual.get(candidate.lower())
@@ -176,6 +177,73 @@ def fetch_building_points_from_wfs(
     return gdf.set_crs(epsg=epsg) if gdf.crs is None else gdf.to_crs(epsg=epsg)
 
 
+BUILDING_TYPE_CODELIST_URL = (
+    "https://register.geonorge.no/api/sosi-kodelister/kartdata/bygningstypekode.json"
+)
+
+
+def fetch_building_type_codelist() -> dict[str, dict]:
+    """Fetch the BygningstypeKode code list from Geonorge Register.
+
+    Returns a mapping from code → {name, description, status, id}.
+    """
+    response = requests.get(BUILDING_TYPE_CODELIST_URL, timeout=30)
+    response.raise_for_status()
+
+    data = response.json()
+    items = data.get("containeditems", [])
+
+    if not items:
+        raise RuntimeError("No code values found in the BygningstypeKode response.")
+
+    code_map: dict[str, dict] = {}
+    for item in items:
+        code = str(item.get("codevalue", "")).strip()
+        if not code:
+            continue
+        code_map[code] = {
+            "name": item.get("label"),
+            "description": item.get("description"),
+            "status": item.get("status"),
+            "id": item.get("id"),
+        }
+
+    return code_map
+
+
+def get_building_type_codelist() -> dict[str, dict]:
+    """Return the cached code list, fetching from Geonorge on the first call.
+
+    On network failure an empty dict is returned and the raw code is used as a fallback.
+    """
+    global _cached_type_map
+    if _cached_type_map is not None:
+        return _cached_type_map
+    try:
+        _cached_type_map = fetch_building_type_codelist()
+    except Exception:
+        _cached_type_map = {}
+    return _cached_type_map
+
+
+def get_building_type_name(code: int | str | None, code_map: dict[str, dict]) -> str | None:
+    """Look up the building type name for a given code.
+
+    Returns None if the code is missing, or the raw code string as a fallback if the
+    lookup fails (e.g. the code list could not be fetched).
+    """
+    if code is None:
+        return None
+    code_str = str(code).strip()
+    if not code_str:
+        return None
+    item = code_map.get(code_str)
+    if item is None:
+        # Code list unavailable or code unknown — show the raw code.
+        return code_str
+    return item.get("name") or code_str
+
+
 def normalize_building_candidates(
     gdf: gpd.GeoDataFrame,
     click_lat: float,
@@ -218,6 +286,8 @@ def normalize_building_candidates(
     gdf["distance_m"] = gdf.geometry.distance(click_point)
     gdf_wgs84 = gdf.to_crs("EPSG:4326")
 
+    type_map = get_building_type_codelist()
+
     def _str(row: pd.Series, col: str | None) -> str | None:
         if col is None or pd.isna(row[col]):
             return None
@@ -226,10 +296,11 @@ def normalize_building_candidates(
     results: list[BuildingInfo] = []
     for idx, row in gdf.sort_values("distance_m").iterrows():
         point = gdf_wgs84.loc[idx].geometry.centroid
+        raw_type = _str(row, col_type)
         results.append(
             BuildingInfo(
                 bygningsnummer=str(row[col_nr]),
-                bygningstype=_str(row, col_type),
+                bygningstype=get_building_type_name(raw_type, type_map),
                 bygningsstatus=_str(row, col_status),
                 kommunenummer=_str(row, col_kommnr),
                 kommunenavn=_str(row, col_kommnm),
