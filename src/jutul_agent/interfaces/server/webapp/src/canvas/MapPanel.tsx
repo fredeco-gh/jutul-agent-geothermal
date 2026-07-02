@@ -117,6 +117,19 @@ interface BuildingClickResult {
   selected?: SelectedBuilding;
 }
 
+interface TemperatureRecord {
+  time_utc: string;
+  temperature_C: number;
+}
+
+interface BuildingTemperatureData {
+  lat: number;
+  lon: number;
+  year: number;
+  hours: number;
+  records: TemperatureRecord[];
+}
+
 interface SelectedWell {
   title: string;
   color: string;
@@ -260,6 +273,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
 
   const [selected, setSelected] = useState<SelectedWell | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<SelectedBuilding | null>(null);
+  const buildingTemperatureRef = useRef<BuildingTemperatureData | null>(null);
   // Mirrors `selected` for the ui-actions effect below, which must read the
   // currently selected well's lngLat without depending on (and re-running
   // for) every selection change.
@@ -306,6 +320,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     const layerName = String(props.layer || "Unknown");
 
     setSelectedBuilding(null);
+    buildingTemperatureRef.current = null;
     wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     const map = mapRef.current;
@@ -363,6 +378,7 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     popupRef.current = null;
     setSelected(null);
     setSelectedBuilding(null);
+    buildingTemperatureRef.current = null;
     mapRef.current?.flyTo({
       center: MAP_CENTER,
       zoom: MAP_ZOOM,
@@ -566,8 +582,21 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         if (!result.hit || !result.selected) return;
         popupRef.current?.remove();
         setSelected(null);
+        buildingTemperatureRef.current = null;
         setSelectedBuilding(result.selected);
         setCollapsed(false);
+        // Fetch the full-year temperature series in the background; store when
+        // ready but don't display yet (will be wired up in a later step).
+        const { lat: bLat, lon: bLon } = result.selected;
+        fetch(`/api/building-temperature?lat=${bLat}&lon=${bLon}&year=2023`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => {
+            if (data) {
+              buildingTemperatureRef.current = data as BuildingTemperatureData;
+              console.log(`[ERA5] Temperature saved: ${(data as BuildingTemperatureData).hours} hours for year ${(data as BuildingTemperatureData).year}`);
+            }
+          })
+          .catch(() => { /* temperature fetch is best-effort */ });
       });
     });
 

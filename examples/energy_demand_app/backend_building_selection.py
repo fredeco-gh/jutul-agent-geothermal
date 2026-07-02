@@ -365,6 +365,29 @@ def api_building_click(
     return result
 
 
+@router.get("/api/building-temperature")
+def api_building_temperature(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    year: int = Query(2023, ge=1950, le=2030),
+) -> dict:
+    """Fetch a full year of hourly ERA5-Land 2 m temperature for a building location.
+
+    Returns JSON with one record per hour:
+      { "year": 2023, "hours": 8760, "records": [{"time_utc": ..., "temperature_C": ...}, ...] }
+    """
+    from era5_land_timeseries import fetch_building_year_temperature
+
+    df = fetch_building_year_temperature(lat=lat, lon=lon, year=year)
+    records = (
+        df.assign(time_utc=df["time_utc"].astype(str))
+        .drop(columns=["temperature_K"])
+        .to_dict(orient="records")
+    )
+    print(f"[ERA5] Temperature saved: {len(records)} hours for ({lat:.5f}, {lon:.5f}), year {year}")
+    return {"lat": lat, "lon": lon, "year": year, "hours": len(records), "records": records}
+
+
 @router.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "source": "Matrikkelen Bygningspunkt WFS", "wfs": WFS_BASE_URL}
