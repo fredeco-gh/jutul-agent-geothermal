@@ -97,16 +97,24 @@ const FIELD_LABELS: Record<string, string> = {
   geolMedium: "Geological Medium",
 };
 
+interface SelectedBuilding {
+  bygningsnummer: string;
+  bygningstype?: string;
+  bygningsstatus?: string;
+  kommunenummer?: string;
+  kommunenavn?: string;
+  lat: number;
+  lon: number;
+  distance_m: number;
+  bruksareal_totalt?: number;
+  bruksareal_til_bolig?: number;
+  bruksareal_til_annet?: number;
+  antall_boenheter?: number;
+}
+
 interface BuildingClickResult {
   hit: boolean;
-  selected?: {
-    bygningsnummer: string;
-    bygningstype?: string;
-    bygningsstatus?: string;
-    distance_m: number;
-    lat: number;
-    lon: number;
-  };
+  selected?: SelectedBuilding;
 }
 
 interface SelectedWell {
@@ -244,13 +252,13 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
   const wellbore3dRef = useRef<Wellbore3D | null>(null);
-  const buildingPopupRef = useRef<maplibregl.Popup | null>(null);
   const selectWellRef = useRef<(feature: GeoJsonFeature, lngLat: { lng: number; lat: number }) => void>(
     () => {},
   );
   const uiActions = useUiActions(view.id);
 
   const [selected, setSelected] = useState<SelectedWell | null>(null);
+  const [selectedBuilding, setSelectedBuilding] = useState<SelectedBuilding | null>(null);
   // Mirrors `selected` for the ui-actions effect below, which must read the
   // currently selected well's lngLat without depending on (and re-running
   // for) every selection change.
@@ -338,9 +346,8 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
     wellbore3dRef.current?.remove();
     popupRef.current?.remove();
     popupRef.current = null;
-    buildingPopupRef.current?.remove();
-    buildingPopupRef.current = null;
     setSelected(null);
+    setSelectedBuilding(null);
     mapRef.current?.flyTo({
       center: MAP_CENTER,
       zoom: MAP_ZOOM,
@@ -527,9 +534,16 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         let lon = e.lngLat.lng;
         const buildingFeatures = map.queryRenderedFeatures(e.point, { layers: ["building-footprints"] });
         if (buildingFeatures.length > 0) {
-          const geom = buildingFeatures[0].geometry;
+          // For MultiPolygon features (adjacent buildings merged into one OSM way),
+          // extract the specific sub-polygon the click landed in before computing
+          // the centroid — otherwise coordinates[0] might be a different building.
+          const geom = hoverGeometry(
+            buildingFeatures[0].geometry as { type: string; coordinates: unknown },
+            e.lngLat,
+          );
           if (geom.type === "Polygon" || geom.type === "MultiPolygon") {
-            const rings = (geom.type === "Polygon" ? geom.coordinates : geom.coordinates[0]) as [number, number][][];
+            const coords = geom.coordinates as [number, number][][] | [number, number][][][];
+            const rings = (geom.type === "Polygon" ? coords : (coords as [number, number][][][])[0]) as [number, number][][];
             const centroid = polygonCentroid(rings);
             lat = centroid.lat;
             lon = centroid.lng;
@@ -539,18 +553,8 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
         if (!res.ok) return;
         const result = (await res.json()) as BuildingClickResult;
         if (!result.hit || !result.selected) return;
-        const b = result.selected;
-        buildingPopupRef.current?.remove();
-        buildingPopupRef.current = new maplibregl.Popup({ maxWidth: "280px" })
-          .setLngLat([b.lon, b.lat])
-          .setHTML(
-            `<div class="popup-title">Building ${escapeHtml(b.bygningsnummer)}</div>` +
-            `<div class="popup-detail">` +
-            (b.bygningstype ? `Type: ${escapeHtml(b.bygningstype)}<br>` : "") +
-            (b.bygningsstatus ? `Status: ${escapeHtml(b.bygningsstatus)}<br>` : "") +
-            `Distance: ${b.distance_m.toFixed(1)} m</div>`,
-          )
-          .addTo(map);
+        setSelectedBuilding(result.selected);
+        setCollapsed(false);
       });
     });
 
@@ -558,7 +562,6 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
       map.remove();
       mapRef.current = null;
       popupRef.current = null;
-      buildingPopupRef.current = null;
       wellbore3dRef.current = null;
     };
     // Mounted once for this view's lifetime; onLoaded/onUiEvent are
@@ -721,6 +724,32 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
             </div>
           ) : (
             <p className="no-selection">Click a well on the map to view details.</p>
+          )}
+        </div>
+        <div className="sidebar-section">
+          <h2>Selected Building</h2>
+          {selectedBuilding ? (
+            <div className="well-detail">
+              <div className="well-title">Building {escapeHtml(selectedBuilding.bygningsnummer)}</div>
+              <table>
+                <tbody>
+                  <tr><td>Bygningsnummer</td><td>{escapeHtml(selectedBuilding.bygningsnummer)}</td></tr>
+                  <tr><td>Bygningstype</td><td>{selectedBuilding.bygningstype ? escapeHtml(selectedBuilding.bygningstype) : "?"}</td></tr>
+                  <tr><td>Bygningsstatus</td><td>{selectedBuilding.bygningsstatus ? escapeHtml(selectedBuilding.bygningsstatus) : "?"}</td></tr>
+                  <tr><td>Kommunenavn</td><td>{selectedBuilding.kommunenavn ? escapeHtml(selectedBuilding.kommunenavn) : "?"}</td></tr>
+                  <tr><td>Kommunenummer</td><td>{selectedBuilding.kommunenummer ? escapeHtml(selectedBuilding.kommunenummer) : "?"}</td></tr>
+                  <tr><td>Latitude</td><td>{selectedBuilding.lat.toFixed(6)}</td></tr>
+                  <tr><td>Longitude</td><td>{selectedBuilding.lon.toFixed(6)}</td></tr>
+                  <tr><td>Distance</td><td>{selectedBuilding.distance_m.toFixed(1)} m</td></tr>
+                  <tr><td>Bruksareal totalt</td><td>{selectedBuilding.bruksareal_totalt != null ? `${selectedBuilding.bruksareal_totalt} m²` : "?"}</td></tr>
+                  <tr><td>Bruksareal bolig</td><td>{selectedBuilding.bruksareal_til_bolig != null ? `${selectedBuilding.bruksareal_til_bolig} m²` : "?"}</td></tr>
+                  <tr><td>Bruksareal annet</td><td>{selectedBuilding.bruksareal_til_annet != null ? `${selectedBuilding.bruksareal_til_annet} m²` : "?"}</td></tr>
+                  <tr><td>Antall boenheter</td><td>{selectedBuilding.antall_boenheter != null ? selectedBuilding.antall_boenheter : "?"}</td></tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="no-selection">Click a building on the map to view details.</p>
           )}
         </div>
       </div>
