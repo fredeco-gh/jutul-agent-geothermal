@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -21,8 +20,34 @@ DEFAULT_EPSG = 25833
 DEFAULT_RADIUS_M = 50.0
 MAX_RADIUS_M = 200.0
 
+# Typename cache: in-process (cleared on restart) + on-disk (survives restarts).
 _cached_typename: str | None = None
 _cached_type_map: dict[str, dict] | None = None
+
+_TYPENAME_CACHE_FILE = Path.home() / ".cache" / "jutul_agent" / "wfs_typename.txt"
+
+# Known typename for wfs.matrikkelen-bygningspunkt — used directly so GetCapabilities
+# (a heavy, unreliable endpoint) is never called.  Override by writing a different value
+# to _TYPENAME_CACHE_FILE if the service ever renames its feature type.
+_DEFAULT_TYPENAME = "app:Bygningspunkt"
+
+
+def _read_typename_from_disk() -> str | None:
+    try:
+        if _TYPENAME_CACHE_FILE.exists():
+            return _TYPENAME_CACHE_FILE.read_text().strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def _write_typename_to_disk(name: str) -> None:
+    try:
+        _TYPENAME_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _TYPENAME_CACHE_FILE.write_text(name)
+    except OSError:
+        pass
+
 
 router = APIRouter()
 
@@ -66,49 +91,25 @@ app.include_router(router)
 
 
 def get_wfs_typename() -> str:
-    """Fetch GetCapabilities and find the correct feature type name.
+    """Return the WFS feature type name for Matrikkelen Bygningspunkt.
 
-    Result is cached so only one network call is made per process lifetime.
+    Lookup order:
+      1. In-process cache (cleared on server restart)
+      2. On-disk cache at ~/.cache/jutul_agent/wfs_typename.txt (survives restarts)
+      3. Built-in default (_DEFAULT_TYPENAME) — GetCapabilities is never called
     """
     global _cached_typename
     if _cached_typename is not None:
         return _cached_typename
 
-    r = requests.get(
-        WFS_BASE_URL,
-        params={"service": "WFS", "request": "GetCapabilities"},
-        timeout=30,
-    )
-    r.raise_for_status()
+    disk_name = _read_typename_from_disk()
+    if disk_name:
+        _cached_typename = disk_name
+        return disk_name
 
-    root = ET.fromstring(r.content)
-    names: list[str] = []
-
-    for elem in root.findall(
-        ".//wfs:FeatureType/wfs:Name",
-        {"wfs": "http://www.opengis.net/wfs/2.0", "ows": "http://www.opengis.net/ows/1.1"},
-    ):
-        if elem.text:
-            names.append(elem.text)
-
-    if not names:
-        # Older WFS servers use the WFS 1.x namespace
-        for elem in root.findall(
-            ".//{http://www.opengis.net/wfs}FeatureType/{http://www.opengis.net/wfs}Name"
-        ):
-            if elem.text:
-                names.append(elem.text)
-
-    if not names:
-        raise RuntimeError("No FeatureType names found in WFS GetCapabilities.")
-
-    for name in names:
-        if "bygning" in name.lower() or "building" in name.lower():
-            _cached_typename = name
-            return name
-
-    _cached_typename = names[0]
-    return names[0]
+    _cached_typename = _DEFAULT_TYPENAME
+    _write_typename_to_disk(_DEFAULT_TYPENAME)
+    return _DEFAULT_TYPENAME
 
 
 def make_bbox_utm(
@@ -349,9 +350,16 @@ def api_building_click(
     radius_m: float = Query(DEFAULT_RADIUS_M, ge=1, le=MAX_RADIUS_M),
     max_candidates: int = Query(10, ge=1, le=50),
 ) -> BuildingClickResponse:
-    result = get_building_info_from_wfs_click(
-        lat=lat, lon=lon, radius_m=radius_m, max_candidates=max_candidates
-    )
+    try:
+        result = get_building_info_from_wfs_click(
+            lat=lat, lon=lon, radius_m=radius_m, max_candidates=max_candidates
+        )
+    except requests.exceptions.RequestException as exc:
+        print(f"[WFS] {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail={"message": f"WFS service unavailable: {exc}"},
+        ) from exc
     if not result.hit:
         raise HTTPException(
             status_code=404,

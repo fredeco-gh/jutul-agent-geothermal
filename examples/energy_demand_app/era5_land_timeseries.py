@@ -49,7 +49,7 @@ def make_era5_land_timeseries_request(
             "longitude": lon,
         },
         "date": [f"{start_date}/{end_date}"],
-        "data_format": "csv",
+        "data_format": "netcdf",
     }
 
 
@@ -80,7 +80,7 @@ def find_temperature_column(df: pd.DataFrame) -> str:
 
 
 def clean_temperature_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
-    """Normalise the raw CDS CSV response to a clean three-column DataFrame.
+    """Normalise a raw CDS response DataFrame to a clean three-column DataFrame.
 
     Output columns:
       time_utc        — timezone-aware UTC datetime
@@ -114,10 +114,14 @@ def fetch_era5_land_point_temperature_timeseries(
 ) -> pd.DataFrame:
     """Fetch hourly ERA5-Land 2 m temperature for a single point.
 
-    Uses a temporary file that is deleted automatically after reading.
+    Downloads as NetCDF, opens with xarray, and returns a tidy DataFrame.
 
     Returns a DataFrame with columns: time_utc, temperature_K, temperature_C.
     """
+    import zipfile
+
+    import xarray as xr
+
     client = create_cds_client(api_key=api_key)
 
     request = make_era5_land_timeseries_request(
@@ -128,10 +132,20 @@ def fetch_era5_land_point_temperature_timeseries(
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir) / "era5_land_temperature.csv"
+        tmp_path = Path(tmpdir) / "era5_land_temperature.nc"
         client.retrieve(ERA5_LAND_TIMESERIES_DATASET, request, str(tmp_path))
-        df_raw = pd.read_csv(tmp_path)
-        # df_raw is read before the context manager exits and deletes tmpdir.
+
+        # CDS sometimes wraps the NetCDF in a ZIP archive.
+        if zipfile.is_zipfile(tmp_path):
+            with zipfile.ZipFile(tmp_path) as zf:
+                nc_names = [n for n in zf.namelist() if n.endswith(".nc")]
+                if not nc_names:
+                    raise ValueError(f"ZIP from CDS contains no .nc files: {zf.namelist()}")
+                zf.extract(nc_names[0], tmpdir)
+            tmp_path = Path(tmpdir) / nc_names[0]
+
+        with xr.open_dataset(tmp_path, engine="netcdf4") as ds:
+            df_raw = ds.to_dataframe().reset_index()
         df = clean_temperature_dataframe(df_raw)
 
     return df

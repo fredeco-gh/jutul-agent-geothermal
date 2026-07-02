@@ -576,27 +576,40 @@ export function MapPanel({ view, active, reloadToken, onLoaded, onUiEvent, onAct
           lat = centroid.lat;
           lon = centroid.lng;
         }
-        const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);
-        if (!res.ok) return;
-        const result = (await res.json()) as BuildingClickResult;
-        if (!result.hit || !result.selected) return;
         popupRef.current?.remove();
         setSelected(null);
         buildingTemperatureRef.current = null;
+
+        const startTemperatureFetch = (bLat: number, bLon: number) => {
+          fetch(`/api/building-temperature?lat=${bLat}&lon=${bLon}&year=2023`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data) {
+                buildingTemperatureRef.current = data as BuildingTemperatureData;
+                console.log(
+                  `[ERA5] Temperature saved: ${(data as BuildingTemperatureData).hours} hours for year ${(data as BuildingTemperatureData).year}`,
+                );
+              }
+            })
+            .catch(() => { /* temperature fetch is best-effort */ });
+        };
+
+        // Fetch Matrikkelen metadata for the building.  The registered
+        // Matrikkelen coordinates are used for ERA5 (primary path).
+        // Temporary fallback: when the WFS is unavailable, use the polygon
+        // centroid so temperature data can still be fetched.
+        const res = await fetch(`/api/building-click?lat=${lat}&lon=${lon}`);
+        if (!res.ok) {
+          setSelectedBuilding({ bygningsnummer: "?", lat, lon, distance_m: 0 });
+          setCollapsed(false);
+          startTemperatureFetch(lat, lon); // temporary: centroid fallback
+          return;
+        }
+        const result = (await res.json()) as BuildingClickResult;
+        if (!result.hit || !result.selected) return;
         setSelectedBuilding(result.selected);
         setCollapsed(false);
-        // Fetch the full-year temperature series in the background; store when
-        // ready but don't display yet (will be wired up in a later step).
-        const { lat: bLat, lon: bLon } = result.selected;
-        fetch(`/api/building-temperature?lat=${bLat}&lon=${bLon}&year=2023`)
-          .then((r) => r.ok ? r.json() : null)
-          .then((data) => {
-            if (data) {
-              buildingTemperatureRef.current = data as BuildingTemperatureData;
-              console.log(`[ERA5] Temperature saved: ${(data as BuildingTemperatureData).hours} hours for year ${(data as BuildingTemperatureData).year}`);
-            }
-          })
-          .catch(() => { /* temperature fetch is best-effort */ });
+        startTemperatureFetch(result.selected.lat, result.selected.lon);
       });
     });
 

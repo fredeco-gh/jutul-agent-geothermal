@@ -118,9 +118,20 @@ def main() -> int:
     # Unlike `jutul-agent web`, this script doesn't go through the CLI's main(),
     # which is the only place .env normally gets loaded — so provider API keys
     # (e.g. OPENAI_API_KEY) would otherwise never reach the process.
+    #
+    # Load in two passes: the example's own .env first (highest priority, e.g.
+    # CDSAPI_KEY), then walk up the tree for any parent-level .env files (e.g.
+    # OPENAI_API_KEY at the repo root), without overriding what is already set.
+    # This is needed because load_dotenv() stops at the first .env it finds, so
+    # adding examples/energy_demand_app/.env would shadow the root .env otherwise.
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(EXAMPLE_DIR / ".env")
+    _search = EXAMPLE_DIR.parent
+    while _search != _search.parent:
+        if (_search / ".env").exists():
+            load_dotenv(_search / ".env", override=False)
+        _search = _search.parent
 
     print(f"Starting jutul-agent with the geothermal map on http://{HOST}:{PORT} ...")
     uvicorn.run(create_geothermal_map_app(), host=HOST, port=PORT)
